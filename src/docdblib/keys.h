@@ -34,10 +34,12 @@ enum class DBSection {
 	handle_index = 0,
 	/** for each handle, various database informations are stored */
 	db_setup = 1,
-	/**	for every update change, there is sequence index. Most updates are documents */
-	seq_index = 2,
+	/**	for every update change, there is sequence index. Most updates are documents. This index contains just headers*/
+	seq_index_hdr = 2,
+	/** seq_index but contains data */
+	seq_index_data = 3,
 	/** index of documents where key is docid and list of available revision where first is recent one*/
-	doc_index = 3
+	doc_index = 4
 };
 
 
@@ -98,9 +100,9 @@ struct Rec_DBSetup {
 	};
 };
 
-struct Rec_SeqIndex {
+struct Rec_SeqIndex_Hdr {
 	struct EnumKey {
-		static constexpr DBSection section = DBSection::seq_index;
+		static constexpr DBSection section = DBSection::seq_index_hdr;
 		Handle handle;
 
 		template<typename Archive>
@@ -129,6 +131,7 @@ struct Rec_SeqIndex {
 		std::vector<RevID> history;
 		std::vector<RevID> conflicts;
 		bool deleted;
+		bool blob;
 
 		template<typename Archive>
 		void serialize(Archive &arch) {
@@ -143,19 +146,46 @@ struct Rec_SeqIndex {
 
 	};
 
-	struct Document: public DocumentHdr {
+};
+struct Rec_SeqIndex_Data {
+
+	struct Key {
+		static constexpr DBSection section = DBSection::seq_index_data;
+		Handle handle;
+		SeqID seq;
+
+		template<typename Archive>
+		void serialize(Archive &arch) {
+			arch(section);
+			arch(handle);
+			arch(seq);
+		}
+
+	};
+
+	struct DocumentData  {
 		std::string payload;
 
 		template<typename Archive>
 		void serialize(Archive &arch) {
-			DocumentHdr::serialize(arch);
 			arch(payload);
 		}
 	};
 };
 
 struct Rec_DocIndex {
-	using EnumKey = Rec_SeqIndex::EnumKey;
+
+	struct EnumKey {
+		static constexpr DBSection section = DBSection::doc_index;
+		Handle handle;
+
+		template<typename Archive>
+		void serialize(Archive &arch) {
+			arch(section);
+			arch(handle);
+		}
+
+	};
 	struct Key : EnumKey {
 		std::string id;
 
@@ -167,11 +197,13 @@ struct Rec_DocIndex {
 	};
 
 	struct RevSeq {
+		Timestamp timestamp;
 		RevID revId;
 		SeqID seqId;
 
 		template<typename Archive>
 		void serialize(Archive &arch) {
+			arch(timestamp);
 			arch(revId);
 			arch(seqId);
 		}
