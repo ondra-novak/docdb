@@ -8,6 +8,7 @@
 #include <imtjson/binjson.tcc>
 #include "docdb.h"
 
+#include "changesiterator.h"
 #include "dociterator.h"
 #include "exception.h"
 #include "formats.h"
@@ -409,6 +410,15 @@ MapIterator DocDB::mapScanPrefix(const std::string &prefix, bool backward) {
 	} else {
 		return MapIterator(db->NewIterator(iteratorReadOpts), key1, key2, false, true);
 	}
+}
+
+ChangesIterator DocDB::getChanges(SeqID fromId) const {
+	std::string key;
+	key.reserve(9);
+	index2string(fromId,key);
+	char end_key_mark = 1;
+	std::string_view end_key(&end_key_mark, 1);
+	return ChangesIterator(db->NewIterator(iteratorReadOpts), key, end_key, false, true);
 }
 
 SeqID DocDB::findNextSeqID() {

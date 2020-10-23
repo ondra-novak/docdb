@@ -7,7 +7,9 @@
 
 #ifndef SRC_DOCDBLIB_DOCUMENT_H_
 #define SRC_DOCDBLIB_DOCUMENT_H_
-
+#include <cstdint>
+#include <string>
+#include <imtjson/value.h>
 namespace docdb {
 
 using DocRevision = std::uint64_t;

@@ -23,18 +23,13 @@ public:
 
 
 	Document get() const;
-	Document replicate() const;
+	DocumentRepl replicate() const;
 
 private:
 
 	using Iterator::key;
 	using Iterator::value;
 
-	std::string_view key() const {
-		return Iterator::key().substr(1);
-	}
-
-	Document value() const;
 
 
 };

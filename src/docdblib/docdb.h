@@ -21,7 +21,7 @@ namespace docdb {
 using PLevelDB = std::unique_ptr<leveldb::DB>;
 
 
-class Changes;
+class ChangesIterator;
 class DocIterator;
 class MapIterator;
 
@@ -89,7 +89,7 @@ public:
 	 * @return iterator which can be used to receive changes written in order.
 	 * Used to replicate data
 	 */
-	Changes getChanges(SeqID fromId) const;
+	ChangesIterator getChanges(SeqID fromId) const;
 
 	///Iterates whole database
 	DocIterator scan() const;

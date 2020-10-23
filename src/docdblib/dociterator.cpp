@@ -10,20 +10,15 @@
 #include "docdb.h"
 namespace docdb {
 
-DocIterator::DocIterator() {
-	// TODO Auto-generated constructor stub
-
-}
-
 Document DocIterator::get() const {
-	auto id = key();
-	auto data = value();
+	auto id = Iterator::key();
+	auto data = Iterator::value();
 	return DocDB::deserializeDocument(id, data);
 }
 
-Document DocIterator::replicate() const {
-	auto id = key();
-	auto data = value();
+DocumentRepl DocIterator::replicate() const {
+	auto id = Iterator::key();
+	auto data = Iterator::value();
 	return DocDB::deserializeDocumentRepl(id, data);
 }
 
