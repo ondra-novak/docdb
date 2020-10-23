@@ -15,41 +15,10 @@
 #include <memory>
 
 #include <imtjson/string.h>
+#include "document.h"
 namespace docdb {
 
 using PLevelDB = std::unique_ptr<leveldb::DB>;
-using DocRevision = std::uint64_t;
-using SeqID = std::uint64_t;
-using Timestamp = std::uint64_t;
-
-struct DocumentBase {
-	///Document ID
-	/** Document Identifier is any arbitrary string - must be unique */
-	std::string id;
-	/** Document content. If the content is undefined, the document is either deleted or not-exists */
-	json::Value content;
-	/** last write timestamp */
-	Timestamp timestamp = 0;
-
-	bool valid() const {return content.defined();}
-
-};
-
-///Contains document to be processed or modified
-struct Document: DocumentBase {
-	///Document revision
-	/** Contains last document revision. If the document doesn't exists, it contains zero. If
-	 * the document is deleted, it contains different value
-	 */
-	DocRevision rev = 0;
-};
-
-///Contains document to be replicated (should not be modified)
-struct DocumentRepl: DocumentBase {
-	///Document revision list
-	/** contains list of revisions, first revision is most recent */
-	json::Value revisions;
-};
 
 
 class Changes;
@@ -124,6 +93,11 @@ public:
 
 	///Iterates whole database
 	DocIterator scan() const;
+
+	///Iterates all deleted documents
+	/** You can iterate through tombstones if you need to purge very old tombstones */
+	DocIterator scanGraveyard() const;
+
 
 	///Iterates in specified range
 	/**
@@ -248,6 +222,10 @@ public:
 
 	void purgeDoc(std::string_view &id);
 
+
+	static Document deserializeDocument(const std::string_view &id, const std::string_view &data);
+	static DocumentRepl deserializeDocumentRepl(const std::string_view &id, const std::string_view &data);
+
 protected:
 
 	using DocMap = std::unordered_set<std::string>;
@@ -282,6 +260,7 @@ protected:
 	};
 
 	GetResult get_impl(const std::string_view &id) const;
+	static GetResult deserialize_impl(const std::string_view &val);
 
 	virtual Timestamp now() const;
 

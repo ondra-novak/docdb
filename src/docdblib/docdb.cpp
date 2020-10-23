@@ -8,6 +8,7 @@
 #include <imtjson/binjson.tcc>
 #include "docdb.h"
 
+#include "dociterator.h"
 #include "exception.h"
 #include "formats.h"
 #include "iterator.h"
@@ -49,7 +50,8 @@ namespace docdb {
  *
  */
 
-static leveldb::ReadOptions defReadOpts;
+static leveldb::ReadOptions defReadOpts{true};
+static leveldb::ReadOptions iteratorReadOpts{true,false,nullptr};
 
 DocDB::DocDB(PLevelDB &&db):db(std::move(db)) {
 }
@@ -258,9 +260,12 @@ DocDB::GetResult DocDB::get_impl(const std::string_view &id) const {
 			return {};
 		}
 	}
-	std::string_view vval (val);
-	json::Value header = string2json(std::move(vval));
-	json::Value content = string2json(std::move(vval));
+	return deserialize_impl(val);
+}
+
+DocDB::GetResult DocDB::deserialize_impl(const std::string_view &val) {
+	json::Value header = string2json(std::move(val));
+	json::Value content = string2json(std::move(val));
 	return {header, content};
 }
 
@@ -314,6 +319,95 @@ void DocDB::purgeDoc(std::string_view &id) {
 		index2string(seq,val);
 		batch.Delete(val);
 		batch.Delete(key);
+	}
+}
+
+DocumentRepl DocDB::deserializeDocumentRepl(const std::string_view &id, const std::string_view &data) {
+	auto r = deserialize_impl(data);
+	return {std::string(id), r.content,r.header[2].getUIntLong(),r.header[0]};
+}
+
+Document DocDB::deserializeDocument(const std::string_view &id, const std::string_view &data) {
+	auto r = deserialize_impl(data);
+	return {std::string(id), r.content,r.header[2].getUIntLong(),r.header[0][0].getUIntLong()};
+}
+
+DocIterator DocDB::scan() const {
+	char end_index = doc_index+1;
+	return DocIterator(db->NewIterator(iteratorReadOpts),
+			std::string_view(&doc_index, 1),std::string_view(&end_index,1),false,true);
+
+}
+
+DocIterator DocDB::scanRange(const std::string_view &from,
+		const std::string_view &to, bool exclude_end) const {
+
+	std::string key1;
+	key1.reserve(from.length()+1);
+	key1.push_back(doc_index);
+	key1.append(from);
+	std::string key2;
+	key2.reserve(to.length()+1);
+	key2.push_back(doc_index);
+	key2.append(to);
+	return DocIterator(db->NewIterator(iteratorReadOpts),key1, key2, false, exclude_end);
+}
+
+static void increase(std::string &x) {
+	if (!x.empty())  {
+		char c = x.back();
+		++c;
+		if (c == 0) increase(x);
+		x.push_back(c);
+	}
+}
+
+DocIterator DocDB::scanPrefix(const std::string_view &prefix, bool backward) const {
+	std::string key1;
+	key1.reserve(prefix.length()+1);
+	key1.push_back(doc_index);
+	key1.append(prefix);
+	std::string key2(key1);
+	increase(key2);
+	if (backward) {
+		return DocIterator(db->NewIterator(iteratorReadOpts), key2, key1, true, false);
+	} else {
+		return DocIterator(db->NewIterator(iteratorReadOpts), key1, key2, false, true);
+	}
+}
+
+DocIterator DocDB::scanGraveyard() const {
+	char end_index = graveyard+1;
+	return DocIterator(db->NewIterator(iteratorReadOpts),
+			std::string_view(&graveyard, 1),std::string_view(&end_index,1),false,true);
+
+}
+
+MapIterator DocDB::mapScan(const std::string &from, const std::string &to,
+		bool exclude_end) {
+	std::string key1;
+	key1.reserve(from.length()+1);
+	key1.push_back(map_index);
+	key1.append(from);
+	std::string key2;
+	key2.reserve(to.length()+1);
+	key2.push_back(map_index);
+	key2.append(to);
+	return MapIterator(db->NewIterator(iteratorReadOpts),key1, key2, false, exclude_end);
+
+}
+
+MapIterator DocDB::mapScanPrefix(const std::string &prefix, bool backward) {
+	std::string key1;
+	key1.reserve(prefix.length()+1);
+	key1.push_back(map_index);
+	key1.append(prefix);
+	std::string key2(key1);
+	increase(key2);
+	if (backward) {
+		return MapIterator(db->NewIterator(iteratorReadOpts), key2, key1, true,false);
+	} else {
+		return MapIterator(db->NewIterator(iteratorReadOpts), key1, key2, false, true);
 	}
 }
 

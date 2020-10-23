@@ -14,24 +14,61 @@
 
 namespace docdb {
 
+///Core Iterator which handle iteration, bud doesn't interpret the result
+/** The iterator can advance only one direction, and cannot go back
+ * You use iterator by calling next() for next item and accessing the data, which are valid
+ * until next() is called
+ *
+ * @code
+ * Iterator iter=*...create....*
+ * while (iter.next()) {
+ * 	 auto key = iter.key();
+ * 	 auto value = iter.value();
+ * }
+ * @endcode
+ *
+ * There is no standard iterator API for this iterator (so you cannot use for-range)
+ *
+ * @note to access the very first item, you have to call next(). Otherwise result is undefined
+ *
+ */
 class Iterator {
 public:
 
-	Iterator(std::shared_ptr<leveldb::Iterator> &&iter, const std::string_view &start_key, const std::string_view &end_key, bool descending, bool exclude_end)
-		:iter(std::move(iter)),end_key(end_key),descending(descending),exclude_end(exclude_end) {
+	///Initialize iterator
+	/**
+	 * @param iter leveldb iterator object
+	 * @param start_key start key
+	 * @param end_key end key
+	 * @param exclude_end exclude end key
+	 * @param exclude_begin exclude begin key
+	 *
+	 * @note You don't need to create iterator by this way. Use DocDB::scan() functions
+	 */
+	Iterator(leveldb::Iterator *iter, const std::string_view &start_key, const std::string_view &end_key, bool exclude_begin, bool exclude_end)
+		:iter(iter),end_key(end_key),descending(start_key>end_key),exclude_end(exclude_end) {
 
-		init(start_key);
+		init(start_key,exclude_begin);
 	}
 
+	///Prepare next item
+	/**
+	 * This function must be called to access the very first item as well
+	 *
+	 * @retval true next item is prepared
+	 * @retval false no item available (no more results)
+	 */
 	bool next() {
 		return (this->*advance_fn)();
 	}
 
+	///Access key (return binary representation of the key)
 	std::string_view key() const {
 		auto sl = iter->key();
 		return std::string_view(sl.data(),sl.size());
 	}
 
+	///Access value (return binary representation of the value)
 	std::string_view value() const {
 		auto sl = iter->key();
 		return std::string_view(sl.data(),sl.size());
@@ -40,20 +77,40 @@ public:
 
 
 protected:
-	std::shared_ptr<leveldb::Iterator> iter;
+	std::unique_ptr<leveldb::Iterator> iter;
 	std::string end_key;
 	bool descending;
 	bool exclude_end;
 	bool (Iterator::*advance_fn)();
 
-	void init(const std::string_view &start_key);
+	void init(const std::string_view &start_key, bool exclude_begin);
 	bool initial_advance();
 	bool advance();
 	bool check_after_advance();
+	bool initial_null_advance();
+	bool not_valid_advance();
 
 };
 
+///Iterates through the database's map
+/**
+ * To create iterator use DocDB::mapScan
+ *
+ */
+class MapIterator: public Iterator {
+public:
+	using Iterator::Iterator;
 
+	///Retrieves key
+	/**
+	 * @return current key
+	 */
+	std::string_view key() const {
+		return Iterator::key().substr(1);
+	}
+
+
+};
 }
 
 #endif /* SRC_DOCDBLIB_ITERATOR_H_ */
