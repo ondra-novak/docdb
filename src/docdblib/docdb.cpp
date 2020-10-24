@@ -348,6 +348,7 @@ Document DocDB::deserializeDocument(const std::string_view &id, const std::strin
 }
 
 DocIterator DocDB::scan() const {
+	const_cast<DocDB *>(this)->flush();
 	char end_index = doc_index+1;
 	return DocIterator(db->NewIterator(iteratorReadOpts),
 			std::string_view(&doc_index, 1),std::string_view(&end_index,1),false,true);
@@ -356,6 +357,7 @@ DocIterator DocDB::scan() const {
 
 DocIterator DocDB::scanRange(const std::string_view &from,
 		const std::string_view &to, bool exclude_end) const {
+	const_cast<DocDB *>(this)->flush();
 
 	std::string key1;
 	key1.reserve(from.length()+1);
@@ -378,6 +380,7 @@ static void increase(std::string &x) {
 }
 
 DocIterator DocDB::scanPrefix(const std::string_view &prefix, bool backward) const {
+	const_cast<DocDB *>(this)->flush();
 	std::string key1;
 	key1.reserve(prefix.length()+1);
 	key1.push_back(doc_index);
@@ -392,6 +395,7 @@ DocIterator DocDB::scanPrefix(const std::string_view &prefix, bool backward) con
 }
 
 DocIterator DocDB::scanGraveyard() const {
+	const_cast<DocDB *>(this)->flush();
 	char end_index = graveyard+1;
 	return DocIterator(db->NewIterator(iteratorReadOpts),
 			std::string_view(&graveyard, 1),std::string_view(&end_index,1),false,true);
@@ -442,6 +446,7 @@ MapIterator DocDB::mapScanPrefix_pk(std::string &&prefix, bool backward) {
 
 
 ChangesIterator DocDB::getChanges(SeqID fromId) const {
+	const_cast<DocDB *>(this)->flush();
 	std::string key;
 	key.reserve(9);
 	index2string(fromId+1,key);
@@ -471,6 +476,38 @@ void DocDB::mapErasePrefix_pk(std::string &&prefix) {
 		batch.Delete(leveldb::Slice(key.data(), key.length()));
 		checkFlushAfterWrite();
 	}
+}
+
+void DocDB::mapSet(WriteBatch &batch, const std::string_view &key,const std::string_view &value) {
+	std::string k;
+	k.reserve(key.length()+1);
+	k.push_back(0);
+	k.append(key);
+	mapSet_pk(batch, std::move(k), value);
+}
+
+void DocDB::mapSet_pk(WriteBatch &batch, std::string &&key, const std::string_view &value) {
+	key[0] = map_index;
+	batch.Put(key, leveldb::Slice(value.data(), value.length()));
+}
+
+void DocDB::mapErase(WriteBatch &batch, const std::string_view &key) {
+	std::string k;
+	k.reserve(key.length()+1);
+	k.push_back(0);
+	k.append(key);
+	mapErase_pk(batch, std::move(k));
+
+}
+
+void DocDB::mapErase_pk(WriteBatch &batch, std::string &&key) {
+	key[0] = map_index;
+	batch.Delete(key);
+}
+
+void DocDB::flushBatch(WriteBatch &batch, bool sync) {
+	db->Write({sync}, &batch);
+	batch.Clear();
 }
 
 SeqID DocDB::findNextSeqID() {

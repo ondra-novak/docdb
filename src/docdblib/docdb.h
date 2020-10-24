@@ -19,6 +19,7 @@
 namespace docdb {
 
 using PLevelDB = std::unique_ptr<leveldb::DB>;
+using WriteBatch = leveldb::WriteBatch;
 
 
 class ChangesIterator;
@@ -162,6 +163,11 @@ public:
 	///Works same as mapSet, however expect one extra byte at the beginning of the key, which is modified by the call
 	void mapSet_pk(std::string &&key, const std::string_view &value);
 
+	static void mapSet(WriteBatch &batch, const std::string_view &key, const std::string_view &value);
+
+	///Works same as mapSet, however expect one extra byte at the beginning of the key, which is modified by the call
+	static void mapSet_pk(WriteBatch &batch, std::string &&key, const std::string_view &value);
+
 
 	///Retrieve item from map
 	/**DocDB supports unspecified map feature, which can use database as key-value storage
@@ -188,6 +194,12 @@ public:
 	void mapErase(const std::string_view &key);
 
 	void mapErase_pk(std::string &&key);
+
+	static void mapErase(WriteBatch &batch, const std::string_view &key);
+
+	static void mapErase_pk(WriteBatch &batch, std::string &&key);
+
+	void flushBatch(WriteBatch &batch, bool sync);
 
 
 	///Scan map from key to key (exclusive)

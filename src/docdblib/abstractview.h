@@ -164,13 +164,21 @@ public:
 		return db;
 	}
 
+
 protected:
 	DocDB &db;
 	SeqID seqId;
 	DocDB *updateDB;
 
+	std::string name;
+	std::uint64_t viewid;
+
 	///Function must be implemented by child class
-	virtual void map(const Document &doc, const EmitFn &emit) = 0;
+	virtual void map(const Document &doc, const EmitFn &emit) const = 0;
+
+	class UpdateDoc;
+
+
 
 
 };
@@ -200,6 +208,8 @@ public:
 	///Updates view state (this function is called by AbstractView after update
 	void setViewState(const std::string_view &viewName, const State &state);
 
+	static std::uint64_t getViewKey(const std::string_view &viewName);
+
 protected:
 	DocDB &db;
 
@@ -209,10 +219,15 @@ class ViewIterator: private MapIterator {
 public:
 	ViewIterator(MapIterator &&iter);
 
-	using MapIterator::next;
+	bool next();
 	json::Value key() const;
 	json::Value value() const;
 	const std::string_view id() const;
+protected:
+	mutable std::string_view docid;
+	mutable json::Value ukey;
+	mutable bool need_parse = true;
+	void parseKey() const;
 
 };
 
