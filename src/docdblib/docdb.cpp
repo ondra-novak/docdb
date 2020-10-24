@@ -55,6 +55,7 @@ static leveldb::ReadOptions defReadOpts{true};
 static leveldb::ReadOptions iteratorReadOpts{true,false,nullptr};
 
 DocDB::DocDB(PLevelDB &&db):db(std::move(db)) {
+	nextSeqID = findNextSeqID();
 }
 
 DocDB::DocDB(const std::string &path) {
@@ -73,6 +74,8 @@ DocDB::DocDB(const std::string &path, const leveldb::Options &opt) {
 	DB *db;
 	LevelDBException::checkStatus(leveldb::DB::Open(opt,path,&db));
 	this->db = PLevelDB(db);
+
+	nextSeqID = findNextSeqID();
 }
 
 DocDB::~DocDB() {
@@ -270,12 +273,16 @@ DocDB::GetResult DocDB::deserialize_impl(const std::string_view &val) {
 	return {header, content};
 }
 
-void DocDB::mapSet(const std::string &key, const std::string &value) {
+void DocDB::mapSet(const std::string_view &key, const std::string_view &value) {
 	std::string k;
 	k.reserve(key.length()+1);
-	k.push_back(map_index);
+	k.push_back(0);
 	k.append(key);
-	batch.Put(k,value);
+	mapSet_pk(std::move(k), value);
+}
+void DocDB::mapSet_pk(std::string &&key, const std::string_view &value) {
+	key[0] = map_index;
+	batch.Put(key,leveldb::Slice(value.data(), value.length()));
 	checkFlushAfterWrite();
 }
 
@@ -283,19 +290,26 @@ bool DocDB::mapGet(const std::string &key, std::string &value) {
 	flush();
 	std::string k;
 	k.reserve(key.length()+1);
-	k.push_back(map_index);
+	k.push_back(0);
 	k.append(key);
+	return mapGet_pk(std::move(k), value);
+}
+bool DocDB::mapGet_pk(std::string &&key, std::string &value) {
+	key[0] = map_index;
 	return LevelDBException::checkStatus_Get(db->Get(defReadOpts, key, &value));
 }
 
-void DocDB::mapErase(const std::string &key) {
+void DocDB::mapErase(const std::string_view &key) {
 	std::string k;
 	k.reserve(key.length()+1);
-	k.push_back(map_index);
+	k.push_back(0);
 	k.append(key);
-	batch.Delete(k);
+	mapErase_pk(std::move(k));
+}
+void DocDB::mapErase_pk(std::string &&key) {
+	key[0] = map_index;
+	batch.Delete(key);
 	checkFlushAfterWrite();
-
 }
 
 void DocDB::purgeDoc(std::string_view &id) {
@@ -384,41 +398,79 @@ DocIterator DocDB::scanGraveyard() const {
 
 }
 
-MapIterator DocDB::mapScan(const std::string &from, const std::string &to,
+MapIterator DocDB::mapScan(const std::string_view &from, const std::string_view &to,
 		bool exclude_end) {
 	std::string key1;
 	key1.reserve(from.length()+1);
-	key1.push_back(map_index);
+	key1.push_back(0);
 	key1.append(from);
 	std::string key2;
 	key2.reserve(to.length()+1);
-	key2.push_back(map_index);
+	key2.push_back(0);
 	key2.append(to);
-	return MapIterator(db->NewIterator(iteratorReadOpts),key1, key2, false, exclude_end);
+	return mapScan_pk(std::move(key1), std::move(key2), exclude_end);
+}
+
+MapIterator DocDB::mapScan_pk(std::string &&from, std::string &&to, bool exclude_end) {
+	from[0] = map_index;
+	to[0] = map_index;
+	return MapIterator(db->NewIterator(iteratorReadOpts),from, to, false, exclude_end);
 
 }
 
-MapIterator DocDB::mapScanPrefix(const std::string &prefix, bool backward) {
+
+MapIterator DocDB::mapScanPrefix(const std::string_view &prefix, bool backward) {
 	std::string key1;
 	key1.reserve(prefix.length()+1);
-	key1.push_back(map_index);
+	key1.push_back(0);
 	key1.append(prefix);
-	std::string key2(key1);
+	return mapScanPrefix_pk(std::move(key1), backward);
+}
+
+MapIterator DocDB::mapScanPrefix_pk(std::string &&prefix, bool backward) {
+	prefix[0] = map_index;
+	std::string key2(prefix);
 	increase(key2);
 	if (backward) {
-		return MapIterator(db->NewIterator(iteratorReadOpts), key2, key1, true,false);
+		return MapIterator(db->NewIterator(iteratorReadOpts), key2, prefix, true,false);
 	} else {
-		return MapIterator(db->NewIterator(iteratorReadOpts), key1, key2, false, true);
+		return MapIterator(db->NewIterator(iteratorReadOpts), prefix, key2, false, true);
 	}
+
 }
+
+
 
 ChangesIterator DocDB::getChanges(SeqID fromId) const {
 	std::string key;
 	key.reserve(9);
-	index2string(fromId,key);
+	index2string(fromId+1,key);
 	char end_key_mark = 1;
 	std::string_view end_key(&end_key_mark, 1);
 	return ChangesIterator(db->NewIterator(iteratorReadOpts), key, end_key, false, true);
+}
+
+SeqID DocDB::getLastSeqID() const {
+	return nextSeqID-1;
+}
+
+void DocDB::mapErasePrefix(const std::string_view &prefix) {
+	std::string key;
+	key.reserve(prefix.length()+1);
+	key.push_back(0);
+	key.append(prefix);
+}
+
+void DocDB::mapErasePrefix_pk(std::string &&prefix) {
+	prefix[0] = map_index;
+	std::string key2(prefix);
+	increase(key2);
+	Iterator iter(db->NewIterator(iteratorReadOpts), prefix, key2, true, false);
+	while (iter.next()) {
+		auto key = iter.key();
+		batch.Delete(leveldb::Slice(key.data(), key.length()));
+		checkFlushAfterWrite();
+	}
 }
 
 SeqID DocDB::findNextSeqID() {

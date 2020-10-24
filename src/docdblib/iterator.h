@@ -97,9 +97,11 @@ protected:
  * To create iterator use DocDB::mapScan
  *
  */
-class MapIterator: public Iterator {
+class MapIterator: private Iterator {
 public:
 	using Iterator::Iterator;
+	using Iterator::next;
+	using Iterator::value;
 
 	///Retrieves key
 	/**
@@ -114,3 +116,4 @@ public:
 }
 
 #endif /* SRC_DOCDBLIB_ITERATOR_H_ */
+

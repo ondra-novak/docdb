@@ -17,19 +17,13 @@ namespace docdb {
 /**
  *
  */
-class DocIterator: public Iterator {
+class DocIterator: private Iterator {
 public:
 	using Iterator::Iterator;
-
+	using Iterator::next;
 
 	Document get() const;
 	DocumentRepl replicate() const;
-
-private:
-
-	using Iterator::key;
-	using Iterator::value;
-
 
 
 };

@@ -91,6 +91,8 @@ public:
 	 */
 	ChangesIterator getChanges(SeqID fromId) const;
 
+	SeqID getLastSeqID() const;
+
 	///Iterates whole database
 	DocIterator scan() const;
 
@@ -155,7 +157,10 @@ public:
 	 * @param key new key to set or replace
 	 * @param value new value
 	 */
-	void mapSet(const std::string &key, const std::string &value);
+	void mapSet(const std::string_view &key, const std::string_view &value);
+
+	///Works same as mapSet, however expect one extra byte at the beginning of the key, which is modified by the call
+	void mapSet_pk(std::string &&key, const std::string_view &value);
 
 
 	///Retrieve item from map
@@ -170,6 +175,8 @@ public:
 	 */
 	bool mapGet(const std::string &key, std::string &value);
 
+	bool mapGet_pk(std::string &&key, std::string &value);
+
 	///Erase item in map
 	/**DocDB supports unspecified map feature, which can use database as key-value storage
 	 * However, items in this storage cannot be replicated and doesn't record order. Its
@@ -178,7 +185,9 @@ public:
 	 * @param key key to erase
 	 *
 	 */
-	void mapErase(const std::string &key);
+	void mapErase(const std::string_view &key);
+
+	void mapErase_pk(std::string &&key);
 
 
 	///Scan map from key to key (exclusive)
@@ -188,7 +197,9 @@ public:
 	 * @param exclude_end don't include last item (if exists)
 	 * @return map iterator
 	 */
-	MapIterator mapScan(const std::string &from, const std::string &to, bool exclude_end);
+	MapIterator mapScan(const std::string_view &from, const std::string_view &to, bool exclude_end);
+
+	MapIterator mapScan_pk(std::string &&from, std::string &&to, bool exclude_end);
 
 	///Scan map from prefix
 	/**
@@ -196,10 +207,14 @@ public:
 	 * @param backward scan backward
 	 * @return map iterator
 	 */
-	MapIterator mapScanPrefix(const std::string &prefix, bool backward);
+	MapIterator mapScanPrefix(const std::string_view &prefix, bool backward);
+
+	MapIterator mapScanPrefix_pk(std::string &&prefix, bool backward);
 
 	///Erase all items by prefix
-	void mapErasePrefix(const std::string &prefix);
+	void mapErasePrefix(const std::string_view &prefix);
+
+	void mapErasePrefix_pk(std::string &&prefix);
 
 	///Retrieves maximum revision history
 	std::size_t getMaxRevHistory() const {

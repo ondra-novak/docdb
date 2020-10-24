@@ -6,4 +6,5 @@ add_library (docdblib
 	iterator.cpp
 	dociterator.cpp
 	changesiterator.cpp
+	abstractview.cpp
 	)
