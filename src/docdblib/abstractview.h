@@ -20,15 +20,23 @@ public:
 	 * @param key key
 	 * @param value value
 	 */
-	virtual void operator()(const json::Value &key, const json::Value &value) = 0;
+	virtual void operator()(const json::Value &key, const json::Value &value) const = 0;
 	virtual ~EmitFn() {};
 };
 
 class ViewIterator;
 class ViewList;
 
-class AbstractView {
+class IViewMap {
 public:
+	///Function must be implemented by child class
+	virtual void map(const Document &doc, const EmitFn &emit) const = 0;
+
+};
+
+class AbstractView: public IViewMap {
+public:
+
 	///Initialize view
 	/**
 	 * Initialize or create view
@@ -50,6 +58,19 @@ public:
 	///Update view by recent changes in the database
 	void update();
 
+	///Complete rebuild view
+	void rebuild();
+
+	///remove all items from view
+	void clear();
+
+	///Remove document from the view
+	/** if you purged document from the main database, this also removes document from the view
+	 *
+	 * @param docid document to remove
+	 */
+	void purgeDoc(std::string_view docid);
+
 	///Update view from different DB
 	/** careful with this function. Don't mix two DBs into single view.
 	 *  You can put views to different DB to easy separate views and data later
@@ -63,19 +84,28 @@ public:
 	/** Because there can be multiple records for single key, result is iterator
 	 *
 	 * @param key key to scan
+	 * @param backward show results in descending order
 	 * @return iterator
 	 */
-	ViewIterator find(const json::Value &key);
+	ViewIterator find(const json::Value &key, bool backward = false);
 
 	///Searches for single key
 	/** Because there can be multiple records for single key, result is iterator
 	 *
 	 * @param key key to scan
 	 * @param from_doc last seen document (document is excluded). This allows to implement paging based on last seen document
+	 * @param backward show results in descending order
 	 * @return iterator
 	 */
-	ViewIterator find(const json::Value &key, const std::string_view &from_doc);
+	ViewIterator find(const json::Value &key, const std::string_view &from_doc, bool backward = false);
 
+
+	///Perform fast lookup for a value
+	/**
+	 * @param key key to lookup
+	 * @return found value. If key doesn't exists, returns undefined value. If there are multiple results, it selects only one.
+	 */
+	json::Value lookup(const json::Value &key);
 
 	///Scans whole view
 	ViewIterator scan();
@@ -89,7 +119,7 @@ public:
 	 * @note ordering is not strictly defined. Keys based on numbers are ordered, strings
 	 * are ordered using binary ordering, but other json objects can have any arbitrary order.
 	 */
-	ViewIterator scanRange(const json::Value &from, const json::Value &to);
+	ViewIterator scanRange(const json::Value &from, const json::Value &to, bool exclude_end);
 
 	///Scan for range
 	/**
@@ -101,7 +131,7 @@ public:
 	 * @note ordering is not strictly defined. Keys based on numbers are ordered, strings
 	 * are ordered using binary ordering, but other json objects can have any arbitrary order.
 	 */
-	ViewIterator scanRange(const json::Value &from, const json::Value &to, const std::string_view &from_doc);
+	ViewIterator scanRange(const json::Value &from, const json::Value &to, const std::string_view &from_doc, bool exclude_end);
 
 
 	///Scans for prefix
@@ -116,19 +146,23 @@ public:
 	 */
 	ViewIterator scanPrefix(const json::Value &prefix, bool backward);
 
-	///Scans for prefix
+	///Scans view from given key, returns iterator which will iterate rest of the view
 	/**
-	 * @param prefix prefix to search
-	 * @param backward enumerate backward
-	 * @param from_doc enables to skip some document for 'from key' iterator starts by next document after this document
+	 * @param key key to start. If the key doesn't exist, it starts by first item in selected direction
+	 * @param backward set true to scan backward. In backward scanning, all record of starting key are also included (in backward order)
 	 * @return iterator
-	 *
-	 * @note Prefix scan is defined if the part of the key is exact same. This can be achieved
-	 * using strings, numbers and arrays (allows to search for all items starting by a item
-	 * in the array), however objects wont work
 	 */
-	ViewIterator scanPrefix(const json::Value &prefix, bool backward, std::string_view from_doc);
+	ViewIterator scanFrom(const json::Value &key, bool backward);
 
+	///Scans view for given key, returns iterator which will iterate rest of the view
+	/**
+	 * @param key key to start. If the key doesn't exist, it starts by first item in selected direction
+	 * @param backward set true to scan backward
+	 * @param from_doc specify exact starting point by document id. The document must be one of records
+	 *    that belongs to the starting key. The document is excluded from the result.
+	 * @return iterator
+	 */
+	ViewIterator scanFrom(const json::Value &key, bool backward, const std::string &from_doc);
 
 	///retrieves current DB used for update content of view
 	/**
@@ -168,16 +202,17 @@ public:
 protected:
 	DocDB &db;
 	SeqID seqId;
+	std::uint64_t serialNr;
 	DocDB *updateDB;
 
 	std::string name;
 	std::uint64_t viewid;
 
-	///Function must be implemented by child class
-	virtual void map(const Document &doc, const EmitFn &emit) const = 0;
+	std::mutex wrlock;
 
 	class UpdateDoc;
 
+	void storeState();
 
 
 

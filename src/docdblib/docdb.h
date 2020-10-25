@@ -13,25 +13,44 @@
 #include <leveldb/write_batch.h>
 #include <exception>
 #include <memory>
+#include <mutex>
 
 #include <imtjson/string.h>
 #include "document.h"
+
+namespace leveldb {
+	class Env;
+}
 namespace docdb {
 
 using PLevelDB = std::unique_ptr<leveldb::DB>;
 using WriteBatch = leveldb::WriteBatch;
+using PEnv = std::unique_ptr<leveldb::Env>;
 
 
 class ChangesIterator;
 class DocIterator;
 class MapIterator;
 
+enum InMemoryEnum {
+	inMemory
+};
+
 class DocDB {
 public:
+	///Convert leveldb database
 	DocDB(PLevelDB &&db);
+	///Open database on path
 	DocDB(const std::string &path);
+	///Open database on path with leveldb options
 	DocDB(const std::string &path, const leveldb::Options &opt);
-	~DocDB();
+	///Create database in memory
+	DocDB(InMemoryEnum);
+	///Create database in memory - you can adjust underlying dabase options
+	DocDB(InMemoryEnum, const leveldb::Options &opt);
+	///Open database on specified storage
+	virtual ~DocDB();
+
 
 	///Stores document
 	/**
@@ -201,6 +220,8 @@ public:
 
 	void flushBatch(WriteBatch &batch, bool sync);
 
+	static constexpr unsigned int excludeBegin = 1;
+	static constexpr unsigned int excludeEnd = 2;
 
 	///Scan map from key to key (exclusive)
 	/**
@@ -209,9 +230,9 @@ public:
 	 * @param exclude_end don't include last item (if exists)
 	 * @return map iterator
 	 */
-	MapIterator mapScan(const std::string_view &from, const std::string_view &to, bool exclude_end);
+	MapIterator mapScan(const std::string_view &from, const std::string_view &to, unsigned int exclude = 0);
 
-	MapIterator mapScan_pk(std::string &&from, std::string &&to, bool exclude_end);
+	MapIterator mapScan_pk(std::string &&from, std::string &&to, unsigned int exclude = 0);
 
 	///Scan map from prefix
 	/**
@@ -253,9 +274,26 @@ public:
 	static Document deserializeDocument(const std::string_view &id, const std::string_view &data);
 	static DocumentRepl deserializeDocumentRepl(const std::string_view &id, const std::string_view &data);
 
+	///increases key by one
+	/** This allows to enumerate by prefix, this calculates end of range, while begin of range is prefix itself
+	 *
+	 * @param key key to increase - function modifies content
+	 * @retval true success
+	 * @retval false unable to increase, empty key, or key is '\xFF' which cannot be increased
+	 */
+	static bool increaseKey(std::string &key);
+
+protected:
+	///override function to stream log messages
+	virtual void logOutput(const char* format, va_list ap);
+	///override function to supply own implementation of time
+	virtual Timestamp now() const;
+
 protected:
 
 	using DocMap = std::unordered_set<std::string>;
+
+
 
 	PLevelDB db;
 	leveldb::WriteBatch batch;
@@ -264,7 +302,7 @@ protected:
 	std::size_t flushTreshold=256*1024;
 	std::size_t maxRevHistory=1000;
 	bool syncWrites = true;
-
+	std::recursive_mutex wrlock;
 
 
 	void checkFlushAfterWrite();
@@ -289,9 +327,15 @@ protected:
 	GetResult get_impl(const std::string_view &id) const;
 	static GetResult deserialize_impl(const std::string_view &val);
 
-	virtual Timestamp now() const;
 
 	SeqID findNextSeqID();
+
+	void openDB(const std::string &path, leveldb::Options &opts);
+
+	class Logger;
+
+	std::unique_ptr<Logger> logger;
+	PEnv env;
 };
 
 

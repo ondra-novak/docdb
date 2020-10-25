@@ -69,7 +69,8 @@ namespace codepoints {
 
 	using Type = unsigned char;
 
-	static constexpr Type undefined = 0;
+	///end of key or array
+	static constexpr Type end = 0;
 	///null value
 	static constexpr Type null = 1;
 	///false value
@@ -93,7 +94,7 @@ namespace codepoints {
 
 inline void jsonkey2string(const json::Value &v, std::string &out, codepoints::Type prefix = 0) {
 	switch (v.type()) {
-	case json::undefined:out.push_back(prefix|codepoints::undefined);break;
+	case json::undefined:
 	case json::null: out.push_back(prefix|codepoints::null);break;
 	case json::boolean: out.push_back(prefix|(v.getBool()?codepoints::true_value:codepoints::false_value));break;
 	case json::number: {
@@ -115,6 +116,7 @@ inline void jsonkey2string(const json::Value &v, std::string &out, codepoints::T
 			jsonkey2string(item, out, pfx);
 			pfx = 0;
 		}
+		out.push_back(codepoints::end);
 		}break;
 	default:
 		out.push_back(prefix|codepoints::json);
@@ -131,7 +133,7 @@ inline json::Value string2jsonkey(std::string_view &&key) {
 	bool startArray = (t & codepoints::array_prefix) != 0;
 	json::Value r;
 	switch (t & ~codepoints::array_prefix){
-	case codepoints::undefined: break;
+	case codepoints::end: return json::Value();
 	case codepoints::null: r = nullptr;break;
 	case codepoints::false_value: r = false; break;
 	case codepoints::true_value: r = true; break;
@@ -161,10 +163,10 @@ inline json::Value string2jsonkey(std::string_view &&key) {
 
 	if (startArray) {
 		json::Array a;
-		a.push_back(r);
-		while (!key.empty()) {
-			json::Value itm = string2jsonkey(std::move(key));
+		json::Value itm = r;
+		while (r.defined()) {
 			a.push_back(itm);
+			itm = string2jsonkey(std::move(key));
 		}
 		r = a;
 	}

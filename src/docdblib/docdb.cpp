@@ -5,14 +5,19 @@
  *      Author: ondra
  */
 
+#include <leveldb/env.h>
+#include <leveldb/comparator.h>
 #include <imtjson/binjson.tcc>
 #include "docdb.h"
 
+#include <leveldb/helpers/memenv.h>
+#include <cstdio>
 #include "changesiterator.h"
 #include "dociterator.h"
 #include "exception.h"
 #include "formats.h"
 #include "iterator.h"
+
 namespace docdb {
 
 /*
@@ -54,25 +59,72 @@ namespace docdb {
 static leveldb::ReadOptions defReadOpts{true};
 static leveldb::ReadOptions iteratorReadOpts{true,false,nullptr};
 
+
 DocDB::DocDB(PLevelDB &&db):db(std::move(db)) {
 	nextSeqID = findNextSeqID();
 }
 
 DocDB::DocDB(const std::string &path) {
-	using namespace leveldb;
-	DB *db;
-	Options opt;
-	opt.create_if_missing = true;
-	LevelDBException::checkStatus(leveldb::DB::Open(opt,path,&db));
-	this->db = PLevelDB(db);
-
-	nextSeqID = findNextSeqID();
+	leveldb::Options opts;
+	opts.create_if_missing = true;
+	opts.max_open_files = 100;
+	opts.max_file_size = 4*1024*1024;
+	opts.paranoid_checks=true;
+	openDB(path,opts);
 }
 
 DocDB::DocDB(const std::string &path, const leveldb::Options &opt) {
-	using namespace leveldb;
-	DB *db;
-	LevelDBException::checkStatus(leveldb::DB::Open(opt,path,&db));
+	leveldb::Options opt_copy =opt;
+	openDB(path,opt_copy);
+}
+
+class DocDB::Logger: public leveldb::Logger {
+public:
+	Logger(DocDB &owner):owner(owner) {}
+	DocDB &owner;
+
+	virtual void Logv(const char* format, va_list ap) {
+		owner.logOutput(format, ap);
+	}
+};
+
+DocDB::DocDB(InMemoryEnum inMemoryEnum) {
+	env = PEnv(leveldb::NewMemEnv(leveldb::Env::Default()));
+	leveldb::Options opts;
+	opts.env = env.get();
+	opts.create_if_missing = true;
+	openDB("",opts);
+}
+
+DocDB::DocDB(InMemoryEnum inMemoryEnum, const leveldb::Options &opt) {
+	leveldb::Options opt_copy =opt;
+	env = PEnv(leveldb::NewMemEnv(leveldb::Env::Default()));
+	opt_copy.env = env.get();
+	openDB("",opt_copy);
+}
+
+bool DocDB::increaseKey(std::string &x) {
+	if (!x.empty())  {
+		char c = x.back();
+		++c;
+		if (c == 0)
+			if (!increaseKey(x)) return false;
+		x.push_back(c);
+		return true;
+	} else {
+		return false;
+	}
+
+}
+
+void DocDB::openDB(const std::string &path, leveldb::Options &opts) {
+	opts.comparator = leveldb::BytewiseComparator();
+	if (opts.info_log == nullptr) {
+		logger = std::make_unique<Logger>(*this);
+		opts.info_log = logger.get();
+	}
+	leveldb::DB *db;
+	LevelDBException::checkStatus(leveldb::DB::Open(opts,path,&db));
 	this->db = PLevelDB(db);
 
 	nextSeqID = findNextSeqID();
@@ -83,6 +135,7 @@ DocDB::~DocDB() {
 }
 
 void DocDB::flush() {
+	std::lock_guard _(wrlock);
 	if (!pendingWrites.empty()) {
 		leveldb::WriteOptions opt;
 		opt.sync = syncWrites;
@@ -103,57 +156,6 @@ void DocDB::checkFlushAfterWrite() {
 		flush();
 	}
 }
-/*
-bool DocDB::put_impl(const Document &doc, DocRevision &rev) {
-	if (pendingWrites.find(doc.id) != pendingWrites.end()) {
-		flush();
-	}
-	std::string key(&doc_index,1);
-	std::string gkey(&graveyard,1);
-	std::string val;
-	json::Value hdr;
-	key.append(doc.id.str());
-	gkey.append(doc.id.str());
-	if (checkStatus_Get(db->Get({},key,&val))) {
-		hdr = string2json(val);
-	} else if (checkStatus_Get(db->Get({},gkey,&val))) {
-		hdr = string2json(val);
-	}
-	json::Value revisions = hdr[0];
-	SeqID seqId = hdr[1].getUIntLong();
-	DocRevision lastRev = revisions[0].getUIntLong();
-	if (lastRev != doc.rev) return false;
-
-	std::hash<json::Value> hash;
-	DocRevision newRev = hash(doc.content);
-	if (newRev == 0) newRev = 1;
-	rev = newRev;
-	if (newRev == lastRev) return true;
-
-	SeqID newSeqId = nextSeqID++;
-
-	revisions.unshift(newRev);
-	while (revisions.size()>maxRevHistory) revisions.pop();
-
-	json::Value newHdr = {revisions,newSeqId,now()};
-	val.clear();
-	json2string(newHdr,val);
-	json2string(doc.content, val);
-	if (doc.content.defined()) {
-		batch.Put(key, val);
-	} else {
-		batch.Delete(key);
-		batch.Put(gkey, val);
-	}
-	val.clear(); index2string(seqId,val);
-	batch.Delete(val);
-	val.clear(); index2string(newSeqId,val);
-	json::StrViewA docid = doc.id.str();
-	batch.Put(val, leveldb::Slice(docid.data, docid.length));
-	pendingWrites.insert(doc.id);
-	return true;
-}
-*/
 
 
 bool DocDB::put_impl(const Document &doc, DocRevision &rev) {
@@ -175,6 +177,8 @@ bool DocDB::put_impl(const Document &doc, DocRevision &rev) {
 
 template<typename Fn>
 bool DocDB::put_impl_t(const DocumentBase &doc,Fn &&fn) {
+	std::lock_guard _(wrlock);
+
 	if (pendingWrites.find(doc.id) != pendingWrites.end()) {
 		flush();
 	}
@@ -281,6 +285,8 @@ void DocDB::mapSet(const std::string_view &key, const std::string_view &value) {
 	mapSet_pk(std::move(k), value);
 }
 void DocDB::mapSet_pk(std::string &&key, const std::string_view &value) {
+	std::lock_guard _(wrlock);
+
 	key[0] = map_index;
 	batch.Put(key,leveldb::Slice(value.data(), value.length()));
 	checkFlushAfterWrite();
@@ -307,12 +313,16 @@ void DocDB::mapErase(const std::string_view &key) {
 	mapErase_pk(std::move(k));
 }
 void DocDB::mapErase_pk(std::string &&key) {
+	std::lock_guard _(wrlock);
+
 	key[0] = map_index;
 	batch.Delete(key);
 	checkFlushAfterWrite();
 }
 
 void DocDB::purgeDoc(std::string_view &id) {
+	std::lock_guard _(wrlock);
+
 	if (pendingWrites.find(std::string(id)) != pendingWrites.end()) {
 		flush();
 	}
@@ -370,14 +380,6 @@ DocIterator DocDB::scanRange(const std::string_view &from,
 	return DocIterator(db->NewIterator(iteratorReadOpts),key1, key2, false, exclude_end);
 }
 
-static void increase(std::string &x) {
-	if (!x.empty())  {
-		char c = x.back();
-		++c;
-		if (c == 0) increase(x);
-		x.push_back(c);
-	}
-}
 
 DocIterator DocDB::scanPrefix(const std::string_view &prefix, bool backward) const {
 	const_cast<DocDB *>(this)->flush();
@@ -386,7 +388,7 @@ DocIterator DocDB::scanPrefix(const std::string_view &prefix, bool backward) con
 	key1.push_back(doc_index);
 	key1.append(prefix);
 	std::string key2(key1);
-	increase(key2);
+	increaseKey(key2);
 	if (backward) {
 		return DocIterator(db->NewIterator(iteratorReadOpts), key2, key1, true, false);
 	} else {
@@ -402,8 +404,7 @@ DocIterator DocDB::scanGraveyard() const {
 
 }
 
-MapIterator DocDB::mapScan(const std::string_view &from, const std::string_view &to,
-		bool exclude_end) {
+MapIterator DocDB::mapScan(const std::string_view &from, const std::string_view &to, unsigned int exclude) {
 	std::string key1;
 	key1.reserve(from.length()+1);
 	key1.push_back(0);
@@ -412,13 +413,13 @@ MapIterator DocDB::mapScan(const std::string_view &from, const std::string_view 
 	key2.reserve(to.length()+1);
 	key2.push_back(0);
 	key2.append(to);
-	return mapScan_pk(std::move(key1), std::move(key2), exclude_end);
+	return mapScan_pk(std::move(key1), std::move(key2), exclude);
 }
 
-MapIterator DocDB::mapScan_pk(std::string &&from, std::string &&to, bool exclude_end) {
+MapIterator DocDB::mapScan_pk(std::string &&from, std::string &&to, unsigned int exclude) {
 	from[0] = map_index;
 	to[0] = map_index;
-	return MapIterator(db->NewIterator(iteratorReadOpts),from, to, false, exclude_end);
+	return MapIterator(db->NewIterator(iteratorReadOpts),from, to, (exclude & excludeBegin)!=0, (exclude & excludeEnd) != 0);
 
 }
 
@@ -434,7 +435,7 @@ MapIterator DocDB::mapScanPrefix(const std::string_view &prefix, bool backward) 
 MapIterator DocDB::mapScanPrefix_pk(std::string &&prefix, bool backward) {
 	prefix[0] = map_index;
 	std::string key2(prefix);
-	increase(key2);
+	increaseKey(key2);
 	if (backward) {
 		return MapIterator(db->NewIterator(iteratorReadOpts), key2, prefix, true,false);
 	} else {
@@ -469,7 +470,7 @@ void DocDB::mapErasePrefix(const std::string_view &prefix) {
 void DocDB::mapErasePrefix_pk(std::string &&prefix) {
 	prefix[0] = map_index;
 	std::string key2(prefix);
-	increase(key2);
+	increaseKey(key2);
 	Iterator iter(db->NewIterator(iteratorReadOpts), prefix, key2, true, false);
 	while (iter.next()) {
 		auto key = iter.key();
@@ -509,6 +510,7 @@ void DocDB::flushBatch(WriteBatch &batch, bool sync) {
 	db->Write({sync}, &batch);
 	batch.Clear();
 }
+
 
 SeqID DocDB::findNextSeqID() {
 	std::unique_ptr<leveldb::Iterator> iter(db->NewIterator({}));

@@ -9,6 +9,7 @@
 #include "formats.h"
 #include <imtjson/binjson.tcc>
 #include "../imtjson/src/imtjson/fnv.h"
+#include "changesiterator.h"
 
 namespace docdb {
 
@@ -127,19 +128,8 @@ public:
 
 	UpdateDoc(DocDB &db):db(db) {}
 
-	void operator()(json::Value key, json::Value value) const {
-		keypart.clear();
-		jsonkey2string(key, keypart);
-		keys.push_back(keypart);
-		keybase.resize(index_byte_length);
-		keybase.append(keypart);
-		keybase.append(id);
-		val.clear();
-		json2string(value, val);
-		batch.Put(keybase, val);
-	}
-
-	void processDoc(const Document &doc, const AbstractView &view);
+	virtual void operator()(const json::Value &key, const json::Value &value) const override;
+	void indexDoc(std::uint64_t viewId,const Document &doc, const IViewMap &view);
 protected:
 	DocDB &db;
 	mutable std::string keybase;
@@ -152,20 +142,32 @@ protected:
 
 };
 
-void AbstractView::UpdateDoc::processDoc(const Document &doc, const AbstractView &view) {
+void AbstractView::UpdateDoc::operator()(const json::Value &key, const json::Value &value) const {
+	keypart.clear();
+	jsonkey2string(key, keypart);
+	keys.push_back(keypart);
+	keybase.resize(index_byte_length);
+	keybase.append(keypart);
+	keybase.append(id);
+	val.clear();
+	json2string(value, val);
+	batch.Put(keybase, val);
+}
+
+
+void AbstractView::UpdateDoc::indexDoc(std::uint64_t viewId, const Document &doc, const IViewMap &view) {
 	batch.Clear();
 	keys.clear();
 	keybase.clear();
 	id = doc.id;
 
-	index2string(view.viewid, keybase);
+	index2string(viewId, keybase);
 	{
 		keybase.push_back(codepoints::doc);
 		keybase.append(doc.id);
-		MapIterator iter = db.mapScanPrefix_pk(std::move(keybase), false);
-		if (iter.next()) {
+		if (db.mapGet_pk(std::move(keybase), val)) {
 			batch.Delete(keybase);
-			json::Value keys = string2json(iter.value());
+			json::Value keys = string2json(val);
 			for (json::Value v: keys) {
 				keybase.resize(index_byte_length);
 				keybase.append(v.getString());
@@ -186,9 +188,175 @@ void AbstractView::UpdateDoc::processDoc(const Document &doc, const AbstractView
 	db.flushBatch(batch, false);
 }
 
+AbstractView::AbstractView(DocDB &db, std::string &&name, uint64_t serial_nr)
+:db(db)
+,seqId(0)
+,serialNr(serial_nr)
+,updateDB(&db)
+,name(std::move(name))
+,viewid(ViewTools::getViewKey(this->name))
+{
+	ViewTools tools(db);
+	ViewTools::State x = tools.getViewState(this->name);
+	if (x.serialNr == serial_nr) seqId = x.seq;
+}
+
+
+void AbstractView::rebuild() {
+	seqId = 0;
+	storeState();
+	update();
+}
+
+void AbstractView::clear() {
+	std::string key;
+	index2string(viewid, key);
+	db.mapErasePrefix_pk(std::move(key));
+}
+
+class EmptyMap: public IViewMap {
+public:
+	virtual void map(const Document &doc, const EmitFn &emit) const {
+	}
+};
 
 
 
+
+void AbstractView::purgeDoc(std::string_view docid) {
+	EmptyMap emap;
+	UpdateDoc up(db);
+	up.indexDoc(viewid, Document{std::string(docid)}, emap);
+}
+
+void AbstractView::update() {
+	if (updateDB) {
+		update(*updateDB);
+	}
+}
+
+void AbstractView::update(DocDB &updateDB) {
+
+	if (seqId < updateDB.getLastSeqID()) {
+		std::lock_guard _(wrlock);
+		UpdateDoc up(db);
+		ChangesIterator iter = updateDB.getChanges(seqId);
+		SeqID newseqid = seqId;
+
+		while (iter.next()) {
+			auto docid = iter.doc();
+			auto doc = db.get(docid);
+			up.indexDoc(viewid,doc,*this);
+			newseqid = iter.seq();
+		}
+
+		seqId = newseqid;
+		storeState();
+	}
+}
+
+ViewIterator AbstractView::find(const json::Value &key, bool backward) {
+	return find(key,std::string_view());
+}
+
+ViewIterator AbstractView::find(const json::Value &key, const std::string_view &from_doc, bool backward) {
+	update();
+	std::string skey1, skey2;
+	index2string(viewid, skey1);
+	jsonkey2string(key,skey1);
+	skey2 = skey1;
+	if (backward) {
+		if (from_doc.empty()) {
+			DocDB::increaseKey(skey1);
+		} else {
+			skey1.append(from_doc);
+		}
+	} else {
+		skey1.append(from_doc);
+		DocDB::increaseKey(skey2);
+	}
+	return ViewIterator(db.mapScan_pk(std::move(skey1), std::move(skey2), DocDB::excludeBegin));
+}
+
+json::Value AbstractView::lookup(const json::Value &key) {
+	auto iter = find(key,false);
+	if (iter.next()) return iter.value();
+	else return json::Value();
+}
+
+ViewIterator AbstractView::scan() {
+	update();
+	std::string pfx;
+	index2string(viewid,pfx);
+	return ViewIterator(db.mapScanPrefix_pk(std::move(pfx),false));
+}
+
+ViewIterator AbstractView::scanRange(const json::Value &from,
+		const json::Value &to, bool exclude_end) {
+	return scanRange(from, to, std::string_view(), exclude_end);
+}
+
+ViewIterator AbstractView::scanRange(const json::Value &from,
+		const json::Value &to, const std::string_view &from_doc,
+		bool exclude_end) {
+
+	update();
+	std::string strf, strt;
+	index2string(viewid, strf);
+	strt = strf;
+	jsonkey2string(from,strf);
+	jsonkey2string(to,strt);
+	strf.append(from_doc);
+	return ViewIterator(
+			db.mapScan_pk(std::move(strf), std::move(strt), (exclude_end?DocDB::excludeEnd:0)|DocDB::excludeBegin)
+	);
+}
+
+ViewIterator AbstractView::scanPrefix(const json::Value &prefix, bool backward) {
+	update();
+	std::string key1;
+	index2string(viewid, key1);
+	jsonkey2string(prefix, key1);
+	key1.pop_back();
+	return ViewIterator(
+			db.mapScanPrefix_pk(std::move(key1), backward)
+	);
+
+}
+
+ViewIterator AbstractView::scanFrom(const json::Value &item, bool backward, const std::string &from_doc) {
+	update();
+	std::string key1;
+	index2string(viewid, key1);
+	std::string key2(key1);
+	if (!backward) {
+		DocDB::increaseKey(key2);
+	}
+	key1.append(from_doc);
+	return ViewIterator(
+			db.mapScan_pk(std::move(key1), std::move(key2), DocDB::excludeBegin|DocDB::excludeEnd)
+	);
+}
+
+ViewIterator AbstractView::scanFrom(const json::Value &key, bool backward) {
+	update();
+	std::string key1;
+	index2string(viewid, key1);
+	std::string key2(key1);
+	if (backward) {
+		DocDB::increaseKey(key1);
+	} else {
+		DocDB::increaseKey(key2);
+	}
+	return ViewIterator(
+			db.mapScan_pk(std::move(key1), std::move(key2), DocDB::excludeBegin|DocDB::excludeEnd)
+	);
+}
+
+void AbstractView::storeState() {
+	ViewTools tools(db);
+	tools.setViewState(name,{serialNr,seqId});
+}
 
 } /* namespace docdb */
 
