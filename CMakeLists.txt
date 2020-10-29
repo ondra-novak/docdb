@@ -8,4 +8,4 @@ add_compile_options(-Wall -Werror -Wno-noexcept-type)
 
 add_subdirectory (src/imtjson/src/imtjson)
 add_subdirectory (src/docdblib)
-add_subdirectory (src/exec)
+add_subdirectory (src/test)

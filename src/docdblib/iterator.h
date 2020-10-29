@@ -70,7 +70,7 @@ public:
 
 	///Access value (return binary representation of the value)
 	std::string_view value() const {
-		auto sl = iter->key();
+		auto sl = iter->value();
 		return std::string_view(sl.data(),sl.size());
 	}
 

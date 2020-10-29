@@ -30,10 +30,11 @@ inline json::Value string2json(const std::string_view &str) {
 inline json::Value string2json(std::string_view &&str) {
 	std::size_t idx = 0;
 	std::size_t len = str.length();
-	return json::Value::parseBinary([&]{
+	json::Value res = json::Value::parseBinary([&]{
 		return idx<len?static_cast<int>(str[idx++]):-1;
 	});
 	str = str.substr(idx);
+	return res;
 }
 
 template<int i>

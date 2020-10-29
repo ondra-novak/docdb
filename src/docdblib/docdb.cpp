@@ -117,6 +117,17 @@ bool DocDB::increaseKey(std::string &x) {
 
 }
 
+void DocDB::logOutput(const char *, va_list ) {}
+
+Timestamp DocDB::now() const {
+	return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+bool DocDB::erase(const std::string_view &id, DocRevision rev) {
+	Document doc{std::string(id), json::Value(), 0, rev};
+	return put(doc);
+}
+
 void DocDB::openDB(const std::string &path, leveldb::Options &opts) {
 	opts.comparator = leveldb::BytewiseComparator();
 	if (opts.info_log == nullptr) {
@@ -271,7 +282,7 @@ DocDB::GetResult DocDB::get_impl(const std::string_view &id) const {
 	return deserialize_impl(val);
 }
 
-DocDB::GetResult DocDB::deserialize_impl(const std::string_view &val) {
+DocDB::GetResult DocDB::deserialize_impl(std::string_view &&val) {
 	json::Value header = string2json(std::move(val));
 	json::Value content = string2json(std::move(val));
 	return {header, content};
@@ -348,12 +359,12 @@ void DocDB::purgeDoc(std::string_view &id) {
 }
 
 DocumentRepl DocDB::deserializeDocumentRepl(const std::string_view &id, const std::string_view &data) {
-	auto r = deserialize_impl(data);
+	auto r = deserialize_impl(std::string_view(data));
 	return {std::string(id), r.content,r.header[2].getUIntLong(),r.header[0]};
 }
 
 Document DocDB::deserializeDocument(const std::string_view &id, const std::string_view &data) {
-	auto r = deserialize_impl(data);
+	auto r = deserialize_impl(std::string_view(data));
 	return {std::string(id), r.content,r.header[2].getUIntLong(),r.header[0][0].getUIntLong()};
 }
 

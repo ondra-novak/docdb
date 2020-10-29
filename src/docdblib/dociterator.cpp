@@ -11,13 +11,13 @@
 namespace docdb {
 
 Document DocIterator::get() const {
-	auto id = Iterator::key();
+	auto id = Iterator::key().substr(1);
 	auto data = Iterator::value();
 	return DocDB::deserializeDocument(id, data);
 }
 
 DocumentRepl DocIterator::replicate() const {
-	auto id = Iterator::key();
+	auto id = Iterator::key().substr(1);
 	auto data = Iterator::value();
 	return DocDB::deserializeDocumentRepl(id, data);
 }

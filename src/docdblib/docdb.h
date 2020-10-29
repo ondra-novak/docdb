@@ -77,6 +77,8 @@ public:
 	bool put(const DocumentRepl &doc);
 
 
+	bool erase(const std::string_view &id, DocRevision rev);
+
 	///Flushes all pending writes
 	/** Documents are stored into batch, and flushed when buffer is full, or
 	 * before any read. This function flushes all writes manually ensures, that
@@ -295,6 +297,10 @@ protected:
 
 
 
+	class Logger;
+
+	std::unique_ptr<Logger> logger;
+	PEnv env;
 	PLevelDB db;
 	leveldb::WriteBatch batch;
 	DocMap pendingWrites;
@@ -307,10 +313,10 @@ protected:
 
 	void checkFlushAfterWrite();
 
-	static const char changes_index = 0;
-	static const char doc_index = 1;
-	static const char graveyard = 2;
-	static const char map_index = 3;
+	static constexpr char changes_index = 0;
+	static constexpr char doc_index = 1;
+	static constexpr char graveyard = 2;
+	static constexpr char map_index = 3;
 
 
 
@@ -325,17 +331,13 @@ protected:
 	};
 
 	GetResult get_impl(const std::string_view &id) const;
-	static GetResult deserialize_impl(const std::string_view &val);
+	static GetResult deserialize_impl(std::string_view &&val);
 
 
 	SeqID findNextSeqID();
 
 	void openDB(const std::string &path, leveldb::Options &opts);
 
-	class Logger;
-
-	std::unique_ptr<Logger> logger;
-	PEnv env;
 };
 
 
