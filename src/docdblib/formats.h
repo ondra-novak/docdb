@@ -11,7 +11,7 @@
 #include <string_view>
 #include <imtjson/value.h>
 #include <imtjson/binjson.h>
-#include "../imtjson/src/imtjson/array.h"
+#include <imtjson/array.h>
 
 namespace docdb {
 
@@ -46,7 +46,7 @@ struct Index2String_Push{
 };
 template<>
 struct Index2String_Push<0>{
-	static void push(std::uint64_t idx, std::string &out) {}
+	static void push(std::uint64_t , std::string &) {}
 };
 
 static constexpr unsigned int index_byte_length = 9;

@@ -8,7 +8,7 @@
 #include "abstractview.h"
 #include "formats.h"
 #include <imtjson/binjson.tcc>
-#include "../imtjson/src/imtjson/fnv.h"
+#include <imtjson/fnv.h>
 #include "changesiterator.h"
 
 namespace docdb {
@@ -216,7 +216,7 @@ void AbstractView::clear() {
 
 class EmptyMap: public IViewMap {
 public:
-	virtual void map(const Document &doc, const EmitFn &emit) const {
+	virtual void map(const Document &, const EmitFn &) const {
 	}
 };
 
@@ -226,7 +226,7 @@ public:
 void AbstractView::purgeDoc(std::string_view docid) {
 	EmptyMap emap;
 	UpdateDoc up(db);
-	up.indexDoc(viewid, Document{std::string(docid)}, emap);
+	up.indexDoc(viewid, Document{std::string(docid), json::Value()}, emap);
 }
 
 void AbstractView::update() {
@@ -256,7 +256,7 @@ void AbstractView::update(DocDB &updateDB) {
 }
 
 ViewIterator AbstractView::find(const json::Value &key, bool backward) {
-	return find(key,std::string_view());
+	return find(key,std::string_view(), backward);
 }
 
 ViewIterator AbstractView::find(const json::Value &key, const std::string_view &from_doc, bool backward) {

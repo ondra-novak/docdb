@@ -184,7 +184,7 @@ public:
 	}
 
 	///Clears updateDB and disables automatic update
-	void clearUpdateDB(DocDB &updateDb) {
+	void clearUpdateDB() {
 		this->updateDB = nullptr;
 	}
 

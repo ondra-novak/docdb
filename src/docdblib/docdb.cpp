@@ -88,7 +88,7 @@ public:
 	}
 };
 
-DocDB::DocDB(InMemoryEnum inMemoryEnum) {
+DocDB::DocDB(InMemoryEnum) {
 	env = PEnv(leveldb::NewMemEnv(leveldb::Env::Default()));
 	leveldb::Options opts;
 	opts.env = env.get();
@@ -96,7 +96,7 @@ DocDB::DocDB(InMemoryEnum inMemoryEnum) {
 	openDB("",opts);
 }
 
-DocDB::DocDB(InMemoryEnum inMemoryEnum, const leveldb::Options &opt) {
+DocDB::DocDB(InMemoryEnum, const leveldb::Options &opt) {
 	leveldb::Options opt_copy =opt;
 	env = PEnv(leveldb::NewMemEnv(leveldb::Env::Default()));
 	opt_copy.env = env.get();
