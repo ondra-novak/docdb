@@ -74,6 +74,9 @@ public:
 		return std::string_view(sl.data(),sl.size());
 	}
 
+	auto orig_key() const {
+		return iter->key();
+	}
 
 
 protected:
@@ -102,6 +105,7 @@ public:
 	using Iterator::Iterator;
 	using Iterator::next;
 	using Iterator::value;
+	using Iterator::orig_key;
 
 	///Retrieves key
 	/**

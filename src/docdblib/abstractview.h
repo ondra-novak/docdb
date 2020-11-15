@@ -32,47 +32,22 @@ class IViewMap {
 public:
 	///Function must be implemented by child class
 	virtual void map(const Document &doc, const EmitFn &emit) const = 0;
-
+	virtual ~IViewMap() {}
 };
 
-class AbstractView: public IViewMap, public UpdatableObject {
+class IReduceObserver {
+public:
+	virtual void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted) = 0;
+	virtual ~IReduceObserver() {}
+};
 
-	using ViewID = DocDB::ViewIndexKey;
-	using ViewDocID = DocDB::ViewDocIndexKey;
-
+class AbstractViewBase {
 public:
 
-	///Initialize view
-	/**
-	 * Initialize or create view
-	 *
-	 * @param db database object
- 	 * @param name name of the view. Name must be unique
-	 * @param serial_nr serial number of the view. If serial number doesn't match the stored
-	 * serial number, the content of view is deleted and the view is rebuilded
-	 *
-	 * Second and third argument is in most cases filled by class which implements this view.
-	 * There is no reason to pass these arguments to public interface, because the name and
-	 * the serial number is tied to implementation
-	 *
-	 */
-	AbstractView(DocDB &db, std::string &&name, uint64_t serial_nr);
 
-	virtual ~AbstractView() {}
+	using ViewID = DocDB::ViewIndexKey;
 
-	///Complete rebuild view
-	void rebuild();
-
-	///remove all items from view
-	/** Note : operation is not atomical - while content of view is deleted you can still browse it */
-	void clear();
-
-	///Remove document from the view
-	/** if you purged document from the main database, this also removes document from the view
-	 *
-	 * @param docid document to remove
-	 */
-	void purgeDoc(std::string_view docid);
+	AbstractViewBase(DocDB &db, ViewID &&viewid);
 
 
 	///Searches for single key
@@ -161,17 +136,76 @@ public:
 
 
 protected:
+	virtual void update() = 0;
+	DocDB &db;
+	ViewID viewid;
+
+};
+
+class AbstractView: public UpdatableObject,
+					public AbstractViewBase,
+					public IViewMap,
+					protected IReduceObserver {
+
+	using ViewDocID = DocDB::ViewDocIndexKey;
+
+public:
+
+	///Initialize view
+	/**
+	 * Initialize or create view
+	 *
+	 * @param db database object
+ 	 * @param name name of the view. Name must be unique
+	 * @param serial_nr serial number of the view. If serial number doesn't match the stored
+	 * serial number, the content of view is deleted and the view is rebuilded
+	 *
+	 * Second and third argument is in most cases filled by class which implements this view.
+	 * There is no reason to pass these arguments to public interface, because the name and
+	 * the serial number is tied to implementation
+	 *
+	 */
+	AbstractView(DocDB &db, std::string &&name, uint64_t serial_nr);
+
+	virtual ~AbstractView() {}
+
+	///remove all items from view
+	/** Note : operation is not atomical - while content of view is deleted you can still browse it */
+	void clear();
+
+	///Remove document from the view
+	/** if you purged document from the main database, this also removes document from the view
+	 *
+	 * @param docid document to remove
+	 */
+	void purgeDoc(std::string_view docid);
+
+
+	virtual void update();
+
+
+	void updateDoc(const Document &doc);
+
+	void registerObserver(IReduceObserver *obs);
+
+	void unregisterObserver(IReduceObserver *obs);
+
+protected:
+	using UpdatableObject::db;
 	std::string name;
 	std::uint64_t serialNr;
-	ViewID viewid;
 	ViewDocID viewdocid;
 
 	std::mutex wrlock;
+	std::vector<IReduceObserver *> reduceObservers;
+
 
 	class UpdateDoc;
 
 	virtual void storeState() override;
 	virtual SeqID scanUpdates(ChangesIterator &&iter) override;
+	virtual void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted) override;
+
 
 };
 
@@ -215,6 +249,7 @@ public:
 	json::Value key() const;
 	json::Value value() const;
 	const std::string_view id() const;
+	using MapIterator::orig_key;
 protected:
 	mutable std::string_view docid;
 	mutable json::Value ukey;
@@ -234,6 +269,58 @@ public:
 };
 
 
+class View: public AbstractView {
+public:
+	typedef void (*MapFn)(const Document &, const EmitFn &);
+	View(DocDB &db, std::string_view name, std::uint64_t serialnr, MapFn mapFn);
+protected:
+	MapFn mapFn;
+	virtual void map(const Document &doc, const EmitFn &emit) const override;
+};
+
+class AbstractReduceView: public AbstractViewBase, public IReduceObserver {
+public:
+	/**
+	 * @param viewMap source map
+	 * @param name name of the view
+	 * @param maxGroupLevel specify maximum grouplevel of array keys for reduce.
+	 * 			This can help reduce space of the reduce map if more levels are not necesery
+	 * @param reduceAll generate reduceAll result (key null)
+	 *
+	 */
+	AbstractReduceView(AbstractView &viewMap, const std::string &name, unsigned int maxGroupLevel = 99, bool reduceAll = false);
+	~AbstractReduceView();
+
+	virtual void update();
+
+	struct KeyValue {
+		std::string docId;
+		json::Value key;
+		json::Value value;
+	};
+
+	virtual json::Value reduce(const std::vector<KeyValue> &items, bool rereduce) const = 0;
+
+protected:
+	AbstractView &viewMap;
+	std::string name;
+	unsigned int maxGroupLevel;
+	bool reduceAll;
+
+
+	virtual void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted);
+};
+
+class ReduceView: public AbstractReduceView {
+public:
+	typedef json::Value (*ReduceFn)(const std::vector<KeyValue> &items, bool rereduce);
+	ReduceView(AbstractView &viewMap, const std::string &name, ReduceFn reduceFn,
+					unsigned int maxGroupLevel = 99, bool reduceAll = false);
+protected:
+	ReduceFn reduceFn;
+	virtual json::Value reduce(const std::vector<KeyValue> &items, bool rereduce) const override;
+
+};
 
 } /* namespace docdb */
 

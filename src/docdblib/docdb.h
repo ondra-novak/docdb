@@ -45,8 +45,9 @@ protected:
 	static constexpr char viewlist_index = 3;
 	static constexpr char view_index = 4;
 	static constexpr char view_doc_index = 5;
-	static constexpr char attachments_list = 6;
-	static constexpr char attachments = 7;
+	static constexpr char reduce_key_index = 6;
+	static constexpr char attachments_list = 7;
+	static constexpr char attachments = 8;
 
 
 public:
@@ -186,6 +187,7 @@ public:
 	class GenKey: public std::string {
 	public:
 		GenKey(char type);
+		GenKey(char type, const char *key);
 		GenKey(char type, const std::string &key);
 		GenKey(char type, const std::string_view &key);
 		GenKey(char type, const leveldb::Slice &key);
@@ -194,12 +196,14 @@ public:
 		void set(const std::string &key);
 		void set(const std::string_view &key);
 		void set(const leveldb::Slice &key);
+		std::string_view content() const {return std::string_view(data()+1,length()-1);}
 	};
 
 	template<char type>
 	class GenKeyT: public GenKey {
 	public:
 		GenKeyT():GenKey(type) {}
+		GenKeyT(const char *key):GenKey(type, key) {}
 		GenKeyT(const std::string &key):GenKey(type, key) {}
 		GenKeyT(const std::string_view &key):GenKey(type, key) {}
 		GenKeyT(const leveldb::Slice &key):GenKey(type, key) {}
@@ -210,6 +214,7 @@ public:
 	using GraveyardKey = GenKeyT<graveyard>;
 	using AttachmentKey = GenKeyT<attachments>;
 	using ViewIndexKey = GenKeyT<view_index>;
+	using ReduceIndexKey = GenKeyT<reduce_key_index>;
 	using ViewDocIndexKey = GenKeyT<view_doc_index>;
 	using ViewListIndexKey = GenKeyT<viewlist_index>;
 

@@ -55,7 +55,7 @@ public:
 	}
 
 	///Update view by recent changes in the database
-	void update();
+	virtual void update();
 
 
 	///Update view from different DB
@@ -64,7 +64,7 @@ public:
 	 *
 	 * @param db
 	 */
-	void update(DocDB &db);
+	virtual void update(DocDB &db);
 
 
 	void rebuild();

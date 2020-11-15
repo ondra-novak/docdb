@@ -505,6 +505,9 @@ DocDB::GenKey::GenKey(char type) {
 	push_back(type);
 }
 
+DocDB::GenKey::GenKey(char type, const char *key) {
+	push_back(type); append(key);
+}
 
 DocDB::GenKey::GenKey(char type, const std::string &key) {
 	push_back(type); append(key);
