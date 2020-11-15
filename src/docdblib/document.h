@@ -24,6 +24,8 @@ struct DocumentBase {
 	json::Value content;
 	/** last write timestamp */
 	Timestamp timestamp = 0;
+	/** true - document is deleted, false - document is not deleted */
+	bool deleted;
 
 	bool valid() const {return content.defined();}
 

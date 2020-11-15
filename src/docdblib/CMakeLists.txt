@@ -7,4 +7,7 @@ add_library (docdblib
 	dociterator.cpp
 	changesiterator.cpp
 	abstractview.cpp
+	attachments.cpp
+	updatableobject.cpp
+	filedb.cpp
 	)

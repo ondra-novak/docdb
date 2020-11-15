@@ -9,6 +9,7 @@
 #define SRC_DOCDB_ABSTRACTVIEW_H_
 #include "docdb.h"
 #include "iterator.h"
+#include "updatableobject.h"
 
 namespace docdb {
 
@@ -34,7 +35,11 @@ public:
 
 };
 
-class AbstractView: public IViewMap {
+class AbstractView: public IViewMap, public UpdatableObject {
+
+	using ViewID = DocDB::ViewIndexKey;
+	using ViewDocID = DocDB::ViewDocIndexKey;
+
 public:
 
 	///Initialize view
@@ -55,13 +60,11 @@ public:
 
 	virtual ~AbstractView() {}
 
-	///Update view by recent changes in the database
-	void update();
-
 	///Complete rebuild view
 	void rebuild();
 
 	///remove all items from view
+	/** Note : operation is not atomical - while content of view is deleted you can still browse it */
 	void clear();
 
 	///Remove document from the view
@@ -70,14 +73,6 @@ public:
 	 * @param docid document to remove
 	 */
 	void purgeDoc(std::string_view docid);
-
-	///Update view from different DB
-	/** careful with this function. Don't mix two DBs into single view.
-	 *  You can put views to different DB to easy separate views and data later
-	 *
-	 * @param db
-	 */
-	void update(DocDB &db);
 
 
 	///Searches for single key
@@ -164,57 +159,20 @@ public:
 	 */
 	ViewIterator scanFrom(const json::Value &key, bool backward, const std::string &from_doc);
 
-	///retrieves current DB used for update content of view
-	/**
-	 * @return pointer to database object. The pointer can be null in case, that automatic update is disabled (you need to call update() manually)
-	 */
-	DocDB *getUpdateDB() const {
-		return updateDB;
-	}
-
-	///Sets database used to scan for updates
-	/**
-	 * @param updateDb reference to database. Ensure that database is not destroed during lifetime of this view.
-	 * Default value is origin database
-	 *
-	 * @noce careful with this feature. Never mix two databases into single view.
-	 */
-	void setUpdateDB(DocDB &updateDb) {
-		this->updateDB = &updateDb;
-	}
-
-	///Clears updateDB and disables automatic update
-	void clearUpdateDB(DocDB &updateDb) {
-		this->updateDB = nullptr;
-	}
-
-	///Retrieve last sequence ID
-	SeqID getSeqId() const {
-		return seqId;
-	}
-
-	///Retrieve database object
-	DocDB& getDB() const {
-		return db;
-	}
 
 
 protected:
-	DocDB &db;
-	SeqID seqId;
-	std::uint64_t serialNr;
-	DocDB *updateDB;
-
 	std::string name;
-	std::uint64_t viewid;
+	std::uint64_t serialNr;
+	ViewID viewid;
+	ViewDocID viewdocid;
 
 	std::mutex wrlock;
 
 	class UpdateDoc;
 
-	void storeState();
-
-
+	virtual void storeState() override;
+	virtual SeqID scanUpdates(ChangesIterator &&iter) override;
 
 };
 
@@ -243,7 +201,7 @@ public:
 	///Updates view state (this function is called by AbstractView after update
 	void setViewState(const std::string_view &viewName, const State &state);
 
-	static std::uint64_t getViewKey(const std::string_view &viewName);
+	static std::string getViewID(const std::string_view &viewName);
 
 protected:
 	DocDB &db;

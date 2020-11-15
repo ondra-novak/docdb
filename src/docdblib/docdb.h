@@ -14,6 +14,7 @@
 #include <exception>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 
 #include <imtjson/string.h>
 #include "document.h"
@@ -37,6 +38,17 @@ enum InMemoryEnum {
 };
 
 class DocDB {
+protected:
+	static constexpr char changes_index = 0;
+	static constexpr char doc_index = 1;
+	static constexpr char graveyard = 2;
+	static constexpr char viewlist_index = 3;
+	static constexpr char view_index = 4;
+	static constexpr char view_doc_index = 5;
+	static constexpr char attachments_list = 6;
+	static constexpr char attachments = 7;
+
+
 public:
 	///Convert leveldb database
 	DocDB(PLevelDB &&db);
@@ -171,6 +183,39 @@ public:
 	}
 
 
+	class GenKey: public std::string {
+	public:
+		GenKey(char type);
+		GenKey(char type, const std::string &key);
+		GenKey(char type, const std::string_view &key);
+		GenKey(char type, const leveldb::Slice &key);
+		operator leveldb::Slice() const;
+		void clear();
+		void set(const std::string &key);
+		void set(const std::string_view &key);
+		void set(const leveldb::Slice &key);
+	};
+
+	template<char type>
+	class GenKeyT: public GenKey {
+	public:
+		GenKeyT():GenKey(type) {}
+		GenKeyT(const std::string &key):GenKey(type, key) {}
+		GenKeyT(const std::string_view &key):GenKey(type, key) {}
+		GenKeyT(const leveldb::Slice &key):GenKey(type, key) {}
+	};
+
+	using ChangesIndexKey = GenKeyT<changes_index>;
+	using DocIndexKey = GenKeyT<doc_index>;
+	using GraveyardKey = GenKeyT<graveyard>;
+	using AttachmentKey = GenKeyT<attachments>;
+	using ViewIndexKey = GenKeyT<view_index>;
+	using ViewDocIndexKey = GenKeyT<view_doc_index>;
+	using ViewListIndexKey = GenKeyT<viewlist_index>;
+
+
+
+
 	///Sets item in map
 	/**DocDB supports unspecified map feature, which can use database as key-value storage
 	 * However, items in this storage cannot be replicated and doesn't record order. Its
@@ -179,15 +224,10 @@ public:
 	 * @param key new key to set or replace
 	 * @param value new value
 	 */
-	void mapSet(const std::string_view &key, const std::string_view &value);
+	void mapSet(const GenKey &key, const std::string_view &value);
 
 	///Works same as mapSet, however expect one extra byte at the beginning of the key, which is modified by the call
-	void mapSet_pk(std::string &&key, const std::string_view &value);
-
-	static void mapSet(WriteBatch &batch, const std::string_view &key, const std::string_view &value);
-
-	///Works same as mapSet, however expect one extra byte at the beginning of the key, which is modified by the call
-	static void mapSet_pk(WriteBatch &batch, std::string &&key, const std::string_view &value);
+	static void mapSet(WriteBatch &batch, const GenKey &key, const std::string_view &value);
 
 
 	///Retrieve item from map
@@ -200,9 +240,7 @@ public:
 	 * @retval true found
 	 * @retval false not found - content of value is not changed
 	 */
-	bool mapGet(const std::string &key, std::string &value);
-
-	bool mapGet_pk(std::string &&key, std::string &value);
+	bool mapGet(const GenKey &key, std::string &value);
 
 	///Erase item in map
 	/**DocDB supports unspecified map feature, which can use database as key-value storage
@@ -212,13 +250,10 @@ public:
 	 * @param key key to erase
 	 *
 	 */
-	void mapErase(const std::string_view &key);
+	void mapErase(const GenKey &key);
 
-	void mapErase_pk(std::string &&key);
+	static void mapErase(WriteBatch &batch, const GenKey &key);
 
-	static void mapErase(WriteBatch &batch, const std::string_view &key);
-
-	static void mapErase_pk(WriteBatch &batch, std::string &&key);
 
 	void flushBatch(WriteBatch &batch, bool sync);
 
@@ -232,9 +267,7 @@ public:
 	 * @param exclude_end don't include last item (if exists)
 	 * @return map iterator
 	 */
-	MapIterator mapScan(const std::string_view &from, const std::string_view &to, unsigned int exclude = 0);
-
-	MapIterator mapScan_pk(std::string &&from, std::string &&to, unsigned int exclude = 0);
+	MapIterator mapScan(const GenKey &from, const GenKey &to, unsigned int exclude = 0);
 
 	///Scan map from prefix
 	/**
@@ -242,14 +275,10 @@ public:
 	 * @param backward scan backward
 	 * @return map iterator
 	 */
-	MapIterator mapScanPrefix(const std::string_view &prefix, bool backward);
-
-	MapIterator mapScanPrefix_pk(std::string &&prefix, bool backward);
+	MapIterator mapScanPrefix(const GenKey &prefix, bool backward);
 
 	///Erase all items by prefix
-	void mapErasePrefix(const std::string_view &prefix);
-
-	void mapErasePrefix_pk(std::string &&prefix);
+	void mapErasePrefix(const GenKey &prefix);
 
 	///Retrieves maximum revision history
 	std::size_t getMaxRevHistory() const {
@@ -286,6 +315,7 @@ public:
 	static bool increaseKey(std::string &key);
 
 protected:
+
 	///override function to stream log messages
 	virtual void logOutput(const char* format, va_list ap);
 	///override function to supply own implementation of time
@@ -293,8 +323,7 @@ protected:
 
 protected:
 
-	using DocMap = std::unordered_set<std::string>;
-
+	using PendingWrites = std::unordered_set<GenKey, std::hash<std::string_view> >;
 
 
 	class Logger;
@@ -303,20 +332,18 @@ protected:
 	PEnv env;
 	PLevelDB db;
 	leveldb::WriteBatch batch;
-	DocMap pendingWrites;
+	PendingWrites pendingWrites;
 	SeqID nextSeqID;
 	std::size_t flushTreshold=256*1024;
 	std::size_t maxRevHistory=1000;
 	bool syncWrites = true;
-	std::recursive_mutex wrlock;
+	mutable std::shared_mutex wrlock;
+	using LockEx = std::unique_lock<std::shared_mutex>;
+	using LockSh = std::shared_lock<std::shared_mutex>;
 
 
 	void checkFlushAfterWrite();
 
-	static constexpr char changes_index = 0;
-	static constexpr char doc_index = 1;
-	static constexpr char graveyard = 2;
-	static constexpr char map_index = 3;
 
 
 
@@ -328,15 +355,23 @@ protected:
 	struct GetResult {
 		json::Value header;
 		json::Value content;
+		bool deleted;
 	};
 
 	GetResult get_impl(const std::string_view &id) const;
-	static GetResult deserialize_impl(std::string_view &&val);
+	static GetResult deserialize_impl(std::string_view &&val, bool deleted);
 
 
 	SeqID findNextSeqID();
 
 	void openDB(const std::string &path, leveldb::Options &opts);
+
+	bool isPending(const GenKey &key) const;
+	void flushIfPending_lk(const GenKey &key) const;
+	void flushIfPending(const GenKey &key) const;
+	void flush_lk();
+	void markPending(const GenKey &key);
+	void markPending(GenKey &&key);
 
 };
 
@@ -344,3 +379,4 @@ protected:
 } /* namespace docdb */
 
 #endif /* SRC_DOCDBLIB_DOCDB_H_ */
+

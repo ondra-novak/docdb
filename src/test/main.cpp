@@ -71,7 +71,7 @@ bool basic_test() {
 	};
 	tst.test("Put replicate","qwe/[222,111,332696639004383224,332697738516011435]:content_a") >> [&](std::ostream &out) {
 		DocumentRepl doc {
-			"qwe","content_a",0,{222,111,332696639004383224,332697738516011435}
+			"qwe","content_a",0,false,{222,111,332696639004383224,332697738516011435}
 		};
 		db.put(doc);
 		doc = db.replicate("qwe");
@@ -79,7 +79,7 @@ bool basic_test() {
 	};
 	tst.test("Put same replicate","1qwe/[222,111,332696639004383224,332697738516011435]:content_a") >> [&](std::ostream &out) {
 		DocumentRepl doc {
-			"qwe","content_a",0,{222,111,332696639004383224,332697738516011435}
+			"qwe","content_a",0,false,{222,111,332696639004383224,332697738516011435}
 		};
 		bool x = db.put(doc);
 		doc = db.replicate("qwe");
@@ -87,7 +87,7 @@ bool basic_test() {
 	};
 	tst.test("Put conflict replicate","0qwe/[222,111,332696639004383224,332697738516011435]:content_a") >> [&](std::ostream &out) {
 		DocumentRepl doc {
-			"qwe","content_a",0,{333,111,332696639004383224,332697738516011435}
+			"qwe","content_a",0,false,{333,111,332696639004383224,332697738516011435}
 		};
 		bool x = db.put(doc);
 		doc = db.replicate("qwe");
