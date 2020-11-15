@@ -124,7 +124,7 @@ Timestamp DocDB::now() const {
 }
 
 bool DocDB::erase(const std::string_view &id, DocRevision rev) {
-	Document doc{std::string(id), json::Value(), 0, rev};
+	Document doc{std::string(id), json::Value(), 0, true, rev};
 	return put(doc);
 }
 
@@ -146,7 +146,11 @@ DocDB::~DocDB() {
 }
 
 void DocDB::flush() {
-	std::lock_guard _(wrlock);
+	LockEx _(wrlock);
+	flush_lk();
+}
+
+void DocDB::flush_lk() {
 	if (!pendingWrites.empty()) {
 		leveldb::WriteOptions opt;
 		opt.sync = syncWrites;
@@ -156,6 +160,7 @@ void DocDB::flush() {
 	}
 }
 
+
 bool DocDB::put(const Document &doc) {
 	DocRevision ignore;
 	return put_impl(doc, ignore);
@@ -164,7 +169,7 @@ bool DocDB::put(const Document &doc) {
 
 void DocDB::checkFlushAfterWrite() {
 	if (batch.ApproximateSize() > flushTreshold) {
-		flush();
+		flush_lk();
 	}
 }
 
@@ -186,23 +191,57 @@ bool DocDB::put_impl(const Document &doc, DocRevision &rev) {
 }
 
 
+bool DocDB::isPending(const GenKey &key) const{
+	return pendingWrites.find(key) != pendingWrites.end();
+}
+
+void DocDB::flushIfPending_lk(const GenKey &key) const {
+	if (isPending(key)) {
+		const_cast<DocDB *>(this)->flush_lk();
+	}
+}
+
+void DocDB::flushIfPending(const GenKey &key) const {
+	LockSh sh(wrlock);
+	if (isPending(key)) {
+		sh.unlock();
+		LockEx ex(wrlock);
+		const_cast<DocDB *>(this)->flush_lk();
+	}
+}
+
+void DocDB::markPending(const GenKey &key) {
+	pendingWrites.insert(key);
+}
+void DocDB::markPending(GenKey &&key) {
+	pendingWrites.insert(std::move(key));
+}
+
+
 template<typename Fn>
 bool DocDB::put_impl_t(const DocumentBase &doc,Fn &&fn) {
 	std::lock_guard _(wrlock);
 
-	if (pendingWrites.find(doc.id) != pendingWrites.end()) {
-		flush();
-	}
-	std::string key(&doc_index,1);
+	DocIndexKey key(doc.id);
+	flushIfPending_lk(key);
+
 	std::string val;
 	json::Value hdr;
-	key.append(doc.id);
+	bool wasdeleted;
+	bool existed;
 	if (LevelDBException::checkStatus_Get(db->Get(defReadOpts,key,&val))) {
 		hdr = string2json(val);
+		wasdeleted = false;
+		existed = true;
 	} else {
 		key[0] = graveyard;
 		if (LevelDBException::checkStatus_Get(db->Get(defReadOpts,key,&val))) {
+			wasdeleted = true;
+			existed = false;
 			hdr = string2json(val);
+		} else {
+			existed = false;
+			wasdeleted = false;
 		}
 	}
 	json::Value revisions = hdr[0];
@@ -217,12 +256,18 @@ bool DocDB::put_impl_t(const DocumentBase &doc,Fn &&fn) {
 	val.clear();
 	json2string(newHdr,val);
 	json2string(doc.content, val);
-	if (doc.content.defined()) {
+	if (doc.deleted) {
+		if (wasdeleted) {
+			key[0] = graveyard;
+			batch.Delete(key);
+		}
 		key[0] = doc_index;
 		batch.Put(key, val);
 	} else {
-		key[0] = doc_index;
-		batch.Delete(key);
+		if (existed) {
+			key[0] = doc_index;
+			batch.Delete(key);
+		}
 		key[0] = graveyard;
 		batch.Put(key, val);
 	}
@@ -230,7 +275,8 @@ bool DocDB::put_impl_t(const DocumentBase &doc,Fn &&fn) {
 	batch.Delete(val);
 	val.clear(); index2string(newSeqId,val);
 	batch.Put(val, doc.id);
-	pendingWrites.insert(doc.id);
+	key[0] = doc_index;
+	markPending(std::move(key));
 	checkFlushAfterWrite();
 	return true;
 }
@@ -259,88 +305,63 @@ bool DocDB::put(Document &doc) {
 
 Document DocDB::get(const std::string_view &id) const {
 	GetResult r = get_impl(id);
-	return {std::string(id), r.content,r.header[2].getUIntLong(),r.header[0][0].getUIntLong()};
+	return {std::string(id), r.content,r.header[2].getUIntLong(),r.deleted, r.header[0][0].getUIntLong()};
 }
 
 DocumentRepl DocDB::replicate(const std::string_view &id) const {
 	GetResult r = get_impl(id);
-	return {std::string(id), r.content,r.header[2].getUIntLong(),r.header[0]};
+	return {std::string(id), r.content,r.header[2].getUIntLong(),r.deleted, r.header[0]};
 }
 
 DocDB::GetResult DocDB::get_impl(const std::string_view &id) const {
-	const_cast<DocDB *>(this)->flush();
+	DocIndexKey key(id);
+	flushIfPending(key);
 
-	std::string key(&doc_index,1);
 	std::string val;
-	key.append(id);
+	bool deleted = false;
 	if (!LevelDBException::checkStatus_Get(db->Get(defReadOpts,key,&val))) {
 		key[0] = graveyard;
 		if (!LevelDBException::checkStatus_Get(db->Get(defReadOpts,key,&val))) {
 			return {};
+		} else {
+			deleted = true;
 		}
 	}
-	return deserialize_impl(val);
+	return deserialize_impl(val, deleted);
 }
 
-DocDB::GetResult DocDB::deserialize_impl(std::string_view &&val) {
+DocDB::GetResult DocDB::deserialize_impl(std::string_view &&val, bool deleted) {
 	json::Value header = string2json(std::move(val));
 	json::Value content = string2json(std::move(val));
-	return {header, content};
+	return {header, content, deleted};
 }
 
-void DocDB::mapSet(const std::string_view &key, const std::string_view &value) {
-	std::string k;
-	k.reserve(key.length()+1);
-	k.push_back(0);
-	k.append(key);
-	mapSet_pk(std::move(k), value);
-}
-void DocDB::mapSet_pk(std::string &&key, const std::string_view &value) {
+void DocDB::mapSet(const GenKey &key, const std::string_view &value) {
 	std::lock_guard _(wrlock);
 
-	key[0] = map_index;
 	batch.Put(key,leveldb::Slice(value.data(), value.length()));
 	checkFlushAfterWrite();
 }
 
-bool DocDB::mapGet(const std::string &key, std::string &value) {
-	flush();
-	std::string k;
-	k.reserve(key.length()+1);
-	k.push_back(0);
-	k.append(key);
-	return mapGet_pk(std::move(k), value);
-}
-bool DocDB::mapGet_pk(std::string &&key, std::string &value) {
-	key[0] = map_index;
+bool DocDB::mapGet(const GenKey &key, std::string &value) {
+	const_cast<DocDB *>(this)->flush();
 	return LevelDBException::checkStatus_Get(db->Get(defReadOpts, key, &value));
 }
 
-void DocDB::mapErase(const std::string_view &key) {
-	std::string k;
-	k.reserve(key.length()+1);
-	k.push_back(0);
-	k.append(key);
-	mapErase_pk(std::move(k));
-}
-void DocDB::mapErase_pk(std::string &&key) {
+void DocDB::mapErase(const GenKey &key) {
 	std::lock_guard _(wrlock);
 
-	key[0] = map_index;
 	batch.Delete(key);
 	checkFlushAfterWrite();
 }
 
 void DocDB::purgeDoc(std::string_view &id) {
 	std::lock_guard _(wrlock);
+	DocIndexKey key(id);
+	flushIfPending_lk(key);
 
-	if (pendingWrites.find(std::string(id)) != pendingWrites.end()) {
-		flush();
-	}
-	std::string key(&doc_index,1);
 	std::string val;
 	json::Value hdr;
-	key.append(id);
 	if (LevelDBException::checkStatus_Get(db->Get(defReadOpts,key,&val))) {
 		hdr = string2json(val);
 	} else {
@@ -355,17 +376,20 @@ void DocDB::purgeDoc(std::string_view &id) {
 		index2string(seq,val);
 		batch.Delete(val);
 		batch.Delete(key);
+		key[0] = doc_index;
+		markPending(std::move(key));
+		checkFlushAfterWrite();
 	}
 }
 
 DocumentRepl DocDB::deserializeDocumentRepl(const std::string_view &id, const std::string_view &data) {
-	auto r = deserialize_impl(std::string_view(data));
-	return {std::string(id), r.content,r.header[2].getUIntLong(),r.header[0]};
+	auto r = deserialize_impl(std::string_view(data), false);
+	return {std::string(id), r.content,r.header[2].getUIntLong(),r.deleted,r.header[0]};
 }
 
 Document DocDB::deserializeDocument(const std::string_view &id, const std::string_view &data) {
-	auto r = deserialize_impl(std::string_view(data));
-	return {std::string(id), r.content,r.header[2].getUIntLong(),r.header[0][0].getUIntLong()};
+	auto r = deserialize_impl(std::string_view(data), false);
+	return {std::string(id), r.content,r.header[2].getUIntLong(),r.deleted,r.header[0][0].getUIntLong()};
 }
 
 DocIterator DocDB::scan() const {
@@ -378,27 +402,18 @@ DocIterator DocDB::scan() const {
 
 DocIterator DocDB::scanRange(const std::string_view &from,
 		const std::string_view &to, bool exclude_end) const {
-	const_cast<DocDB *>(this)->flush();
 
-	std::string key1;
-	key1.reserve(from.length()+1);
-	key1.push_back(doc_index);
-	key1.append(from);
-	std::string key2;
-	key2.reserve(to.length()+1);
-	key2.push_back(doc_index);
-	key2.append(to);
+	const_cast<DocDB *>(this)->flush();
+	DocIndexKey key1(from);
+	DocIndexKey key2(to);
 	return DocIterator(db->NewIterator(iteratorReadOpts),key1, key2, false, exclude_end);
 }
 
 
 DocIterator DocDB::scanPrefix(const std::string_view &prefix, bool backward) const {
 	const_cast<DocDB *>(this)->flush();
-	std::string key1;
-	key1.reserve(prefix.length()+1);
-	key1.push_back(doc_index);
-	key1.append(prefix);
-	std::string key2(key1);
+	DocIndexKey key1(prefix);
+	DocIndexKey key2(key1);
 	increaseKey(key2);
 	if (backward) {
 		return DocIterator(db->NewIterator(iteratorReadOpts), key2, key1, true, false);
@@ -415,46 +430,21 @@ DocIterator DocDB::scanGraveyard() const {
 
 }
 
-MapIterator DocDB::mapScan(const std::string_view &from, const std::string_view &to, unsigned int exclude) {
-	std::string key1;
-	key1.reserve(from.length()+1);
-	key1.push_back(0);
-	key1.append(from);
-	std::string key2;
-	key2.reserve(to.length()+1);
-	key2.push_back(0);
-	key2.append(to);
-	return mapScan_pk(std::move(key1), std::move(key2), exclude);
-}
-
-MapIterator DocDB::mapScan_pk(std::string &&from, std::string &&to, unsigned int exclude) {
-	from[0] = map_index;
-	to[0] = map_index;
+MapIterator DocDB::mapScan(const GenKey &from, const GenKey &to, unsigned int exclude) {
+	const_cast<DocDB *>(this)->flush();
 	return MapIterator(db->NewIterator(iteratorReadOpts),from, to, (exclude & excludeBegin)!=0, (exclude & excludeEnd) != 0);
-
 }
 
-
-MapIterator DocDB::mapScanPrefix(const std::string_view &prefix, bool backward) {
-	std::string key1;
-	key1.reserve(prefix.length()+1);
-	key1.push_back(0);
-	key1.append(prefix);
-	return mapScanPrefix_pk(std::move(key1), backward);
-}
-
-MapIterator DocDB::mapScanPrefix_pk(std::string &&prefix, bool backward) {
-	prefix[0] = map_index;
-	std::string key2(prefix);
+MapIterator DocDB::mapScanPrefix(const GenKey &prefix, bool backward) {
+	const_cast<DocDB *>(this)->flush();
+	GenKey key2(prefix);
 	increaseKey(key2);
 	if (backward) {
 		return MapIterator(db->NewIterator(iteratorReadOpts), key2, prefix, true,false);
 	} else {
 		return MapIterator(db->NewIterator(iteratorReadOpts), prefix, key2, false, true);
 	}
-
 }
-
 
 
 ChangesIterator DocDB::getChanges(SeqID fromId) const {
@@ -471,16 +461,8 @@ SeqID DocDB::getLastSeqID() const {
 	return nextSeqID-1;
 }
 
-void DocDB::mapErasePrefix(const std::string_view &prefix) {
-	std::string key;
-	key.reserve(prefix.length()+1);
-	key.push_back(0);
-	key.append(prefix);
-}
-
-void DocDB::mapErasePrefix_pk(std::string &&prefix) {
-	prefix[0] = map_index;
-	std::string key2(prefix);
+void DocDB::mapErasePrefix(const GenKey &prefix) {
+	GenKey key2(prefix);
 	increaseKey(key2);
 	Iterator iter(db->NewIterator(iteratorReadOpts), prefix, key2, true, false);
 	while (iter.next()) {
@@ -490,30 +472,11 @@ void DocDB::mapErasePrefix_pk(std::string &&prefix) {
 	}
 }
 
-void DocDB::mapSet(WriteBatch &batch, const std::string_view &key,const std::string_view &value) {
-	std::string k;
-	k.reserve(key.length()+1);
-	k.push_back(0);
-	k.append(key);
-	mapSet_pk(batch, std::move(k), value);
-}
-
-void DocDB::mapSet_pk(WriteBatch &batch, std::string &&key, const std::string_view &value) {
-	key[0] = map_index;
+void DocDB::mapSet(WriteBatch &batch, const GenKey &key,const std::string_view &value) {
 	batch.Put(key, leveldb::Slice(value.data(), value.length()));
 }
 
-void DocDB::mapErase(WriteBatch &batch, const std::string_view &key) {
-	std::string k;
-	k.reserve(key.length()+1);
-	k.push_back(0);
-	k.append(key);
-	mapErase_pk(batch, std::move(k));
-
-}
-
-void DocDB::mapErase_pk(WriteBatch &batch, std::string &&key) {
-	key[0] = map_index;
+void DocDB::mapErase(WriteBatch &batch, const GenKey &key) {
 	batch.Delete(key);
 }
 
@@ -536,6 +499,44 @@ SeqID DocDB::findNextSeqID() {
 	} else {
 		return 1;
 	}
+}
+
+DocDB::GenKey::GenKey(char type) {
+	push_back(type);
+}
+
+
+DocDB::GenKey::GenKey(char type, const std::string &key) {
+	push_back(type); append(key);
+}
+
+
+DocDB::GenKey::GenKey(char type, const std::string_view &key) {
+	push_back(type); append(key);
+}
+
+DocDB::GenKey::GenKey(char type, const leveldb::Slice &key) {
+	push_back(type); append(key.data(), key.size());
+}
+
+DocDB::GenKey::operator leveldb::Slice() const {
+	return leveldb::Slice(data(), length());
+}
+
+void DocDB::GenKey::clear() {
+	resize(1);
+}
+
+void DocDB::GenKey::set(const std::string &key) {
+	resize(1); append(key);
+}
+
+void DocDB::GenKey::set(const std::string_view &key) {
+	resize(1); append(key);
+}
+
+void docdb::DocDB::GenKey::set(const leveldb::Slice &key) {
+	resize(1); append(key.data(), key.size());
 }
 
 }
