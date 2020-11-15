@@ -106,6 +106,7 @@ DocDB::DocDB(InMemoryEnum, const leveldb::Options &opt) {
 bool DocDB::increaseKey(std::string &x) {
 	if (!x.empty())  {
 		char c = x.back();
+		x.pop_back();
 		++c;
 		if (c == 0)
 			if (!increaseKey(x)) return false;
@@ -337,21 +338,17 @@ DocDB::GetResult DocDB::deserialize_impl(std::string_view &&val, bool deleted) {
 }
 
 void DocDB::mapSet(const GenKey &key, const std::string_view &value) {
-	std::lock_guard _(wrlock);
-
-	batch.Put(key,leveldb::Slice(value.data(), value.length()));
-	checkFlushAfterWrite();
+	db->Put({}, key,leveldb::Slice(value.data(), value.length()));
 }
 
 bool DocDB::mapGet(const GenKey &key, std::string &value) {
-	const_cast<DocDB *>(this)->flush();
 	return LevelDBException::checkStatus_Get(db->Get(defReadOpts, key, &value));
 }
 
 void DocDB::mapErase(const GenKey &key) {
 	std::lock_guard _(wrlock);
 
-	batch.Delete(key);
+	db->Delete({},key);
 	checkFlushAfterWrite();
 }
 
@@ -431,12 +428,12 @@ DocIterator DocDB::scanGraveyard() const {
 }
 
 MapIterator DocDB::mapScan(const GenKey &from, const GenKey &to, unsigned int exclude) {
-	const_cast<DocDB *>(this)->flush();
+	//const_cast<DocDB *>(this)->flush();
 	return MapIterator(db->NewIterator(iteratorReadOpts),from, to, (exclude & excludeBegin)!=0, (exclude & excludeEnd) != 0);
 }
 
 MapIterator DocDB::mapScanPrefix(const GenKey &prefix, bool backward) {
-	const_cast<DocDB *>(this)->flush();
+	//const_cast<DocDB *>(this)->flush();
 	GenKey key2(prefix);
 	increaseKey(key2);
 	if (backward) {

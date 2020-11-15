@@ -435,13 +435,17 @@ void AbstractReduceView::updatedKeys(WriteBatch &batch, const json::Value &keys,
 	auto ksz = k.length();
 
 	for (json::Value v : keys) {
-		json2string(v, k);
+		json::Value pv = string2jsonkey(v.getString());
+		json2string(pv, k);
 		batch.Put(k, "");
+		updated = false;
 		k.resize(ksz);
 	}
 }
 
 void AbstractReduceView::update() {
+	if (updated) return;
+
 	DocDB::ReduceIndexKey k(viewid.content());
 	WriteBatch b;
 	std::vector<KeyValue> items;
@@ -452,10 +456,12 @@ void AbstractReduceView::update() {
 	ViewID itmk(viewid);
 	auto itmksz = itmk.length();
 	std::string value;
-	bool rep = true;
+	bool rep = false;
 
 	while (iter.next()) {
-		auto str = iter.key().substr(k.content().length());
+		auto orig_key = iter.orig_key();
+		auto str = iter.key();
+		str = str.substr(k.content().length());
 		json::Value v = string2json(str);
 		if (v.type() == json::array) {
 			v = v.slice(0,maxGroupLevel);
@@ -483,10 +489,11 @@ void AbstractReduceView::update() {
 		}
 		itmk.resize(itmksz);
 		value.clear();
-		b.Delete(iter.orig_key());
+		b.Delete(orig_key);
 	}
 
 	while (rep) {
+		rep = false;
 		db.flushBatch(b, false);
 		b.Clear();
 		std::swap(wrk, rereduce_items);
@@ -534,6 +541,7 @@ void AbstractReduceView::update() {
 		value.clear();
 	}
 	db.flushBatch(b, true);
+	updated = true;
 }
 
 ReduceView::ReduceView(AbstractView &viewMap, const std::string &name, ReduceFn reduceFn,
@@ -543,6 +551,12 @@ ReduceView::ReduceView(AbstractView &viewMap, const std::string &name, ReduceFn 
 
 json::Value ReduceView::reduce(const std::vector<KeyValue> &items, bool rereduce) const {
 	return reduceFn(items, rereduce);
+}
+
+ReadOnlyView::ReadOnlyView(DocDB &db, const std::string_view &name)
+:AbstractViewBase(db, ViewTools::getViewID(name))
+{
+
 }
 
 } /* namespace docdb */

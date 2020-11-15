@@ -139,12 +139,12 @@ inline json::Value string2jsonkey(std::string_view &&key) {
 	case codepoints::false_value: r = false; break;
 	case codepoints::true_value: r = true; break;
 	case codepoints::neg_number: {
-			double n = *reinterpret_cast<const double *>(key.data(),sizeof(double));
+			double n = *reinterpret_cast<const double *>(key.data());
 			key = key.substr(sizeof(double));
 			r = -n;
 		} break;
 	case codepoints::pos_number: {
-			double n = *reinterpret_cast<const double *>(key.data(),sizeof(double));
+			double n = *reinterpret_cast<const double *>(key.data());
 			key = key.substr(sizeof(double));
 			r = n;
 		} break;
@@ -165,7 +165,7 @@ inline json::Value string2jsonkey(std::string_view &&key) {
 	if (startArray) {
 		json::Array a;
 		json::Value itm = r;
-		while (r.defined()) {
+		while (itm.defined()) {
 			a.push_back(itm);
 			itm = string2jsonkey(std::move(key));
 		}

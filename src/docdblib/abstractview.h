@@ -306,6 +306,7 @@ protected:
 	std::string name;
 	unsigned int maxGroupLevel;
 	bool reduceAll;
+	bool updated = false;
 
 
 	virtual void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted);
@@ -319,6 +320,14 @@ public:
 protected:
 	ReduceFn reduceFn;
 	virtual json::Value reduce(const std::vector<KeyValue> &items, bool rereduce) const override;
+
+};
+
+///Provides read only view, which can be used to explore snapshot of view specified by its name but without update
+class ReadOnlyView: public AbstractViewBase {
+public:
+	ReadOnlyView(DocDB &db, const std::string_view &name);
+	virtual void update() override {}
 
 };
 
