@@ -482,6 +482,10 @@ void DocDB::flushBatch(WriteBatch &batch, bool sync) {
 	batch.Clear();
 }
 
+bool DocDB::mapExist(const GenKey &key) {
+	std::string dummy;
+	return LevelDBException::checkStatus_Get(db->Get({}, key, &dummy));
+}
 
 SeqID DocDB::findNextSeqID() {
 	std::unique_ptr<leveldb::Iterator> iter(db->NewIterator({}));

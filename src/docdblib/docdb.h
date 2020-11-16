@@ -285,6 +285,9 @@ public:
 	///Erase all items by prefix
 	void mapErasePrefix(const GenKey &prefix);
 
+	///Tests whether key exists
+	bool mapExist(const GenKey &key);
+
 	///Retrieves maximum revision history
 	std::size_t getMaxRevHistory() const {
 		return maxRevHistory;

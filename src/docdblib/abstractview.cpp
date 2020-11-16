@@ -190,6 +190,9 @@ void AbstractView::UpdateDoc::indexDoc(const Document &doc, const IViewMap &view
 			viewkey.append(v.getString());
 			//append document id
 			viewkey.append(doc.id);
+
+			assert(db.mapExist(viewkey));
+
 			//delete it
 			batch.Delete(viewkey);
 		}
