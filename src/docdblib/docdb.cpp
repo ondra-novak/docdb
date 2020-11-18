@@ -56,8 +56,9 @@ namespace docdb {
  *
  */
 
+
 static leveldb::ReadOptions defReadOpts{true};
-static leveldb::ReadOptions iteratorReadOpts{true,false,nullptr};
+static leveldb::ReadOptions iteratorReadOpts{true,true,nullptr};
 
 
 DocDB::DocDB(PLevelDB &&db):db(std::move(db)) {
