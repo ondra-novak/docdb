@@ -478,8 +478,8 @@ void DocDB::mapErase(WriteBatch &batch, const GenKey &key) {
 	batch.Delete(key);
 }
 
-void DocDB::flushBatch(WriteBatch &batch, bool sync) {
-	db->Write({sync}, &batch);
+void DocDB::flushBatch(WriteBatch &batch) {
+	db->Write({this->syncWrites}, &batch);
 	batch.Clear();
 }
 

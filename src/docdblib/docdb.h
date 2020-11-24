@@ -260,7 +260,7 @@ public:
 	static void mapErase(WriteBatch &batch, const GenKey &key);
 
 
-	void flushBatch(WriteBatch &batch, bool sync);
+	void flushBatch(WriteBatch &batch);
 
 	static constexpr unsigned int excludeBegin = 1;
 	static constexpr unsigned int excludeEnd = 2;
@@ -344,7 +344,7 @@ protected:
 	SeqID nextSeqID;
 	std::size_t flushTreshold=256*1024;
 	std::size_t maxRevHistory=1000;
-	bool syncWrites = true;
+	bool syncWrites = false;
 	mutable std::shared_mutex wrlock;
 	using LockEx = std::unique_lock<std::shared_mutex>;
 	using LockSh = std::shared_lock<std::shared_mutex>;

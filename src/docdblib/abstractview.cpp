@@ -214,7 +214,7 @@ void AbstractView::UpdateDoc::indexDoc(const Document &doc, const IViewMap &view
 		observer.updatedKeys(batch, keys, false);
 	}
 	//flush any batch
-	db.flushBatch(batch, false);
+	db.flushBatch(batch);
 }
 
 AbstractViewBase::AbstractViewBase(DocDB &db, ViewID &&viewid)
@@ -497,7 +497,7 @@ void AbstractReduceView::update() {
 
 	while (rep) {
 		rep = false;
-		db.flushBatch(b, false);
+		db.flushBatch(b);
 		b.Clear();
 		std::swap(wrk, rereduce_items);
 		rereduce_items.clear();
@@ -543,7 +543,7 @@ void AbstractReduceView::update() {
 		itmk.resize(itmksz);
 		value.clear();
 	}
-	db.flushBatch(b, true);
+	db.flushBatch(b);
 	updated = true;
 }
 
