@@ -285,6 +285,8 @@ public:
 	///Erase all items by prefix
 	void mapErasePrefix(const GenKey &prefix);
 
+	void mapErasePrefix(WriteBatch &batch, const GenKey &prefix);
+
 	///Tests whether key exists
 	bool mapExist(const GenKey &key);
 
@@ -321,6 +323,10 @@ public:
 	 * @retval false unable to increase, empty key, or key is '\xFF' which cannot be increased
 	 */
 	static bool increaseKey(std::string &key);
+
+	void compact();
+
+	json::Value getStats();
 
 protected:
 

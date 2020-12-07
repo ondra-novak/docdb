@@ -12,6 +12,8 @@
 
 #include <leveldb/helpers/memenv.h>
 #include <cstdio>
+
+#include <imtjson/object.h>
 #include "changesiterator.h"
 #include "dociterator.h"
 #include "exception.h"
@@ -465,8 +467,17 @@ void DocDB::mapErasePrefix(const GenKey &prefix) {
 	Iterator iter(db->NewIterator(iteratorReadOpts), prefix, key2, true, false);
 	while (iter.next()) {
 		auto key = iter.key();
+		db->Delete({},leveldb::Slice(key.data(), key.length()));
+	}
+}
+
+void DocDB::mapErasePrefix(WriteBatch &batch, const GenKey &prefix) {
+	GenKey key2(prefix);
+	increaseKey(key2);
+	Iterator iter(db->NewIterator(iteratorReadOpts), prefix, key2, true, false);
+	while (iter.next()) {
+		auto key = iter.key();
 		batch.Delete(leveldb::Slice(key.data(), key.length()));
-		checkFlushAfterWrite();
 	}
 }
 
@@ -544,4 +555,35 @@ void docdb::DocDB::GenKey::set(const leveldb::Slice &key) {
 	resize(1); append(key.data(), key.size());
 }
 
+void DocDB::compact() {
+	db->CompactRange(nullptr, nullptr);
+}
+
+json::Value DocDB::getStats() {
+	json::Object ret;
+	std::string val;
+	db->GetProperty("leveldb.approximate-memory-usage", &val);
+	ret.set("memory_usage", val);
+	val.clear();
+	db->GetProperty("leveldb.stats", &val);
+	auto splt = ondra_shared::StrViewA(val).split("\n");
+	json::Array stats;
+	while (!!splt) {
+		ondra_shared::StrViewA line = splt();
+		float level, files, size_mb, time_sec, read_mb, write_mb;
+		if (std::sscanf(line.data,"%f %f %f %f %f %f", &level, &files, &size_mb, &time_sec, &read_mb, &write_mb) == 6) {
+		  stats.push_back(json::Value(json::object,{
+				json::Value("level",level),
+				json::Value("files",files),
+				json::Value("size_mb",size_mb),
+				json::Value("time_sec",time_sec),
+				json::Value("read_mb",read_mb),
+				json::Value("write_mb",write_mb)
+		  }));
+		}
+	}
+	ret.set("levels", stats);
+	return ret;
+
+}
 }
