@@ -223,7 +223,7 @@ AbstractViewBase::AbstractViewBase(DocDB &db, ViewID &&viewid)
 
 AbstractView::AbstractView(DocDB &db, std::string &&name, uint64_t serial_nr)
 	:UpdatableObject(db)
-	,AbstractViewBase(db, ViewTools::getViewID(name))
+	,AbstractUpdatableView(db, ViewTools::getViewID(name))
 	,name(std::move(name))
 	,serialNr(serial_nr)
 	,viewdocid(ViewTools::getViewID(this->name))
@@ -298,7 +298,7 @@ ViewIterator AbstractViewBase::find(const json::Value &key, const std::string_vi
 		skey1.append(from_doc);
 		DocDB::increaseKey(skey2);
 	}
-	return ViewIterator(db.mapScan(skey1, skey2, DocDB::excludeBegin));
+	return ViewIterator(db.mapScan(skey1, skey2, from_doc.empty()?0:DocDB::excludeBegin));
 }
 
 json::Value AbstractViewBase::lookup(const json::Value &key) {
@@ -327,7 +327,7 @@ ViewIterator AbstractViewBase::scanRange(const json::Value &from,
 	jsonkey2string(to,strt);
 	strf.append(from_doc);
 	return ViewIterator(
-			db.mapScan(strf, strt, (exclude_end?DocDB::excludeEnd:0)|DocDB::excludeBegin)
+			db.mapScan(strf, strt, (exclude_end?DocDB::excludeEnd:0)|(from_doc.empty()?0:DocDB::excludeBegin))
 	);
 }
 
@@ -357,7 +357,7 @@ ViewIterator AbstractViewBase::scanFrom(const json::Value &item, bool backward, 
 	jsonkey2string(item, key1);
 	key1.append(from_doc);
 	return ViewIterator(
-			db.mapScan(key1, key2, DocDB::excludeBegin|DocDB::excludeEnd)
+			db.mapScan(key1, key2, (from_doc.empty()?0:DocDB::excludeBegin)|DocDB::excludeEnd)
 	);
 }
 
@@ -372,7 +372,7 @@ ViewIterator AbstractViewBase::scanFrom(const json::Value &item, bool backward) 
 		DocDB::increaseKey(key2);
 	}
 	return ViewIterator(
-			db.mapScan(key1, key2, DocDB::excludeBegin|DocDB::excludeEnd)
+			db.mapScan(key1, key2, (backward?DocDB::excludeBegin:0)|DocDB::excludeEnd)
 	);
 }
 
@@ -391,24 +391,13 @@ void View::map(const Document &doc, const EmitFn &emit) const {
 }
 
 void AbstractView::unregisterObserver(IReduceObserver *obs) {
-	auto len = reduceObservers.size();
-	if (len) {
-		auto last = len - 1;
-		auto idx = len;
-		while (idx) {
-			--idx;
-			if (reduceObservers[idx] == obs) {
-				if (idx != last)
-					std::swap(reduceObservers[idx], reduceObservers[last]);
-				reduceObservers.resize(last);
-				break;
-			}
-		}
-	}
+	std::unique_lock _(wrlock);
+	keylistener.unregisterObserver(obs);
 }
 
 void AbstractView::registerObserver(IReduceObserver *obs) {
-	reduceObservers.push_back(obs);
+	std::unique_lock _(wrlock);
+	keylistener.registerObserver(obs);
 }
 
 void AbstractView::update() {
@@ -416,15 +405,14 @@ void AbstractView::update() {
 }
 
 void AbstractView::updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted) {
-	for (auto &&x : reduceObservers) x->updatedKeys(batch, keys, deleted);
+	keylistener.updatedKeys(batch, keys, deleted);
 }
 
-AbstractReduceView::AbstractReduceView(AbstractView &viewMap, const std::string &name, unsigned int maxGroupLevel , bool reduceAll )
-	:AbstractViewBase(viewMap.getDB(), ViewTools::getViewID(name))
+AbstractReduceView::AbstractReduceView(AbstractUpdatableView &viewMap, const std::string &name, unsigned int groupLevel  )
+	:AbstractUpdatableView(viewMap.getDB(), ViewTools::getViewID(name))
 	,viewMap(viewMap)
 	,name(name)
-	,maxGroupLevel(std::max<unsigned int>(maxGroupLevel,1))
-	,reduceAll(reduceAll)
+	,groupLevel(groupLevel)
 {
 	viewMap.registerObserver(this);
 }
@@ -433,127 +421,132 @@ AbstractReduceView::~AbstractReduceView() {
 	viewMap.unregisterObserver(this);
 }
 
+json::Value AbstractReduceView::adjustKey(json::Value pv) {
+	if (pv.type() == json::array)
+		pv = pv.slice(0, groupLevel);
+	else if (groupLevel == 0)
+		pv = nullptr;
+	return pv;
+}
+
 void AbstractReduceView::updatedKeys(WriteBatch &batch, const json::Value &keys, bool) {
+	if (keys.empty()) return;
+	std::unique_lock _(lock);
 	DocDB::ReduceIndexKey k(viewid.content());
 	auto ksz = k.length();
 
 	for (json::Value v : keys) {
 		json::Value pv = string2jsonkey(v.getString());
+		pv = adjustKey(pv);
 		json2string(pv, k);
 		batch.Put(k, "");
-		updated = false;
 		k.resize(ksz);
 	}
+	updated = false;
+}
+
+ViewIterator AbstractReduceView::prepareRereduceIterator(const json::Value &keyScan) {
+	if (keyScan.type() == json::array) return scanPrefix(keyScan, false);
+	else return scan();
+}
+
+void AbstractReduceView::registerObserver(IReduceObserver *obs)  {
+	std::unique_lock _(lock);
+	keylistener.registerObserver(obs);
+}
+void AbstractReduceView::unregisterObserver(IReduceObserver *obs) {
+	std::unique_lock _(lock);
+	keylistener.unregisterObserver(obs);
+}
+
+void AbstractReduceView::rebuild() {
+	std::unique_lock _(lock);
+
+	ViewIterator iter = viewMap.scan();
+	json::Value prevKey;
+	ViewID itmk(viewid);
+	std::string value;
+	WriteBatch b;
+	while (iter.next()) {
+		json::Value k = iter.key();
+		k = adjustKey(k);
+		if (prevKey != k) {
+			if (prevKey.defined())
+				updateRow(prevKey,itmk, value, b);
+			prevKey = k;
+		}
+		db.flushBatch(b);
+		b.Clear();
+	}
+	if (prevKey.hasValue()) {
+		updateRow(prevKey,itmk, value, b);
+	}
+	updated=true;
 }
 
 void AbstractReduceView::update() {
-	if (updated) return;
+	if (!updated) {
+		std::unique_lock _(lock);
+		WriteBatch b;
+		ViewID itmk(viewid);
+		std::string value;
 
-	DocDB::ReduceIndexKey k(viewid.content());
-	WriteBatch b;
-	std::vector<KeyValue> items;
-	std::unordered_map<json::Value, std::vector<json::Value> > rereduce_items, wrk;
-	std::vector<json::Value> all_reduce;
+		DocDB::ReduceIndexKey k(viewid.content());
+		auto iter = db.mapScanPrefix(k, false);
 
-	auto iter = db.mapScanPrefix(k, false);
-	ViewID itmk(viewid);
-	auto itmksz = itmk.length();
-	std::string value;
-	bool rep = false;
-
-	while (iter.next()) {
-		auto orig_key = iter.orig_key();
-		auto str = iter.key();
-		str = str.substr(k.content().length());
-		json::Value v = string2json(str);
-		if (v.type() == json::array) {
-			v = v.slice(0,maxGroupLevel);
-		}
-		ViewIterator iter = viewMap.scanPrefix(v, false);
 		while (iter.next()) {
-			items.push_back(KeyValue{std::string(iter.id()), iter.key(), iter.value()});
+			auto orig_key = iter.orig_key();
+			auto str = iter.key();
+			str = str.substr(k.content().length());
+			json::Value keySrch = string2json(str);
+
+			updateRow(keySrch,itmk, value, b);
+
+			b.Delete(orig_key);
+			db.flushBatch(b);
+			b.Clear();
+
 		}
-		json::Value rval = reduce(items, false);
-		items.clear();
-		auto asz =v.size();
-		if (asz) {
-			json::Value rr = v.slice(0,asz-1);
-			rereduce_items[rr].push_back(rval);
-			rep = true;
-		} else if (reduceAll) {
-			all_reduce.push_back(rval);
-		}
-		jsonkey2string(v,itmk);
-		if (rval.defined()) {
-			json2string(rval, value);
-			b.Put(itmk, value);
-		} else {
-			b.Delete(itmk);
-		}
-		itmk.resize(itmksz);
-		value.clear();
-		b.Delete(orig_key);
+	updated = true;
 	}
 
-	while (rep) {
-		rep = false;
-		db.flushBatch(b);
-		b.Clear();
-		std::swap(wrk, rereduce_items);
-		rereduce_items.clear();
-		for (const auto &itm: wrk) {
-			auto v = itm.first;
-			for (const auto &x: itm.second) {
-				items.push_back({"",v, x});
-			}
-			json::Value rval = reduce(items, true);
-			items.clear();
-			auto asz =v.size();
-			if (asz) {
-				json::Value rr = v.slice(0,asz-1);
-				rereduce_items[rr].push_back(rval);
-				rep = true;
-			} else if (reduceAll) {
-				all_reduce.push_back(rval);
-			}
-			jsonkey2string(v,itmk);
-			if (rval.defined()) {
-				json2string(rval, value);
-				b.Put(itmk, value);
-			} else {
-				b.Delete(itmk);
-			}
-			itmk.resize(itmksz);
-			value.clear();
-		}
+}
+
+void AbstractReduceView::updateRow(json::Value keySrch, ViewID &itmk, std::string &value, WriteBatch &b) {
+	ViewIterator iter = keySrch.type() == json::array?viewMap.scanPrefix(keySrch, false)
+			:keySrch.isNull()?viewMap.scan()
+			:viewMap.find(keySrch, false);
+
+	auto itmksz = itmk.length();
+	jsonkey2string(keySrch, itmk);
+	json::Value rval;
+	if (!iter.empty()) rval = reduce(iter);
+	bool deleted;
+	if (rval.defined()) {
+		json2string(rval, value);
+		b.Put(itmk, value);
+		deleted = false;
+	} else {
+		b.Delete(itmk);
+		deleted = true;
 	}
-	if (reduceAll) {
-		for (const auto &x: all_reduce) {
-			items.push_back({"",nullptr, x});
-		}
-		json::Value rval = reduce(items, true);
-		items.clear();
-		jsonkey2string(nullptr,itmk);
-		if (rval.defined()) {
-			json2string(rval, value);
-			b.Put(itmk, value);
-		} else {
-			b.Delete(itmk);
-		}
-		itmk.resize(itmksz);
-		value.clear();
+	if (!keylistener.empty()) {
+		keylistener.updatedKeys(b, json::Value(json::array,{
+				json::Value(json::StrViewA(itmk).substr(itmksz))
+		}),deleted);
 	}
-	db.flushBatch(b);
-	updated = true;
+	itmk.resize(itmksz);
+	value.clear();
+
 }
 
 ReduceView::ReduceView(AbstractView &viewMap, const std::string &name, ReduceFn reduceFn,
-				unsigned int maxGroupLevel , bool reduceAll )
-	:AbstractReduceView(viewMap, name, maxGroupLevel, reduceAll)
+				unsigned int groupLevel  )
+	:AbstractReduceView(viewMap, name, groupLevel)
 	,reduceFn(reduceFn) {}
 
-json::Value ReduceView::reduce(const std::vector<KeyValue> &items, bool rereduce) const {
-	return reduceFn(items, rereduce);
+json::Value ReduceView::reduce(ViewIterator &iter) const {
+	return reduceFn(iter);
 }
 
 ReadOnlyView::ReadOnlyView(DocDB &db, const std::string_view &name)

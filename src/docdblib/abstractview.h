@@ -41,6 +41,32 @@ public:
 	virtual ~IReduceObserver() {}
 };
 
+class IReduceKeyListener {
+public:
+	virtual void registerObserver(IReduceObserver *obs) = 0;
+	virtual void unregisterObserver(IReduceObserver *obs) = 0;
+	virtual ~IReduceKeyListener() {}
+};
+
+class ReduceKeyListener: public IReduceKeyListener {
+public:
+	virtual void registerObserver(IReduceObserver *obs) override {
+		reduceObservers.push_back(obs);
+	}
+	virtual void unregisterObserver(IReduceObserver *obs) override {
+		auto iter = std::remove(reduceObservers.begin(),reduceObservers.end(),obs);
+		reduceObservers.erase(iter, reduceObservers.end());
+	}
+	void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted) {
+		for (auto &&x : reduceObservers) x->updatedKeys(batch, keys, deleted);
+	}
+	bool empty() const {return reduceObservers.empty();}
+protected:
+	std::vector<IReduceObserver *> reduceObservers;
+
+
+};
+
 class AbstractViewBase {
 public:
 
@@ -134,6 +160,7 @@ public:
 	 */
 	ViewIterator scanFrom(const json::Value &key, bool backward, const std::string &from_doc);
 
+	DocDB &getDB() const {return db;}
 
 protected:
 	virtual void update() = 0;
@@ -142,10 +169,17 @@ protected:
 
 };
 
+class AbstractUpdatableView: public AbstractViewBase,
+							 public IReduceKeyListener {
+public:
+	using AbstractViewBase::AbstractViewBase;
+};
+
 class AbstractView: public UpdatableObject,
-					public AbstractViewBase,
+					public AbstractUpdatableView,
 					public IViewMap,
-					protected IReduceObserver {
+					protected IReduceObserver
+					{
 
 	using ViewDocID = DocDB::ViewDocIndexKey;
 
@@ -186,9 +220,8 @@ public:
 
 	void updateDoc(const Document &doc);
 
-	void registerObserver(IReduceObserver *obs);
-
-	void unregisterObserver(IReduceObserver *obs);
+	virtual void registerObserver(IReduceObserver *obs) override;
+	virtual void unregisterObserver(IReduceObserver *obs)override;
 
 protected:
 	using UpdatableObject::db;
@@ -197,7 +230,8 @@ protected:
 	ViewDocID viewdocid;
 
 	std::mutex wrlock;
-	std::vector<IReduceObserver *> reduceObservers;
+	ReduceKeyListener keylistener;
+
 
 
 	class UpdateDoc;
@@ -250,6 +284,7 @@ public:
 	json::Value value() const;
 	const std::string_view id() const;
 	using MapIterator::orig_key;
+	using MapIterator::empty;
 protected:
 	mutable std::string_view docid;
 	mutable json::Value ukey;
@@ -278,7 +313,7 @@ protected:
 	virtual void map(const Document &doc, const EmitFn &emit) const override;
 };
 
-class AbstractReduceView: public AbstractViewBase, public IReduceObserver {
+class AbstractReduceView: public AbstractUpdatableView, public IReduceObserver {
 public:
 	/**
 	 * @param viewMap source map
@@ -288,10 +323,11 @@ public:
 	 * @param reduceAll generate reduceAll result (key null)
 	 *
 	 */
-	AbstractReduceView(AbstractView &viewMap, const std::string &name, unsigned int maxGroupLevel = 99, bool reduceAll = false);
+	AbstractReduceView(AbstractUpdatableView &viewMap, const std::string &name, unsigned int groupLevel = 99);
 	~AbstractReduceView();
 
 	virtual void update();
+	void rebuild();
 
 	struct KeyValue {
 		std::string docId;
@@ -299,27 +335,35 @@ public:
 		json::Value value;
 	};
 
-	virtual json::Value reduce(const std::vector<KeyValue> &items, bool rereduce) const = 0;
+	virtual json::Value reduce(ViewIterator &iter) const = 0;
+
+	virtual void registerObserver(IReduceObserver *obs) override;
+	virtual void unregisterObserver(IReduceObserver *obs)override;
+
 
 protected:
-	AbstractView &viewMap;
+	AbstractUpdatableView &viewMap;
 	std::string name;
-	unsigned int maxGroupLevel;
-	bool reduceAll;
+	unsigned int groupLevel;
 	bool updated = false;
+	std::mutex lock;
+	ReduceKeyListener keylistener;
 
 
 	virtual void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted);
+	ViewIterator prepareRereduceIterator(const json::Value &keyScan);
+	void updateRow(json::Value keySrch, ViewID &itmk, std::string &value, WriteBatch &b);
+	json::Value adjustKey(json::Value pv);
 };
 
 class ReduceView: public AbstractReduceView {
 public:
-	typedef json::Value (*ReduceFn)(const std::vector<KeyValue> &items, bool rereduce);
+	typedef json::Value (*ReduceFn)(ViewIterator &iter);
 	ReduceView(AbstractView &viewMap, const std::string &name, ReduceFn reduceFn,
-					unsigned int maxGroupLevel = 99, bool reduceAll = false);
+					unsigned int groupLevel = 99);
 protected:
 	ReduceFn reduceFn;
-	virtual json::Value reduce(const std::vector<KeyValue> &items, bool rereduce) const override;
+	virtual json::Value reduce(ViewIterator &iter) const override;
 
 };
 

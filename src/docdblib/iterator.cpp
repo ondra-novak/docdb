@@ -91,7 +91,7 @@ bool Iterator::initial_null_advance() {
 	return true;
 }
 
-bool Iterator::check_after_advance() {
+bool Iterator::check_after_advance() const {
 	//pick end_key
 	leveldb::Slice sl_end_key(end_key.data(),end_key.length());
 	//read current key (assume Valid())
@@ -112,6 +112,8 @@ bool Iterator::check_after_advance() {
 	}
 }
 
-
+bool Iterator::empty() const {
+	return !iter->Valid() || !check_after_advance();
+}
 
 }

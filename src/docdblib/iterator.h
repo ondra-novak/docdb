@@ -78,6 +78,8 @@ public:
 		return iter->key();
 	}
 
+	bool empty() const;
+
 
 protected:
 	std::unique_ptr<leveldb::Iterator> iter;
@@ -89,7 +91,7 @@ protected:
 	void init(const std::string_view &start_key, bool exclude_begin);
 	bool initial_advance();
 	bool advance();
-	bool check_after_advance();
+	bool check_after_advance() const;
 	bool initial_null_advance();
 	bool not_valid_advance();
 
@@ -106,6 +108,7 @@ public:
 	using Iterator::next;
 	using Iterator::value;
 	using Iterator::orig_key;
+	using Iterator::empty;
 
 	///Retrieves key
 	/**
