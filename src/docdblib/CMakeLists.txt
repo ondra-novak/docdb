@@ -10,4 +10,5 @@ add_library (docdblib
 	attachments.cpp
 	updatableobject.cpp
 	filedb.cpp
+	aggrview.cpp
 	)

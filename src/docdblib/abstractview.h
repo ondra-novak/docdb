@@ -28,52 +28,116 @@ public:
 class ViewIterator;
 class ViewList;
 
+///Basic interface which descibes minimal implemenation for full materialized map
 class IViewMap {
 public:
 	///Function must be implemented by child class
+	/**
+	 * @param doc document to map
+	 * @param emit function used to emit key-value records from the document
+	 *
+	 * @note Function must emit unique keys. Duplicated keys are discarded.
+	 * However multiple dokuments can emit duplicate keys (which means, there
+	 * can be max same amount duplicates as indexed documents)
+	 */
 	virtual void map(const Document &doc, const EmitFn &emit) const = 0;
 	virtual ~IViewMap() {}
 };
 
-class IReduceObserver {
+class IKeyUpdateObservable;
+
+///Interface intended to observer updated keys
+/**
+ * Important part of materialized derived views is to observer keys changed (updated)
+ * in source view to allow recalculation of derived view. Every derived view must implement
+ * this interface
+ */
+class IKeyUpdateObserver {
 public:
-	virtual void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted) = 0;
-	virtual ~IReduceObserver() {}
+	///Called when a keys are updated in source view
+	/**
+	 * @param batch current write batch - if the view is in the same db, it should
+	 * use this batch to store updates
+	 * @param Contains updated key.
+	 * @param deleted the field is set to true, if the key has been deleted. Note that
+	 * function can be called twice, first to delete keys, second to create them again (or different)
+	 */
+	virtual void updatedKey(WriteBatch &batch, const json::Value &key, bool deleted) = 0;
+	///Called when the destructor of the observable object finds still registered observers
+	/**
+	 * @param obs pointer to observable object which is being destroyed. This observer
+	 * can perform any action knowing that observable source is no loger exists
+	 */
+	virtual void release(const IKeyUpdateObservable *obs) = 0;
+	virtual ~IKeyUpdateObserver() {}
 };
 
-class IReduceKeyListener {
+///Interface which specified functions to register to observe updated keys
+class IKeyUpdateObservable {
 public:
-	virtual void registerObserver(IReduceObserver *obs) = 0;
-	virtual void unregisterObserver(IReduceObserver *obs) = 0;
-	virtual ~IReduceKeyListener() {}
+	///Register the observer
+	/**
+	 * @param obs pointer to observer
+	 */
+	virtual void addObserver(IKeyUpdateObserver *obs) = 0;
+	///Unregister the observer
+	/**
+	 * @param obs pointer to observer to unregister
+	 *
+	 * @note if update is done in the different thread, there still can be pending
+	 * update which can arrive after removal. Watch for it if you destroying
+	 * the observer (handle locks properly).
+	 */
+	virtual void removeObserver(IKeyUpdateObserver *obs) = 0;
+
+	///Just virtual destructor
+	virtual ~IKeyUpdateObservable() {}
 };
 
-class ReduceKeyListener: public IReduceKeyListener {
+///Minimal implementation of observable object which registers and removes observers
+class KeyUpdateObservableImpl: public IKeyUpdateObservable {
 public:
-	virtual void registerObserver(IReduceObserver *obs) override {
-		reduceObservers.push_back(obs);
+
+	virtual void addObserver(IKeyUpdateObserver *obs) override {
+		observers.push_back(obs);
 	}
-	virtual void unregisterObserver(IReduceObserver *obs) override {
-		auto iter = std::remove(reduceObservers.begin(),reduceObservers.end(),obs);
-		reduceObservers.erase(iter, reduceObservers.end());
+
+	virtual void removeObserver(IKeyUpdateObserver *obs) override {
+		auto iter = std::remove(observers.begin(),observers.end(),obs);
+		observers.erase(iter, observers.end());
 	}
-	void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted) {
-		for (auto &&x : reduceObservers) x->updatedKeys(batch, keys, deleted);
+
+	void updatedKey(WriteBatch &batch, const json::Value &key, bool deleted) {
+		for (auto &&x : observers) x->updatedKey(batch, key, deleted);
 	}
-	bool empty() const {return reduceObservers.empty();}
+
+	bool empty() const {return observers.empty();}
+	~KeyUpdateObservableImpl() {
+		std::vector<IKeyUpdateObserver *> list;
+		std::swap(observers, list);
+		for (const auto &x : list) x->release(this);
+	}
 protected:
-	std::vector<IReduceObserver *> reduceObservers;
+	std::vector<IKeyUpdateObserver *> observers;
 
 
 };
 
-class AbstractViewBase {
+///Implements view above existing data. Doesn't support update of the view
+/** Object can be used to explore existing view, without ability to update the
+ * view. However, this doesn't act as snapshot, if there is other way to update
+ * the view, all the updates are visible in this view.
+ *
+ * The class is used as base class of all other views. This defines common
+ * interface for any access to the view
+ */
+class StaticView {
 public:
 
 
 	using ViewID = DocDB::ViewIndexKey;
 
-	AbstractViewBase(DocDB &db, ViewID &&viewid);
+	StaticView(DocDB &db, ViewID &&viewid);
 
 
 	///Searches for single key
@@ -163,22 +227,42 @@ public:
 	DocDB &getDB() const {return db;}
 
 protected:
-	virtual void update() = 0;
+	///Derived class need to implement this function to update view when it is needed
+	/** Function is called everytime the view is accessed. The derived
+	 * class can perform update operation before the view is searched
+	 */
+	virtual void update() {}
+
 	DocDB &db;
+
 	ViewID viewid;
 
 };
 
-class AbstractUpdatableView: public AbstractViewBase,
-							 public IReduceKeyListener {
+///Abstract updatable view - expects that view is updated somehow, however, it doesn't define how.
+/** This class inherits StaticView and IKeyUpdateObservable. This allows to observer
+ * the view for changes. However, there is still no way how to update the view
+ *
+ * However, the function update is now mandatory and must be implemented by a derived class
+ */
+class AbstractUpdatableView: public StaticView,
+							 public IKeyUpdateObservable {
 public:
-	using AbstractViewBase::AbstractViewBase;
+	virtual void update() = 0;
+	using StaticView::StaticView;
 };
 
+///Abstract view - the basic building block for materialized views.
+/** Basic view is updated directly from database. If there is any
+ * update in underlying database, the view perform incremental indexing (calls
+ * map function for newly created or updated documents).
+ *
+ * All modified keys are distributed through IKeyUpodateObserver to derived views
+ *
+ */
 class AbstractView: public UpdatableObject,
 					public AbstractUpdatableView,
-					public IViewMap,
-					protected IReduceObserver
+					public IViewMap
 					{
 
 	using ViewDocID = DocDB::ViewDocIndexKey;
@@ -214,14 +298,26 @@ public:
 	 */
 	void purgeDoc(std::string_view docid);
 
-
+	///Enforce update
+	/** Note update is protected by mutex, only one thread can perform update
+	 * During update, search is not possible. If you need to search in not
+	 * yet updated view, you need to create StaticView over it and use it
+	 * to search while the view is being updated
+	 *
+	 */
 	virtual void update();
 
-
+	///Enforce of update of single document
+	/** this allows to feed the view with own documents regardless on underlying
+	 * database
+	 * @param doc
+	 */
 	void updateDoc(const Document &doc);
 
-	virtual void registerObserver(IReduceObserver *obs) override;
-	virtual void unregisterObserver(IReduceObserver *obs)override;
+	///add IKeyUpdateObserver
+	virtual void addObserver(IKeyUpdateObserver *obs) override;
+	///remove IKeyUpdateObserver
+	virtual void removeObserver(IKeyUpdateObserver *obs)override;
 
 protected:
 	using UpdatableObject::db;
@@ -230,16 +326,13 @@ protected:
 	ViewDocID viewdocid;
 
 	std::mutex wrlock;
-	ReduceKeyListener keylistener;
-
-
+	KeyUpdateObservableImpl keylistener;
 
 	class UpdateDoc;
 
 	virtual void storeState() override;
 	virtual SeqID scanUpdates(ChangesIterator &&iter) override;
-	virtual void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted) override;
-
+	void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted);
 
 };
 
@@ -275,13 +368,20 @@ protected:
 
 };
 
+///Iterates over results returned by a search operation of the view
 class ViewIterator: private MapIterator {
 public:
+	///Don't call directly, you don't need to create iterator manually
 	ViewIterator(MapIterator &&iter);
 
+	///Prepares next result
+	/**You need to call this as the very first operation of the iterator */
 	bool next();
+	///Retrieves curreny key
 	json::Value key() const;
+	///Retrieves curreny value
 	json::Value value() const;
+	///Retrieves documeny id - source of this record
 	const std::string_view id() const;
 	using MapIterator::orig_key;
 	using MapIterator::empty;
@@ -293,6 +393,7 @@ protected:
 
 };
 
+///Iterates through list of views. To access this iterator, use ViewTools::list()
 class ViewList: private MapIterator {
 public:
 	ViewList(MapIterator &&iter);
@@ -304,76 +405,26 @@ public:
 };
 
 
+///Helps to construct instance using single map function specified in the constructor
 class View: public AbstractView {
 public:
 	typedef void (*MapFn)(const Document &, const EmitFn &);
+	///Constructor
+	/**
+	 * @param db database object, where the view resides
+	 * @param name name of the view
+	 * @param serialnr serial number - The number is stored and compared. If the
+	 *   there is difference, the content of the view is invalidated, and the
+	 *   view is rebuilt complete (which can take a long time)
+	 * @param mapFn function which maps documents to the index
+	 */
 	View(DocDB &db, std::string_view name, std::uint64_t serialnr, MapFn mapFn);
 protected:
 	MapFn mapFn;
 	virtual void map(const Document &doc, const EmitFn &emit) const override;
 };
 
-class AbstractReduceView: public AbstractUpdatableView, public IReduceObserver {
-public:
-	/**
-	 * @param viewMap source map
-	 * @param name name of the view
-	 * @param maxGroupLevel specify maximum grouplevel of array keys for reduce.
-	 * 			This can help reduce space of the reduce map if more levels are not necesery
-	 * @param reduceAll generate reduceAll result (key null)
-	 *
-	 */
-	AbstractReduceView(AbstractUpdatableView &viewMap, const std::string &name, unsigned int groupLevel = 99);
-	~AbstractReduceView();
 
-	virtual void update();
-	void rebuild();
-
-	struct KeyValue {
-		std::string docId;
-		json::Value key;
-		json::Value value;
-	};
-
-	virtual json::Value reduce(ViewIterator &iter) const = 0;
-
-	virtual void registerObserver(IReduceObserver *obs) override;
-	virtual void unregisterObserver(IReduceObserver *obs)override;
-
-
-protected:
-	AbstractUpdatableView &viewMap;
-	std::string name;
-	unsigned int groupLevel;
-	bool updated = false;
-	std::mutex lock;
-	ReduceKeyListener keylistener;
-
-
-	virtual void updatedKeys(WriteBatch &batch, const json::Value &keys, bool deleted);
-	ViewIterator prepareRereduceIterator(const json::Value &keyScan);
-	void updateRow(json::Value keySrch, ViewID &itmk, std::string &value, WriteBatch &b);
-	json::Value adjustKey(json::Value pv);
-};
-
-class ReduceView: public AbstractReduceView {
-public:
-	typedef json::Value (*ReduceFn)(ViewIterator &iter);
-	ReduceView(AbstractView &viewMap, const std::string &name, ReduceFn reduceFn,
-					unsigned int groupLevel = 99);
-protected:
-	ReduceFn reduceFn;
-	virtual json::Value reduce(ViewIterator &iter) const override;
-
-};
-
-///Provides read only view, which can be used to explore snapshot of view specified by its name but without update
-class ReadOnlyView: public AbstractViewBase {
-public:
-	ReadOnlyView(DocDB &db, const std::string_view &name);
-	virtual void update() override {}
-
-};
 
 } /* namespace docdb */
 
