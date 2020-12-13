@@ -11,4 +11,5 @@ add_library (docdblib
 	updatableobject.cpp
 	filedb.cpp
 	aggrview.cpp
+	view_iterator.cpp
 	)

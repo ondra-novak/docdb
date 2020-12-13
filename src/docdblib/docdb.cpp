@@ -559,6 +559,12 @@ void DocDB::compact() {
 	db->CompactRange(nullptr, nullptr);
 }
 
+void DocDB::compact(const KeyRange &rg) {
+	leveldb::Slice beg(rg.begin);
+	leveldb::Slice end(rg.end);
+	db->CompactRange(&beg, &end);
+}
+
 json::Value DocDB::getStats() {
 	json::Object ret;
 	std::string val;

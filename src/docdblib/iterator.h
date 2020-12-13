@@ -14,6 +14,8 @@
 
 namespace docdb {
 
+struct KeyRange;
+
 ///Core Iterator which handle iteration, bud doesn't interpret the result
 /** The iterator can advance only one direction, and cannot go back
  * You use iterator by calling next() for next item and accessing the data, which are valid
@@ -81,6 +83,15 @@ public:
 	bool empty() const;
 
 
+
+	///Receives key range for this iterator
+	/** Note, if called as first operation, it returns complete range.
+	 * If called after some items has been extracted, it returns remaining range
+	 *
+	 * @return range of keys. Returned value can be used to call DocDB::compact
+	 */
+	KeyRange range() const;
+
 protected:
 	std::unique_ptr<leveldb::Iterator> iter;
 	std::string end_key;
@@ -109,6 +120,7 @@ public:
 	using Iterator::value;
 	using Iterator::orig_key;
 	using Iterator::empty;
+	using Iterator::range;
 
 	///Retrieves key
 	/**
@@ -120,6 +132,12 @@ public:
 
 
 };
+
+struct KeyRange {
+	std::string begin;
+	std::string end;
+};
+
 }
 
 #endif /* SRC_DOCDBLIB_ITERATOR_H_ */

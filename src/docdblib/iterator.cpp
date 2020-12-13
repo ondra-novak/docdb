@@ -116,4 +116,10 @@ bool Iterator::empty() const {
 	return !iter->Valid() || !check_after_advance();
 }
 
+KeyRange Iterator::range() const {
+	return {
+		descending?end_key:iter->Valid()?std::string(iter->key().data(), iter->key().size()):end_key,
+		!descending?end_key:iter->Valid()?std::string(iter->key().data(), iter->key().size()):end_key
+	};
+}
 }

@@ -10,6 +10,7 @@
 #include <imtjson/binjson.tcc>
 #include <imtjson/fnv.h>
 #include "changesiterator.h"
+#include "view_iterator.h"
 
 namespace docdb {
 
@@ -66,43 +67,6 @@ SeqID ViewList::seqID() const {
 	return string2index(MapIterator::value().substr(8,8));
 }
 
-ViewIterator::ViewIterator(MapIterator &&iter):MapIterator(std::move(iter)) {
-
-}
-
-json::Value ViewIterator::key() const {
-	if (need_parse) parseKey();
-	return ukey;
-}
-
-bool ViewIterator::next() {
-	need_parse = true;
-	return MapIterator::next();
-}
-
-
-json::Value ViewIterator::value() const {
-	auto val = MapIterator::value();
-	std::size_t i = 0;
-	return json::Value::parseBinary([&]{
-		return val[i++];
-	});
-}
-
-const std::string_view ViewIterator::id() const {
-	if (need_parse) parseKey();
-	return docid;
-}
-
-void ViewIterator::parseKey() const {
-	auto k = MapIterator::key();
-	k = k.substr(8); //skip view-id
-	ukey = string2jsonkey(std::move(k));
-	docid = k;
-	need_parse = false;
-}
-
-
 std::string ViewTools::getViewID(const std::string_view &viewName) {
 	std::uint64_t h;
 	FNV1a64 fnv(h);
@@ -126,7 +90,21 @@ public:
 		{}
 
 
-	virtual void operator()(const json::Value &key, const json::Value &value) const override;
+	virtual void operator()(const json::Value &key, const json::Value &value) const override {
+		indexKey(key, value);
+	}
+	virtual void operator()(const json::Value &key, const std::initializer_list<json::Value> &value) const override {
+		indexKey(key, value);
+	}
+	virtual void operator()(const std::initializer_list<json::Value> &key, const json::Value &value) const override {
+		indexKey(key, value);
+	}
+	virtual void operator()(const std::initializer_list<json::Value> &key, const std::initializer_list<json::Value> &value) const override {
+		indexKey(key, value);
+	}
+
+	template<typename A, typename B>
+	void indexKey(const A &key, const B &value) const;
 	void indexDoc(const Document &doc, AbstractView &owner);
 protected:
 	DocDB &db;
@@ -144,24 +122,26 @@ protected:
 
 };
 
-void AbstractView::UpdateDoc::operator()(const json::Value &key, const json::Value &value) const {
+template<typename A, typename B>
+void AbstractView::UpdateDoc::indexKey(const A &key, const B &value) const {
 	//clear viewkey - up to length of viewid
 	viewkey.resize(viewkey_size);
 	//serialize key to string
 	jsonkey2string(key, viewkey);
-	//retrieve end of key
-	std::size_t keyend = viewkey.length();
-	//append document id
-	viewkey.append(id);
 	//clear value
 	val.clear();
 	//serialize value to string
 	json2string(value, val);
+	//retrieve end of key
+	std::size_t keyend = viewkey.length();
+	//append document id
+	viewkey.append(id);
 	//put record to batch
 	batch.Put(viewkey, val);
 	//crop binary key from viewkey and store to array
 	keys.push_back(std::string_view(viewkey.data()+viewkey_size, keyend - viewkey_size));
 }
+
 
 
 void AbstractView::UpdateDoc::indexDoc(const Document &doc, AbstractView &owner) {
@@ -217,13 +197,17 @@ void AbstractView::UpdateDoc::indexDoc(const Document &doc, AbstractView &owner)
 	db.flushBatch(batch);
 }
 
-StaticView::StaticView(DocDB &db, ViewID &&viewid)
-	:db(db),viewid(std::move(viewid))
+StaticView::StaticView(DocDB &db, const std::string_view &name)
+	:db(db),viewid(DocDB::ViewIndexKey(ViewTools::getViewID(name)))
+{}
+
+StaticView::StaticView(DocDB &db, const ViewID &viewid)
+:db(db),viewid(viewid)
 {}
 
 AbstractView::AbstractView(DocDB &db, std::string &&name, uint64_t serial_nr)
 	:UpdatableObject(db)
-	,AbstractUpdatableView(db, ViewTools::getViewID(name))
+	,AbstractUpdatableView(db, name)
 	,name(std::move(name))
 	,serialNr(serial_nr)
 	,viewdocid(ViewTools::getViewID(this->name))
@@ -276,10 +260,10 @@ ViewIterator StaticView::find(const json::Value &key, bool backward) {
 }
 
 ViewIterator StaticView::find(const json::Value &key, const std::string_view &from_doc, bool backward) {
-	update();
-	ViewID skey1(viewid), skey2;
+	ViewID skey1(viewid);
 	jsonkey2string(key,skey1);
-	skey2 = skey1;
+	ViewID skey2 (skey1);
+
 	if (backward) {
 		if (from_doc.empty()) {
 			DocDB::increaseKey(skey1);
@@ -290,7 +274,7 @@ ViewIterator StaticView::find(const json::Value &key, const std::string_view &fr
 		skey1.append(from_doc);
 		DocDB::increaseKey(skey2);
 	}
-	return ViewIterator(db.mapScan(skey1, skey2, from_doc.empty()?0:DocDB::excludeBegin));
+	return ViewIterator(db.mapScan(skey1, skey2, from_doc.empty()?0:DocDB::excludeBegin), DefaultJSONTranslator::getInstance());
 }
 
 json::Value StaticView::lookup(const json::Value &key) {
@@ -300,8 +284,7 @@ json::Value StaticView::lookup(const json::Value &key) {
 }
 
 ViewIterator StaticView::scan() {
-	update();
-	return ViewIterator(db.mapScanPrefix(viewid,false));
+	return ViewIterator(db.mapScanPrefix(viewid,false), DefaultJSONTranslator::getInstance());
 }
 
 ViewIterator StaticView::scanRange(const json::Value &from,
@@ -313,18 +296,17 @@ ViewIterator StaticView::scanRange(const json::Value &from,
 		const json::Value &to, const std::string_view &from_doc,
 		bool exclude_end) {
 
-	update();
 	ViewID strf(viewid), strt(viewid);
 	jsonkey2string(from,strf);
 	jsonkey2string(to,strt);
 	strf.append(from_doc);
 	return ViewIterator(
-			db.mapScan(strf, strt, (exclude_end?DocDB::excludeEnd:0)|(from_doc.empty()?0:DocDB::excludeBegin))
+			db.mapScan(strf, strt, (exclude_end?DocDB::excludeEnd:0)|(from_doc.empty()?0:DocDB::excludeBegin)),
+			DefaultJSONTranslator::getInstance()
 	);
 }
 
 ViewIterator StaticView::scanPrefix(const json::Value &prefix, bool backward) {
-	update();
 	ViewID key1(viewid);
 	jsonkey2string(prefix, key1);
 	/* remove last character
@@ -334,13 +316,13 @@ ViewIterator StaticView::scanPrefix(const json::Value &prefix, bool backward) {
 	 */
 	key1.pop_back();
 	return ViewIterator(
-			db.mapScanPrefix(key1, backward)
+			db.mapScanPrefix(key1, backward),
+			DefaultJSONTranslator::getInstance()
 	);
 
 }
 
 ViewIterator StaticView::scanFrom(const json::Value &item, bool backward, const std::string &from_doc) {
-	update();
 	ViewID key1(viewid);
 	ViewID key2(viewid);
 	if (!backward) {
@@ -349,12 +331,12 @@ ViewIterator StaticView::scanFrom(const json::Value &item, bool backward, const 
 	jsonkey2string(item, key1);
 	key1.append(from_doc);
 	return ViewIterator(
-			db.mapScan(key1, key2, (from_doc.empty()?0:DocDB::excludeBegin)|DocDB::excludeEnd)
+			db.mapScan(key1, key2, (from_doc.empty()?0:DocDB::excludeBegin)|DocDB::excludeEnd),
+			DefaultJSONTranslator::getInstance()
 	);
 }
 
 ViewIterator StaticView::scanFrom(const json::Value &item, bool backward) {
-	update();
 	ViewID key1(viewid);
 	ViewID key2(viewid);
 	jsonkey2string(item, key1);
@@ -364,7 +346,8 @@ ViewIterator StaticView::scanFrom(const json::Value &item, bool backward) {
 		DocDB::increaseKey(key2);
 	}
 	return ViewIterator(
-			db.mapScan(key1, key2, (backward?DocDB::excludeBegin:0)|DocDB::excludeEnd)
+			db.mapScan(key1, key2, (backward?DocDB::excludeBegin:0)|DocDB::excludeEnd),
+			DefaultJSONTranslator::getInstance()
 	);
 }
 
@@ -405,6 +388,50 @@ void AbstractView::updatedKeys(WriteBatch &batch, const json::Value &keys, bool 
 	}
 }
 
+ViewIterator AbstractUpdatableView::find(const json::Value &key,
+		bool backward) {
+	update();return StaticView::find(key, backward);
+}
+
+ViewIterator AbstractUpdatableView::find(const json::Value &key,
+		const std::string_view &from_doc, bool backward) {
+	update();return StaticView::find(key, from_doc,backward);
+}
+
+json::Value AbstractUpdatableView::lookup(const json::Value &key) {
+	update();return StaticView::lookup(key);
+}
+
+ViewIterator AbstractUpdatableView::scan() {
+	update();return StaticView::scan();
+}
+
+ViewIterator AbstractUpdatableView::scanRange(const json::Value &from,
+		const json::Value &to, bool exclude_end) {
+	update();return StaticView::scanRange(from, to, exclude_end);
+
+}
+
+ViewIterator AbstractUpdatableView::scanRange(const json::Value &from,
+		const json::Value &to, const std::string_view &from_doc,
+		bool exclude_end) {
+	update();return StaticView::scanRange(from, to, from_doc, exclude_end);
+}
+
+ViewIterator AbstractUpdatableView::scanPrefix(const json::Value &prefix,
+		bool backward) {
+	update();return StaticView::scanPrefix(prefix, backward);
+}
+
+ViewIterator AbstractUpdatableView::scanFrom(const json::Value &key,
+		bool backward) {
+	update();return StaticView::scanFrom(key, backward);
+}
+
+ViewIterator AbstractUpdatableView::scanFrom(const json::Value &key,
+		bool backward, const std::string &from_doc) {
+	update();return StaticView::scanFrom(key, backward, from_doc);
+}
 
 } /* namespace docdb */
 

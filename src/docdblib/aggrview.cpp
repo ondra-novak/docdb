@@ -8,17 +8,17 @@
 
 #include "formats.h"
 #include <imtjson/binjson.tcc>
+#include "view_iterator.h"
 
 namespace docdb {
 
 AbstractAggregateView::AbstractAggregateView(AbstractUpdatableView &viewMap, const std::string &name, unsigned int groupLevel  )
-	:AbstractUpdatableView(viewMap.getDB(), ViewTools::getViewID(name))
+	:AbstractUpdatableView(viewMap.getDB(),name)
 	,viewMap(viewMap)
 	,name(name)
 	,groupLevel(groupLevel)
-	,updated_rev(1)
-	,last_update_rev(0)
 	,keytmp(viewid.content())
+	,translator(*this)
 {
 	viewMap.addObserver(this);
 }
@@ -27,31 +27,59 @@ AbstractAggregateView::~AbstractAggregateView() {
 	viewMap.removeObserver(this);
 }
 
-AbstractAggregateView::KeyTransform AbstractAggregateView::mapKey(const json::Value &key) const {
+class AbstractAggregateView::KeyMapImpl: public KeyMapping {
+public:
+	KeyMapImpl(WriteBatch &b, DocDB::ViewIndexKey &rkey, std::string &val)
+		:b(b),rkey(rkey),val(val) {rkeysz = rkey.size();}
+
+	virtual void scan(const json::Value &result_key, const json::Value &value) const override {
+		jsonkey2string(result_key, rkey);
+		json2string({json::Value(),json::Value(static_cast<int>(ScanCommand::scan)),value}, val);
+		putRecord();
+	};
+	virtual void scanPrefix(const json::Value &result_key, const json::Value &prefix, const json::Value &value) const override {
+		jsonkey2string(result_key, rkey);
+		json2string({json::Value(),json::Value(static_cast<int>(ScanCommand::scanPrefix)),prefix,value}, val);
+		putRecord();
+	}
+	virtual void find(const json::Value &result_key ,const json::Value &key, const json::Value &value) const override {
+		jsonkey2string(result_key, rkey);
+		json2string({json::Value(),json::Value(static_cast<int>(ScanCommand::find)),key,value}, val);
+		putRecord();
+	}
+	virtual void scanRange(const json::Value &result_key, const json::Value &lower_bound, const json::Value &upper_bound, Exclude exclude, const json::Value &value) const override {
+		jsonkey2string(result_key, rkey);
+		json2string({json::Value(),json::Value(static_cast<int>(ScanCommand::scanRange)),lower_bound, upper_bound, json::Value(exclude == exclude_end), value}, val);
+		putRecord();
+	}
+
+
+protected:
+	WriteBatch &b;
+	DocDB::ViewIndexKey &rkey;
+	std::string &val;
+	std::size_t rkeysz;
+
+	void putRecord() const {
+		b.Put(rkey, val);
+		rkey.resize(rkeysz);
+		val.clear();
+	}
+};
+
+void AbstractAggregateView::mapKey(const json::Value &key, const KeyMapping &mapping) const {
 	if (groupLevel == 0) {
-		return {
-			KeyTransform::scan, json::Value(), nullptr
-		};
+		mapping.scan(nullptr);
 	} else if (key.type() == json::array) {
-		return {
-			KeyTransform::scanPrefix, json::Value(), key.slice(0, groupLevel)
-		};
+		mapping.scanPrefix(key.slice(0,groupLevel));
 	} else {
-		return {
-			KeyTransform::find, json::Value(), key
-		};
+		mapping.find(key);
 	}
 }
 
 void AbstractAggregateView::updatedKey(WriteBatch &batch, const json::Value &key, bool) {
-	KeyTransform trns = mapKey(key);
-	json2string(trns.keyResult, keytmp);
-	tmpval.push_back(static_cast<char>(trns.cmd));
-	json2string(trns.keyScan, tmpval);
-	batch.Put(keytmp, tmpval);
-	keytmp.resize(viewid.size());
-	tmpval.clear();
-	++updated_rev;
+	KeyMapImpl mp(batch, keytmp, tmpval);
+	mapKey(key, mp);
 }
 
 
@@ -67,101 +95,76 @@ void AbstractAggregateView::removeObserver(IKeyUpdateObserver *obs) {
 void AbstractAggregateView::rebuild() {
 	ViewIterator iter = viewMap.scan();
 	WriteBatch b;
+	std::string val;
+	DocDB::ViewIndexKey rkey(viewid.content());
+	KeyMapImpl mp(b, rkey, val);
 	while (iter.next()) {
-		updatedKey(b, iter.key(), false);
+		mapKey(iter.key(), mp);
 		if (b.ApproximateSize()>256000) {
 			db.flushBatch(b);
 			b.Clear();
 		}
 	}
 	db.flushBatch(b);
-	update();
 }
+
 
 void AbstractAggregateView::update() {
-	if (last_update_rev.load() != updated_rev.load()) {
-		std::unique_lock _(lock);
-		last_update_rev.store(updated_rev.load());
-		WriteBatch b;
-		ViewID itmk(viewid);
-		std::string value;
-
-		DocDB::ReduceIndexKey k(viewid.content());
-		auto iter = db.mapScanPrefix(k, false);
-
-		KeyTransform trns;
-
-
-		while (iter.next()) {
-			auto orig_key = iter.orig_key();
-			auto str = iter.key();
-			str = str.substr(k.content().length());
-			trns.keyResult = string2json(str);
-			auto val = iter.value();
-			trns.cmd = static_cast<KeyTransform::Command>(val[0]);
-			trns.keyScan = string2json(val.substr(1));
-			updateRow(trns ,itmk, value, b);
-
-			b.Delete(orig_key);
-			db.flushBatch(b);
-			b.Clear();
-
-		}
-	}
 
 }
 
-ViewIterator AbstractAggregateView::scanSource(const KeyTransform &trns) const {
-	json::Value param = trns.keyScan;
-	if (!param.defined()) param = trns.keyResult;
-	switch (trns.cmd) {
-		case KeyTransform::scan: return viewMap.scan();
-		case KeyTransform::scanPrefix: return viewMap.scanPrefix(param, false);
-		default:
-		case KeyTransform::find: return viewMap.find(param, false);
+ViewIterator AbstractAggregateView::find(const json::Value &key, bool backward) {
+	return ViewIterator(StaticView::find(key, backward),translator);
+}
+
+json::Value AbstractAggregateView::lookup(const json::Value &key) {
+	auto iter = find(key);
+	if (iter.next()) return iter.value();
+	else return json::undefined;
+}
+
+ViewIterator AbstractAggregateView::scan() {
+	return ViewIterator(StaticView::scan(), translator);
+}
+
+ViewIterator AbstractAggregateView::scanRange(const json::Value &from, const json::Value &to, bool exclude_end) {
+	return ViewIterator(StaticView::scanRange(from, to, exclude_end),translator);
+
+}
+
+ViewIterator AbstractAggregateView::scanPrefix(const json::Value &prefix, bool backward) {
+	return ViewIterator(StaticView::scanPrefix(prefix, backward),translator);
+
+}
+
+ViewIterator AbstractAggregateView::scanSource(const json::Value &args, const std::string_view &result_key) const {
+	ScanCommand cmd = static_cast<ScanCommand>(args[1].getInt());
+	json::Value param = args[2];
+	if (!param.defined()) param = string2jsonkey(result_key.substr(viewid.length()));
+	switch (cmd) {
+		case ScanCommand::scan: return viewMap.scan();
+		case ScanCommand::scanPrefix: return viewMap.scanPrefix(param, false);
+		case ScanCommand::scanRange: return viewMap.scanRange(args[2], args[3], args[4].getBool());
+		default: return viewMap.find(param, false);
 	}
 }
 
-void AbstractAggregateView::updateRow(const KeyTransform &trns, ViewID &itmk, std::string &value, WriteBatch &b) {
-	ViewIterator iter = scanSource(trns);
-
-	auto itmksz = itmk.length();
-	jsonkey2string(trns.keyResult, itmk);
-	json::Value rval;
-	if (!iter.empty()) rval = calc(iter);
-
-	bool deleted;
-	if (rval.defined()) {
-		json2string(rval, value);
-		b.Put(itmk, value);
-		deleted = false;
-	} else {
-		b.Delete(itmk);
-		deleted = true;
-	}
-	if (!keylistener.empty()) {
-		keylistener.updatedKey(b, trns.keyResult, deleted);
-	}
-	itmk.resize(itmksz);
-	value.clear();
-
-}
 
 AggregateView::AggregateView(AbstractView &viewMap, const std::string &name, unsigned int groupLevel, AggrFn aggrFn)
 	:AbstractAggregateView(viewMap, name, groupLevel)
 	,aggrFn(aggrFn) {}
 
-json::Value AggregateView::calc(ViewIterator &iter) const {
-	return aggrFn(iter);
+json::Value AggregateView::calc(ViewIterator &iter,const json::Value &custom) const {
+	return aggrFn(iter, custom);
 }
 AggregateViewWithKeyMap::AggregateViewWithKeyMap(AbstractView &viewMap, const std::string &name, MapKeyFn mapKeyFn, AggrFn aggrFn)
 	:AggregateView(viewMap,name,1,aggrFn),mapKeyFn(mapKeyFn) {}
 
-AggregateViewWithKeyMap::KeyTransform AggregateViewWithKeyMap::mapKey(const json::Value &key) const {
-	return mapKeyFn(key);
+void AggregateViewWithKeyMap::mapKey(const json::Value &key, const KeyMapping &keyMapEmit) const {
+	return mapKeyFn(key, keyMapEmit);
 }
 
-json::Value AggregateCount::calc(ViewIterator &iter) const {
+json::Value AggregateCount::calc(ViewIterator &iter, const json::Value &) const {
 	std::size_t cnt = 0;
 	while (iter.next()) cnt++;
 	return cnt;
@@ -171,7 +174,7 @@ AggregateReduce::AggregateReduce(AbstractUpdatableView &viewMap, const std::stri
 	:AbstractAggregateView(viewMap,name,groupLevel),op(op)
 {}
 
-json::Value AggregateReduce::calc(ViewIterator &iter) const {
+json::Value AggregateReduce::calc(ViewIterator &iter, const json::Value &) const {
 	json::Value res;
 	if (iter.next()) {
 		res = iter.value();
@@ -205,7 +208,7 @@ json::Value AggregateReduce::min(const json::Value &a, json::Value &b, unsigned 
 	return json::Value::compare(b,a) < 0?b:a;
 }
 
-json::Value AggregateSum::calc(ViewIterator &iter) const {
+json::Value AggregateSum::calc(ViewIterator &iter, const json::Value &) const {
 	json::Value res;
 	if (iter.next()) {
 		res = iter.value();
@@ -234,7 +237,7 @@ json::Value AggregateSum::calc(ViewIterator &iter) const {
 
 }
 
-json::Value AggregateIntegerSum::calc(ViewIterator &iter) const {
+json::Value AggregateIntegerSum::calc(ViewIterator &iter, const json::Value &) const {
 	json::Value res;
 	if (iter.next()) {
 		res = iter.value();
@@ -263,6 +266,35 @@ json::Value AggregateIntegerSum::calc(ViewIterator &iter) const {
 
 }
 
+json::Value AbstractAggregateView::Translator::translate(const std::string_view &key, const std::string_view &value) const {
+	json::Value args = string2json(value);
+	if (args.type() != json::array || args.empty() || args[0].defined()) return args;
+
+	std::unique_lock<std::mutex> _(owner.lock);
+	ViewIterator iter = owner.scanSource(args, key);
+	json::Value custom = args[args.size()-1];
+	json::Value result;
+	if (!iter.empty()) result = owner.calc(iter, custom);
+
+	bool deleted;
+	if (result.defined()) {
+		json2string(result, tmp);
+		b.Put(leveldb::Slice(key.data(), key.length()), tmp);
+		tmp.clear();
+		deleted = false;
+	} else {
+		b.Delete(leveldb::Slice(key.data(), key.length()));
+		deleted = true;
+	}
+
+	if (!owner.keylistener.empty()) {
+		auto k = string2jsonkey(key.substr(owner.viewid.length()));
+		owner.keylistener.updatedKey(b, k, deleted);
+	}
+	owner.db.flushBatch(b);
+	return result;
 }
 
+
+}
 

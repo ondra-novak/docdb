@@ -32,6 +32,7 @@ using PEnv = std::unique_ptr<leveldb::Env>;
 class ChangesIterator;
 class DocIterator;
 class MapIterator;
+struct KeyRange;
 
 enum InMemoryEnum {
 	inMemory
@@ -45,7 +46,6 @@ protected:
 	static constexpr char viewlist_index = 3;
 	static constexpr char view_index = 4;
 	static constexpr char view_doc_index = 5;
-	static constexpr char reduce_key_index = 6;
 	static constexpr char attachments_list = 7;
 	static constexpr char attachments = 8;
 
@@ -186,6 +186,8 @@ public:
 
 	class GenKey: public std::string {
 	public:
+		GenKey(const GenKey &other):std::string(other) {}
+		GenKey(GenKey &&other):std::string(std::move(other)) {}
 		GenKey(char type);
 		GenKey(char type, const char *key);
 		GenKey(char type, const std::string &key);
@@ -214,7 +216,6 @@ public:
 	using GraveyardKey = GenKeyT<graveyard>;
 	using AttachmentKey = GenKeyT<attachments>;
 	using ViewIndexKey = GenKeyT<view_index>;
-	using ReduceIndexKey = GenKeyT<reduce_key_index>;
 	using ViewDocIndexKey = GenKeyT<view_doc_index>;
 	using ViewListIndexKey = GenKeyT<viewlist_index>;
 
@@ -325,6 +326,7 @@ public:
 	static bool increaseKey(std::string &key);
 
 	void compact();
+	void compact(const KeyRange &range);
 
 	json::Value getStats();
 

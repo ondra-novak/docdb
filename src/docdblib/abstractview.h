@@ -8,7 +8,7 @@
 #ifndef SRC_DOCDB_ABSTRACTVIEW_H_
 #define SRC_DOCDB_ABSTRACTVIEW_H_
 #include "docdb.h"
-#include "iterator.h"
+#include "view_iterator.h"
 #include "updatableobject.h"
 
 namespace docdb {
@@ -22,7 +22,12 @@ public:
 	 * @param value value
 	 */
 	virtual void operator()(const json::Value &key, const json::Value &value) const = 0;
+	virtual void operator()(const json::Value &key, const std::initializer_list<json::Value> &value) const = 0;
+	virtual void operator()(const std::initializer_list<json::Value> &key, const json::Value &value) const = 0;
+	virtual void operator()(const std::initializer_list<json::Value> &key, const std::initializer_list<json::Value> &value) const = 0;
 	virtual ~EmitFn() {};
+
+
 };
 
 class ViewIterator;
@@ -135,9 +140,11 @@ class StaticView {
 public:
 
 
-	using ViewID = DocDB::ViewIndexKey;
+	using ViewID = DocDB::GenKey;
 
-	StaticView(DocDB &db, ViewID &&viewid);
+	StaticView(DocDB &db, const std::string_view &name);
+
+	StaticView(DocDB &db, const ViewID &viewid);
 
 
 	///Searches for single key
@@ -227,11 +234,6 @@ public:
 	DocDB &getDB() const {return db;}
 
 protected:
-	///Derived class need to implement this function to update view when it is needed
-	/** Function is called everytime the view is accessed. The derived
-	 * class can perform update operation before the view is searched
-	 */
-	virtual void update() {}
 
 	DocDB &db;
 
@@ -250,6 +252,18 @@ class AbstractUpdatableView: public StaticView,
 public:
 	virtual void update() = 0;
 	using StaticView::StaticView;
+
+
+	ViewIterator find(const json::Value &key, bool backward = false);
+	ViewIterator find(const json::Value &key, const std::string_view &from_doc, bool backward = false);
+	json::Value lookup(const json::Value &key);
+	ViewIterator scan();
+	ViewIterator scanRange(const json::Value &from, const json::Value &to, bool exclude_end);
+	ViewIterator scanRange(const json::Value &from, const json::Value &to, const std::string_view &from_doc, bool exclude_end);
+	ViewIterator scanPrefix(const json::Value &prefix, bool backward = false);
+	ViewIterator scanFrom(const json::Value &key, bool backward = false);
+	ViewIterator scanFrom(const json::Value &key, bool backward, const std::string &from_doc);
+
 };
 
 ///Abstract view - the basic building block for materialized views.
@@ -365,31 +379,6 @@ public:
 
 protected:
 	DocDB &db;
-
-};
-
-///Iterates over results returned by a search operation of the view
-class ViewIterator: private MapIterator {
-public:
-	///Don't call directly, you don't need to create iterator manually
-	ViewIterator(MapIterator &&iter);
-
-	///Prepares next result
-	/**You need to call this as the very first operation of the iterator */
-	bool next();
-	///Retrieves curreny key
-	json::Value key() const;
-	///Retrieves curreny value
-	json::Value value() const;
-	///Retrieves documeny id - source of this record
-	const std::string_view id() const;
-	using MapIterator::orig_key;
-	using MapIterator::empty;
-protected:
-	mutable std::string_view docid;
-	mutable json::Value ukey;
-	mutable bool need_parse = true;
-	void parseKey() const;
 
 };
 
