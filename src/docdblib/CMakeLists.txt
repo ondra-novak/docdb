@@ -12,4 +12,6 @@ add_library (docdblib
 	filedb.cpp
 	aggrview.cpp
 	view_iterator.cpp
+	keyspace.cpp
+	db.cpp
 	)
