@@ -19,16 +19,25 @@
 #include "formats.h"
 namespace docdb {
 
+
+static constexpr KeySpaceID keyspaceManager = ~KeySpaceID(0);
+
+static Key getKey(ClassID class_id, const std::string_view &name);
+static Key getKey(KeySpaceID id);
+
+
 class DBCoreImpl: public DBCore {
 public:
 	DBCoreImpl(const std::string &path, const Config &cfg);
 
 	virtual void commitBatch(Batch &b) override;
 	virtual Iterator createIterator(const Key &from, const Key &to, bool exclude_begin, bool exclude_end) const override;
-	virtual std::optional<std::string> get(const Key &key) const  override;
-	virtual PDBCore getSnapshot(SnapshotMode mode) override;
-	virtual void compact();
-	virtual json::Value getStats() const;
+	virtual bool get(const Key &key, std::string &val) const override;
+	virtual PDBCore getSnapshot(SnapshotMode mode) const override;
+	virtual void compact() override ;
+	virtual json::Value getStats() const override;
+	virtual KeySpaceID allocKeyspace(ClassID classId , const std::string_view &name) override;
+	virtual bool freeKeyspace(ClassID class_id, const std::string_view &name) override;
 
 protected:
 
@@ -43,6 +52,7 @@ protected:
 	PEnv env;
 	std::unique_ptr<Logger> logger;
 	bool sync_writes;
+	std::mutex lock;
 
 
 };
@@ -95,10 +105,12 @@ public:
 	virtual ~SnapshotIgn();
 	virtual void commitBatch(Batch &b) override;
 	virtual Iterator createIterator(const Key &from, const Key &to, bool exclude_begin, bool exclude_end) const  override;
-	virtual std::optional<std::string> get(const Key &key) const  override;
-	virtual PDBCore getSnapshot(SnapshotMode mode = writeError)  override;
+	virtual bool get(const Key &key, std::string &val) const override;
+	virtual PDBCore getSnapshot(SnapshotMode mode = writeError) const  override;
 	virtual void compact() override {}
 	virtual json::Value getStats() const override  {return core->getStats();}
+	virtual KeySpaceID allocKeyspace(ClassID  , const std::string_view &) override {throw CantWriteToSnapshot();}
+	virtual bool freeKeyspace(ClassID, const std::string_view &) override {return false;}
 
 
 protected:
@@ -119,18 +131,13 @@ Iterator DBCoreImpl::SnapshotIgn::createIterator(const Key &from, const Key &to,
 	opt.snapshot = snapshot;
 	return Iterator(leveldb->NewIterator(opt), from, to, exclude_begin, exclude_end);
 }
-std::optional<std::string> DBCoreImpl::SnapshotIgn::get(const Key &key) const {
+bool DBCoreImpl::SnapshotIgn::get(const Key &key, std::string &val) const {
 	leveldb::ReadOptions opts;
-	std::string out;
 	opts.snapshot = snapshot;
-	if (LevelDBException::checkStatus_Get(leveldb->Get(opts, key, &out))) {
-		return out;
-	} else {
-		return std::optional<std::string>();
-	}
+	return LevelDBException::checkStatus_Get(leveldb->Get(opts, key, &val));
 }
-PDBCore DBCoreImpl::SnapshotIgn::getSnapshot(SnapshotMode)  {
-	return PDBCore(this);
+PDBCore DBCoreImpl::SnapshotIgn::getSnapshot(SnapshotMode) const {
+	return PDBCore(const_cast<SnapshotIgn *>(this));
 }
 
 class DBCoreImpl::SnapshotErr: public DBCoreImpl::SnapshotIgn {
@@ -140,6 +147,9 @@ public:
 		throw CantWriteToSnapshot();
 	}
 	virtual void compact() {
+		throw CantWriteToSnapshot();
+	}
+	virtual bool freeKeyspace(ClassID , const std::string_view &) override {
 		throw CantWriteToSnapshot();
 	}
 };
@@ -153,26 +163,28 @@ public:
 	virtual void compact() {
 		core->compact();
 	}
+	virtual KeySpaceID allocKeyspace(ClassID a , const std::string_view &b) override {
+		return core->allocKeyspace(a,b);
+	}
+	virtual bool freeKeyspace(ClassID a, const std::string_view &b) override {
+		return core->freeKeyspace(a,b);
+	}
 };
 
 
-PDBCore DBCoreImpl::getSnapshot(SnapshotMode mode) {
+PDBCore DBCoreImpl::getSnapshot(SnapshotMode mode) const {
+	PDBCore core (const_cast<DBCoreImpl *>(this));
 	switch(mode) {
 		default:
-		case writeError: return new SnapshotErr(this, db.get());
-		case writeForward: return new SnapshotFwd(this, db.get());
-		case writeIgnore: return new SnapshotIgn(this, db.get());
+		case writeError: return new SnapshotErr(core, db.get());
+		case writeForward: return new SnapshotFwd(core, db.get());
+		case writeIgnore: return new SnapshotIgn(core, db.get());
 	}
 }
 
-std::optional<std::string> DBCoreImpl::get(const Key &key) const {
-	std::string out;
+bool DBCoreImpl::get(const Key &key, std::string &out) const {
 	leveldb::ReadOptions opts;
-	if (LevelDBException::checkStatus_Get(db->Get(opts, key, &out))) {
-		return out;
-	} else {
-		return std::optional<std::string>();
-	}
+	return LevelDBException::checkStatus_Get(db->Get(opts, key, &out));
 }
 
 Iterator DBCoreImpl::createIterator(const Key &from, const Key &to, bool exclude_begin,
@@ -228,10 +240,9 @@ json::Value DBCoreImpl::getStats() const {
 
 //<FF> <FF> <class> <name> - search for keyspace by name
 
-Key DB::getKey(ClassID class_id, const std::string_view &name) {
+static Key getKey(ClassID class_id, const std::string_view &name) {
 	Key k(keyspaceManager);
 	std::string val;
-	k.append(std::string_view(reinterpret_cast<const char *>(keyspaceManager),sizeof(keyspaceManager)));
 	k.append(std::string_view(reinterpret_cast<const char *>(class_id),sizeof(class_id)));
 	k.append(name);
 	return k;
@@ -239,8 +250,9 @@ Key DB::getKey(ClassID class_id, const std::string_view &name) {
 
 //<FF> <id> - search for keyspace
 
-Key DB::getKey(KeySpaceID id) {
+static Key getKey(KeySpaceID id) {
 	Key k(keyspaceManager);
+	k.append(std::string_view(reinterpret_cast<const char *>(keyspaceManager),sizeof(keyspaceManager)));
 	k.append(std::string_view(reinterpret_cast<const char *>(id),sizeof(keyspaceManager)));
 	return k;
 }
@@ -256,121 +268,41 @@ PCache DB::createCache(std::size_t size) {
 }
 
 KeySpaceID DB::allocKeyspace(ClassID class_id, const std::string_view &name) {
-	std::lock_guard _(lock);
-	Key k(getKey(class_id, name));
+	return core->allocKeyspace(class_id, name);
+}
+
+
+bool DB::freeKeyspace(ClassID class_id, const std::string_view &name) {
+	return core->freeKeyspace(class_id, name);
+}
+
+void DB::commitBatch(Batch &b) {
+	core->commitBatch(b);
+}
+
+void DB::keyspace_putMetadata(KeySpaceID id, const json::Value &data) {
+	Batch b;
+	keyspace_putMetadata(b, id, data);
+}
+
+void DB::keyspace_putMetadata(Batch &b, KeySpaceID id,
+		const json::Value &data) {
 	std::string val;
-	if (LevelDBException::checkStatus_Get(db->Get({}, k, &val))) {
-		return *reinterpret_cast<const KeySpaceID *>(val.data());
-	} else {
-		KeySpaceID n = 0;
-		auto iter = listKeyspaces();
-		while (iter.next()) {
-			KeySpaceID z = iter.getID();
-			if (z > n) {
-				break;
-			} else {
-				n = z+1;
-			}
-		}
-		if (n == keyspaceManager) throw TooManyKeyspaces(this->name);
-		val.clear();
-		json2string({class_id, name, json::Value(nullptr)}, val);
-		Batch b;
-		Key k2=getKey(n);
-		b.Put(k2, val);
-		val.clear();
-		val.append(k2.content());
-		b.Put(k, val);
-		commitBatch(b);
-		return n;
-	}
+	json2string(data, val);
+	b.Put(getKey(id), val);
 }
 
-
-void DB::freeKeyspace(KeySpaceID id) {
-	std::lock_guard _(lock);
-	auto opts = getWriteOptions(this->sync_writes);;
-	Key ct1(id);
-	Key ct2(ct1);
-	ct2.upper_bound();
-	Iterator iter(db->NewIterator({}),ct1, ct2, false, true );
-	while (iter.next()) {
-		auto ctk = iter.key();
-		db->Delete(opts, leveldb::Slice(ctk.data(), ctk.size()));
-	}
-	auto ks = getKeyspaceInfo(id);
-	if (ks.has_value()) {
-		auto k = getKey(ks->class_id, ks->name);
-		db->Delete(opts, k);
-	}
-	Key mk(getKey(id));
-	db->Delete(opts, mk);
+json::Value DB::keyspace_getMetadata(KeySpaceID id) const {
+	std::string val;
+	if (!core->get(getKey(id),val) || val.empty()) return json::Value();
+	return string2json(val);
 }
-
-static KeySpaceInfo infoFromJSON(KeySpaceID id, json::Value v) {
-	return {
-		id,
-		static_cast<ClassID>(v[0].getUInt()),
-		v[1].getString(),
-		v[2]
-	};
-}
-
 
 KeySpaceIterator DB::listKeyspaces() const {
-	Key from(keyspaceManager);
-	Key to(keyspaceManager);
-	KeySpaceID zero = 0;
-	from.append(std::string_view(reinterpret_cast<const char *>(zero),sizeof(zero)));
-	to.append(std::string_view(reinterpret_cast<const char *>(keyspaceManager),sizeof(keyspaceManager)));
+	Key from(getKey(ClassID(0), std::string_view()));
+	Key to(getKey(~ClassID(0), std::string_view()));
 	return KeySpaceIterator(createIterator(from, to, false, true));
 }
-
-std::optional<KeySpaceInfo> DB::getKeyspaceInfo(KeySpaceID id) const {
-	Key k(getKey(id));
-	std::string val;
-	if (LevelDBException::checkStatus_Get(db->Get({}, k, &val))) {
-		return infoFromJSON(id, string2json(val));
-	} else {
-		return std::optional<KeySpaceInfo>();
-	}
-
-
-}
-
-std::optional<KeySpaceInfo> DB::getKeyspaceInfo(ClassID class_id, const std::string_view &name) const {
-	Key k (getKey(class_id, name));
-	std::string val;
-	if (LevelDBException::checkStatus_Get(db->Get({}, k, &val))) {
-		KeySpaceID id = *reinterpret_cast<const KeySpaceID *>(val.data());
-		return getKeyspaceInfo(id);
-	} else {
-		return std::optional<KeySpaceInfo>();
-	}
-
-
-}
-
-void DB::storeKeyspaceMetadata(KeySpaceID id, const json::Value &data)  {
-	Batch b;
-	storeKeyspaceMetadata(id, data);
-	commitBatch(b);
-}
-
-void DB::storeKeyspaceMetadata(Batch &b, KeySpaceID id, const json::Value &data) const {
-	Key k(getKey(id));
-	std::string val;
-	LevelDBException::checkStatus(db->Get({}, k, &val));
-	json::Array curData(string2json(val));
-	curData[2] = data;
-	val.clear();
-	json2string(curData, val);
-	b.Put(k, val);
-}
-
-
-
-
 
 
 KeySpaceIterator::KeySpaceIterator(Iterator &&iter)
@@ -378,14 +310,86 @@ KeySpaceIterator::KeySpaceIterator(Iterator &&iter)
 {
 }
 
-KeySpaceInfo KeySpaceIterator::getInfo() const {
-	return infoFromJSON(getID(),string2json(this->value()));
+
+Iterator DB::createIterator(const Key &from, const Key &to, bool exclude_begin, bool exclude_end) const {
+	return core->createIterator(from, to, exclude_begin, exclude_end);
+}
+
+bool DB::get(const Key &key, std::string &val) const {
+	return core->get(key, val);
+}
+
+DB DB::getSnapshot(SnapshotMode mode) const {
+	return DB(core->getSnapshot(mode));
+}
+
+json::Value DB::getStats() const {
+	return core->getStats();
+}
+
+KeySpaceID DBCoreImpl::allocKeyspace(ClassID classId, const std::string_view &name) {
+	std::lock_guard _(lock);
+	Key k(getKey(classId, name));
+	std::string val;
+	if (get(k, val)) return *reinterpret_cast<const KeySpaceID *>(val.data());
+	KeySpaceID n = 0;
+	while (n < keyspaceManager) {
+		Key z(getKey(n));
+		if (!get(z, val)) break;
+		n++;
+	}
+	if (n == keyspaceManager) throw TooManyKeyspaces(this->name);
+	Batch b;
+	val.clear();
+	Key k2=getKey(n);
+	b.Put(k2, val);
+	val.clear();
+	val.append(k2.content());
+	b.Put(k, val);
+	commitBatch(b);
+	return n;
+}
+
+
+bool DBCoreImpl::freeKeyspace(ClassID class_id, const std::string_view &name) {
+	std::lock_guard _(lock);
+	leveldb::WriteOptions opts;
+
+	Key k(getKey(class_id, name));
+	std::string val;
+	if (!get(k, val)) return false;
+
+	auto id = *reinterpret_cast<const KeySpaceID *>(val.data());
+
+	Key ct1(id);
+	Key ct2(ct1);
+	ct2.upper_bound();
+	Iterator iter(db->NewIterator({}),ct1, ct2, false, true );
+	while (iter.next()) {
+		auto ctk = iter.key();
+		db->Delete(opts, ctk);
+	}
+
+	db->Delete(opts, getKey(id));
+	db->Delete(opts, k);
+	return true;
 }
 
 KeySpaceID KeySpaceIterator::getID() const {
-	return *reinterpret_cast<const KeySpaceID *>(Iterator::key().data()+sizeof(KeySpaceID));
+	return *reinterpret_cast<const KeySpaceID *>(this->value().data());
 }
 
+ClassID KeySpaceIterator::getClass() const {
+	auto v = this->key();
+	auto ctx = v.content();
+	return *reinterpret_cast<const ClassID *>(ctx.data());
+}
 
+std::string_view KeySpaceIterator::getName() const {
+	auto v = this->key();
+	auto ctx = v.content();
+	return ctx.substr(sizeof(ClassID));
+}
 
 }
+

@@ -91,9 +91,6 @@ void Key::clear() {
 	keydata.resize(keyspaceid_size);
 }
 
-bool Key::empty() {
-	return keydata.length()<=keyspaceid_size;
-}
 
 void Key::push(unsigned char byte) {
 	keydata.push_back(static_cast<char>(byte));
@@ -112,7 +109,8 @@ void Key::truncate(std::size_t sz) {
 	keydata.resize(std::max(sz, keyspaceid_size));
 }
 
-std::string_view Key::extract_string(iterator &iter, std::size_t bytes) {
+template<typename T>
+std::string_view KeyViewT<T>::extract_string(iterator &iter, std::size_t bytes) {
 	std::size_t ofs = std::distance(begin(), iter);
 	std::size_t remain = std::min(keydata.size() - ofs, bytes);
 	iter+=remain;
@@ -140,7 +138,8 @@ bool Key::upper_bound() {
 
 }
 
-json::Value Key::extract_json(iterator &iter) {
+template<typename T>
+json::Value KeyViewT<T>::extract_json(iterator &iter) {
 	auto tmpiter = iter;
 	auto content = extract_string(tmpiter);
 	auto res = string2jsonkey(std::move(content));
@@ -148,6 +147,9 @@ json::Value Key::extract_json(iterator &iter) {
 	iter = begin() + ofs;
 	return res;
 }
+
+template class KeyViewT<std::string_view>;
+template class KeyViewT<std::string>;
 
 }
 

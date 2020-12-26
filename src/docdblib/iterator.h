@@ -11,6 +11,7 @@
 #include <memory>
 #include <string_view>
 #include <leveldb/iterator.h>
+#include "keyspace.h"
 
 namespace docdb {
 
@@ -65,9 +66,9 @@ public:
 	}
 
 	///Access key (return binary representation of the key)
-	std::string_view key() const {
+	KeyView key() const {
 		auto sl = iter->key();
-		return std::string_view(sl.data(),sl.size());
+		return KeyView(sl);
 	}
 
 	///Access value (return binary representation of the value)
@@ -76,9 +77,6 @@ public:
 		return std::string_view(sl.data(),sl.size());
 	}
 
-	auto orig_key() const {
-		return iter->key();
-	}
 
 	bool empty() const;
 
@@ -108,30 +106,6 @@ protected:
 
 };
 
-///Iterates through the database's map
-/**
- * To create iterator use DocDB::mapScan
- *
- */
-class MapIterator: private Iterator {
-public:
-	using Iterator::Iterator;
-	using Iterator::next;
-	using Iterator::value;
-	using Iterator::orig_key;
-	using Iterator::empty;
-	using Iterator::range;
-
-	///Retrieves key
-	/**
-	 * @return current key
-	 */
-	std::string_view key() const {
-		return Iterator::key().substr(1);
-	}
-
-
-};
 
 struct KeyRange {
 	std::string begin;

@@ -1,17 +1,17 @@
 cmake_minimum_required(VERSION 2.8) 
 add_library (docdblib 
 	compile.cpp 
-	docdb.cpp 
+#	docdb.cpp 
 	exception.cpp 
 	iterator.cpp
-	dociterator.cpp
+#	dociterator.cpp
 	changesiterator.cpp
-	abstractview.cpp
-	attachments.cpp
+#	abstractview.cpp
+#	attachments.cpp
 	updatableobject.cpp
-	filedb.cpp
-	aggrview.cpp
-	view_iterator.cpp
+#	filedb.cpp
+#	aggrview.cpp
+#	view_iterator.cpp
 	keyspace.cpp
 	db.cpp
 	)
