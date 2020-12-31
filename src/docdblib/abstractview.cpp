@@ -279,7 +279,7 @@ ViewIterator StaticView::find(const json::Value &key, const std::string_view &fr
 
 json::Value StaticView::lookup(const json::Value &key) {
 	auto iter = find(key,false);
-	if (iter.next()) return iter.value();
+	if (iter.next()) return json::Value(iter.id(),iter.value());
 	else return json::Value();
 }
 
