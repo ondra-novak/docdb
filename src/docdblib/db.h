@@ -15,6 +15,7 @@
 #include <mutex>
 
 #include <imtjson/value.h>
+#include "classes.h"
 #include "shared/refcnt.h"
 #include "iterator.h"
 #include "keyspace.h"
@@ -57,7 +58,7 @@ public:
 	 * @param exclude_end exclude ending key if matches
 	 * @return iterator
 	 */
-	virtual Iterator createIterator(const Key &from, const Key &to, bool exclude_begin, bool exclude_end) const = 0;
+	virtual Iterator createIterator(const Iterator::RangeDef &rangeDef) const = 0;
 	///Retrieve value from the database
 	/**
 	 * @param key key to retrieve
@@ -141,6 +142,8 @@ public:
 	 * @exception TooManyKeyspaces No more keyspaces can be allocated
 	 */
 	KeySpaceID allocKeyspace(ClassID class_id, const std::string_view &name);
+
+	KeySpaceID allocKeyspace(KeySpaceClass class_id, const std::string_view &name);
 	///Releases a keyspace
 	/** Function also removes content of the keyspace, which can cause a lot
 	 * of processing before the function returns. Ensure, that nobody is using
@@ -187,7 +190,7 @@ public:
 	 * @param exclude_end exclude ending key if matches
 	 * @return iterator
 	 */
-	Iterator createIterator(const Key &from, const Key &to, bool exclude_begin, bool exclude_end) const;
+	Iterator createIterator(const Iterator::RangeDef &rangeDef) const;
 	///Retrieve value from the database
 	/**
 	 * @param key key to retrieve
@@ -212,6 +215,13 @@ public:
 	///Enumerates all allocated keyspaces
 	KeySpaceIterator listKeyspaces() const;
 
+	///Retrieves a single buffer for reading data;
+	/**
+	 * There is one buffer for thread. Returned buffer is always cleared.
+	 * Function is MT safe. You should not pass returned reference to different thread
+	 * @return reference to local buffer
+	 */
+	static std::string &getBuffer();
 
 protected:
 	PDBCore core;

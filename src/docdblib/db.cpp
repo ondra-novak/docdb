@@ -31,7 +31,7 @@ public:
 	DBCoreImpl(const std::string &path, const Config &cfg);
 
 	virtual void commitBatch(Batch &b) override;
-	virtual Iterator createIterator(const Key &from, const Key &to, bool exclude_begin, bool exclude_end) const override;
+	virtual Iterator createIterator(const Iterator::RangeDef &rangeDef) const override;
 	virtual bool get(const Key &key, std::string &val) const override;
 	virtual PDBCore getSnapshot(SnapshotMode mode) const override;
 	virtual void compact() override ;
@@ -104,7 +104,7 @@ public:
 	SnapshotIgn(PDBCore core, leveldb::DB *leveldb);
 	virtual ~SnapshotIgn();
 	virtual void commitBatch(Batch &b) override;
-	virtual Iterator createIterator(const Key &from, const Key &to, bool exclude_begin, bool exclude_end) const  override;
+	virtual Iterator createIterator(const Iterator::RangeDef &rangeDef) const  override;
 	virtual bool get(const Key &key, std::string &val) const override;
 	virtual PDBCore getSnapshot(SnapshotMode mode = writeError) const  override;
 	virtual void compact() override {}
@@ -126,10 +126,10 @@ DBCoreImpl::SnapshotIgn::~SnapshotIgn() {
 }
 
 void DBCoreImpl::SnapshotIgn::commitBatch(Batch &) {}
-Iterator DBCoreImpl::SnapshotIgn::createIterator(const Key &from, const Key &to, bool exclude_begin, bool exclude_end) const {
+Iterator DBCoreImpl::SnapshotIgn::createIterator(const Iterator::RangeDef &rangeDef) const {
 	leveldb::ReadOptions opt;
 	opt.snapshot = snapshot;
-	return Iterator(leveldb->NewIterator(opt), from, to, exclude_begin, exclude_end);
+	return Iterator(leveldb->NewIterator(opt), rangeDef);
 }
 bool DBCoreImpl::SnapshotIgn::get(const Key &key, std::string &val) const {
 	leveldb::ReadOptions opts;
@@ -187,10 +187,9 @@ bool DBCoreImpl::get(const Key &key, std::string &out) const {
 	return LevelDBException::checkStatus_Get(db->Get(opts, key, &out));
 }
 
-Iterator DBCoreImpl::createIterator(const Key &from, const Key &to, bool exclude_begin,
-		bool exclude_end) const {
+Iterator DBCoreImpl::createIterator(const Iterator::RangeDef &rangeDef) const {
 	leveldb::ReadOptions opts;
-	return Iterator(db->NewIterator(opts),from, to, exclude_begin, exclude_end);
+	return Iterator(db->NewIterator(opts),rangeDef);
 }
 
 static leveldb::WriteOptions getWriteOptions(bool sync) {
@@ -271,6 +270,9 @@ KeySpaceID DB::allocKeyspace(ClassID class_id, const std::string_view &name) {
 	return core->allocKeyspace(class_id, name);
 }
 
+KeySpaceID DB::allocKeyspace(KeySpaceClass class_id, const std::string_view &name) {
+	return core->allocKeyspace(static_cast<ClassID>(class_id), name);
+}
 
 bool DB::freeKeyspace(ClassID class_id, const std::string_view &name) {
 	return core->freeKeyspace(class_id, name);
@@ -301,7 +303,7 @@ json::Value DB::keyspace_getMetadata(KeySpaceID id) const {
 KeySpaceIterator DB::listKeyspaces() const {
 	Key from(getKey(ClassID(0), std::string_view()));
 	Key to(getKey(~ClassID(0), std::string_view()));
-	return KeySpaceIterator(createIterator(from, to, false, true));
+	return KeySpaceIterator(createIterator({from, to, false, true}));
 }
 
 
@@ -311,8 +313,8 @@ KeySpaceIterator::KeySpaceIterator(Iterator &&iter)
 }
 
 
-Iterator DB::createIterator(const Key &from, const Key &to, bool exclude_begin, bool exclude_end) const {
-	return core->createIterator(from, to, exclude_begin, exclude_end);
+Iterator DB::createIterator(const Iterator::RangeDef &rangeDef) const {
+	return core->createIterator(rangeDef);
 }
 
 bool DB::get(const Key &key, std::string &val) const {
@@ -364,7 +366,7 @@ bool DBCoreImpl::freeKeyspace(ClassID class_id, const std::string_view &name) {
 	Key ct1(id);
 	Key ct2(ct1);
 	ct2.upper_bound();
-	Iterator iter(db->NewIterator({}),ct1, ct2, false, true );
+	Iterator iter(db->NewIterator({}),{ct1, ct2, false, true });
 	while (iter.next()) {
 		auto ctk = iter.key();
 		db->Delete(opts, ctk);
@@ -389,6 +391,14 @@ std::string_view KeySpaceIterator::getName() const {
 	auto v = this->key();
 	auto ctx = v.content();
 	return ctx.substr(sizeof(ClassID));
+}
+
+thread_local std::string buffer;
+
+std::string &DB::getBuffer() {
+	std::string &out = buffer;
+	out.clear();
+	return out;
 }
 
 }

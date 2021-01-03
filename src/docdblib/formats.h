@@ -57,14 +57,16 @@ inline json::Value string2json(std::string_view &&str) {
 
 template<int i>
 struct Index2String_Push{
-	static void push(std::uint64_t idx, std::string &out) {
+	template<typename Cont>
+	static void push(std::uint64_t idx, Cont &out) {
 		Index2String_Push<i-1>::push(idx >> 8, out);
 		out.push_back(static_cast<char>(idx & 0xFF));
 	}
 };
 template<>
 struct Index2String_Push<0>{
-	static void push(std::uint64_t , std::string &) {}
+	template<typename Cont>
+	static void push(std::uint64_t , Cont &) {}
 };
 
 static constexpr unsigned int index_byte_length = 9;

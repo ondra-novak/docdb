@@ -14,4 +14,6 @@ add_library (docdblib
 #	view_iterator.cpp
 	keyspace.cpp
 	db.cpp
+	incremental_store.cpp
+	doc_store.cpp
 	)

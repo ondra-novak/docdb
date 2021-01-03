@@ -65,7 +65,6 @@ public:
 
 	operator std::string_view() const {return keydata;}
 
-
 protected:
 	T keydata;
 };
@@ -79,6 +78,8 @@ public:
 	using KeyViewT<std::string>::KeyViewT;
 	///Create key in given keyspace
 	Key(KeySpaceID keySpaceId, const std::string_view &key);
+	///Create key in given keyspace
+	Key(KeySpaceID keySpaceId, const std::string &key);
 	///Create key from json
 	Key(KeySpaceID keySpaceId, const json::Value &key);
 	///Create key from array
@@ -88,6 +89,9 @@ public:
 	///Create empty key for given keyspace and reserve bytes for append
 	Key(KeySpaceID keySpaceId, std::size_t reserve);
 
+	Key(const KeyView &kv);
+
+	operator KeyView() const;
 
 	KeySpaceID get_keyspace_id() const {return *(reinterpret_cast<const KeySpaceID *>(keydata.data()));}
 
@@ -106,8 +110,14 @@ public:
 	 */
 	bool upper_bound();
 
+	static Key upper_bound(const KeyView &kv);
+
+	static Key upper_bound(const Key &kv);
+
 	///append string to key
 	void append(const std::string_view &key);
+	///append string to key
+	void append(const std::string &key);
 
 	///append json to key
 	void append(const json::Value &key);
@@ -119,6 +129,9 @@ public:
 
 	///push byte
 	void push(unsigned char byte);
+
+	///act as std::string
+	void push_back(char byte);
 
 	///pop byte
 	unsigned char pop();

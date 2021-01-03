@@ -63,6 +63,11 @@ public:
 
 };
 
+class DocumentIDCantBeEmpty: public DocDBException {
+public:
+	DocumentIDCantBeEmpty();
+	virtual const char *what() const noexcept override;
+};
 
 }
 

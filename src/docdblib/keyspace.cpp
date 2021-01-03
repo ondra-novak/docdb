@@ -62,6 +62,12 @@ Key::Key(KeySpaceID keySpaceId, const std::string_view &key)
 	append(key);
 }
 
+Key::Key(KeySpaceID keySpaceId, const std::string &key)
+:Key(keySpaceId, key.size())
+{
+	append(key);
+}
+
 
 Key::Key(KeySpaceID keySpaceId, const json::Value &key)
 :Key(keySpaceId, guessSize(key))
@@ -75,6 +81,10 @@ Key::Key(KeySpaceID keySpaceId)
 }
 
 void Key::append(const std::string_view &key) {
+	keydata.append(key);
+}
+
+void Key::append(const std::string &key) {
 	keydata.append(key);
 }
 
@@ -138,6 +148,10 @@ bool Key::upper_bound() {
 
 }
 
+void Key::push_back(char byte) {
+	keydata.push_back(byte);
+}
+
 template<typename T>
 json::Value KeyViewT<T>::extract_json(iterator &iter) {
 	auto tmpiter = iter;
@@ -150,6 +164,26 @@ json::Value KeyViewT<T>::extract_json(iterator &iter) {
 
 template class KeyViewT<std::string_view>;
 template class KeyViewT<std::string>;
+
+
+Key::Key(const KeyView &kv):Key(static_cast<leveldb::Slice>(kv)) {
+}
+
+Key Key::upper_bound(const KeyView &kv) {
+	Key r(kv);
+	r.upper_bound();
+	return r;
+}
+
+Key Key::upper_bound(const Key &kv) {
+	Key r(kv);
+	r.upper_bound();
+	return r;
+}
+
+Key::operator KeyView() const {
+	return KeyView(static_cast<leveldb::Slice>(*this));
+}
 
 }
 

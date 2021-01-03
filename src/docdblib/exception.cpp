@@ -71,6 +71,10 @@ const char *CantWriteToSnapshot::what() const noexcept  {
 	return "Can't write to snapshot";
 }
 
+const char *DocumentIDCantBeEmpty::what() const noexcept {
+	return "Document's ID can't be empty";
+}
+
 }
 
 

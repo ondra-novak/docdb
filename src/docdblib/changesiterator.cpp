@@ -17,10 +17,23 @@ std::string_view docdb::ChangesIterator::doc() const {
 }
 
 SeqID docdb::ChangesIterator::seq() const {
-	return string2index(Iterator::key());
+	auto k = key();
+	SeqID id = 0;
+	for (unsigned char c: k) {
+		id = (id << 8) | c;
+	}
+	return id;
+
 }
 
+ChangesIterator::ChangesIterator(Iterator &&iter, SeqID lastSeqId)
+:Iterator(std::move(iter)),lastSeqId(lastSeqId)
+{
+}
 
+SeqID ChangesIterator::getLastSeqId() const {
+	return lastSeqId;
+}
 
 } /* namespace docdb */
 
