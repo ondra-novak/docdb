@@ -10,7 +10,7 @@
 #ifndef SRC_DOCDBLIB_DOC_STORE_H_
 #define SRC_DOCDBLIB_DOC_STORE_H_
 #include "db.h"
-#include "dociterator.h"
+#include "iterator.h"
 #include "document.h"
 #include "changesiterator.h"
 

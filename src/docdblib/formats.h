@@ -303,11 +303,7 @@ inline void jsonkey2string(const std::initializer_list<json::Value> &v, std::str
 	out.push_back(codepoints::end);
 }
 
-inline json::Value string2jsonkey(std::string_view &&key) {
-	if (key.empty()) return json::Value();
-	codepoints::Type t = key[0];
-	key = key.substr(1);
-	bool startArray = (t & codepoints::array_prefix) != 0;
+inline json::Value string2jsonkey(std::string_view &&key, codepoints::Type t) {
 	json::Value r;
 	switch (t & ~codepoints::array_prefix){
 	case codepoints::end: return json::Value();
@@ -368,6 +364,16 @@ inline json::Value string2jsonkey(std::string_view &&key) {
 		} break;
 	}
 
+	return r;
+}
+
+
+inline json::Value string2jsonkey(std::string_view &&key) {
+	if (key.empty()) return json::Value();
+	codepoints::Type t = key[0];
+	key = key.substr(1);
+	bool startArray = (t & codepoints::array_prefix) != 0;
+	json::Value r =string2jsonkey(std::move(key), t);
 	if (startArray) {
 		json::Array a;
 		json::Value itm = r;
@@ -378,7 +384,72 @@ inline json::Value string2jsonkey(std::string_view &&key) {
 		r = a;
 	}
 	return r;
+
 }
+
+inline json::Value extract_subkey(unsigned int index, std::string_view &&key) {
+	if (key.empty()) return json::Value();
+	codepoints::Type t = key[0];
+	bool startArray = (t & codepoints::array_prefix) != 0;
+	if (!startArray) {
+		if (index == 0) return string2json(std::move(key));
+	}
+	key = key.substr(1);
+	while (index > 0) {
+		switch (t & ~codepoints::array_prefix){
+			case codepoints::end:
+			case codepoints::null:
+			case codepoints::false_value:
+			case codepoints::true_value: break;
+			case codepoints::number_value:
+			case codepoints::number_value+1:
+			case codepoints::number_value+2:
+			case codepoints::number_value+3:
+			case codepoints::number_value+4:
+			case codepoints::number_value+5:
+			case codepoints::number_value+6:
+			case codepoints::number_value+7:
+			case codepoints::number_value+8:
+			case codepoints::number_value+9:
+			case codepoints::number_value+10:
+			case codepoints::number_value+11:
+			case codepoints::number_value+12:
+			case codepoints::number_value+13:
+			case codepoints::number_value+14:
+			case codepoints::number_value+15: key = key.substr(9);break;
+			case codepoints::stringz: {
+				auto n = key.find('\0');
+				key = key.substr(n);
+			}break;
+			case codepoints::json: {
+				string2json(std::move(key));
+			}break;
+		}
+		index--;
+		if (key.empty()) return json::undefined;
+		t = key[0];
+		key = key.substr(1);
+	}
+	return string2jsonkey(std::move(key), t);
+}
+
+inline json::Value extract_subvalue(unsigned int index, std::string_view &&str) {
+	if (str.empty()) return json::undefined;
+	auto c = static_cast<unsigned char>(str[0]);
+	if (c < (json::opcode::posint+10) && c >= json::opcode::posint) {
+		c -= json::opcode::posint;
+		if (c <= index) return json::undefined;
+		str = str.substr(1);
+		while (index>=0) {
+			string2json(std::move(str));
+			index--;
+		}
+		return string2json(std::move(str));
+	} else{
+		return string2json(std::move(str))[index];
+	}
+}
+
 
 }
 

@@ -5,10 +5,8 @@ add_library (docdblib
 	exception.cpp 
 	iterator.cpp
 #	dociterator.cpp
-	changesiterator.cpp
 #	abstractview.cpp
 #	attachments.cpp
-	updatableobject.cpp
 #	filedb.cpp
 #	aggrview.cpp
 #	view_iterator.cpp
@@ -16,4 +14,5 @@ add_library (docdblib
 	db.cpp
 	incremental_store.cpp
 	doc_store.cpp
+	view.cpp
 	)
