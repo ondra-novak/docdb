@@ -80,10 +80,6 @@ public:
 	Key(KeySpaceID keySpaceId, const std::string_view &key);
 	///Create key in given keyspace
 	Key(KeySpaceID keySpaceId, const std::string &key);
-	///Create key from json
-	Key(KeySpaceID keySpaceId, const json::Value &key);
-	///Create key from array
-	Key(KeySpaceID keySpaceId, const std::initializer_list<json::Value> &key);
 	///Create empty key for given keyspace
 	explicit Key(KeySpaceID keySpaceId);
 	///Create empty key for given keyspace and reserve bytes for append

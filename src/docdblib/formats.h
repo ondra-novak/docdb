@@ -450,6 +450,37 @@ inline json::Value extract_subvalue(unsigned int index, std::string_view &&str) 
 	}
 }
 
+inline std::size_t guessKeySize(const json::Value &v) {
+	switch (v.type()) {
+	case json::undefined:
+	case json::null:
+	case json::boolean: return 1;
+	case json::number: return 10;
+	case json::string: return v.getString().length+2;
+	case json::array: {
+		std::size_t x = 0;
+		for (json::Value item: v) {
+			x = x + guessKeySize(item);
+		}
+		x++;
+		return x;
+	}
+	default: {
+		std::size_t x = 1;
+		v.serializeBinary([&](char){++x;});
+		return x;
+	}}
+}
+
+inline std::size_t guessKeySize(const std::initializer_list<json::Value> &v) {
+	std::size_t x = 0;
+	for (json::Value item: v) {
+		x = x + guessKeySize(item);
+	}
+	x++;
+	return x;
+}
+
 
 }
 

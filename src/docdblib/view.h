@@ -17,6 +17,16 @@ class View {
 public:
 	View(const DB &db, const std::string_view &name);
 
+	///Perform fast lookup for a value
+	/**
+	 * @param key key to lookup
+	 * @param set_docid if set to true, the result is returned with key which contains document's id related to the result
+	 * @return found value. If key doesn't exists, returns undefined value. If there are multiple results, it selects only one (first in the set).
+	 *
+	 */
+	json::Value lookup(const json::Value &key, bool set_docid = false);
+
+
 	class Iterator: public ::docdb::Iterator {
 	public:
 		using Super = ::docdb::Iterator;
@@ -89,6 +99,110 @@ public:
 		mutable std::optional<std::pair<json::Value, std::string_view> > cache;
 	};
 
+	///find for given key
+	/**
+	 * @param key key to find
+	 * @return iterator which can iterator through rows containing the same key
+	 */
+	Iterator find(json::Value key) const;
+
+	///find for given key
+	/**
+	 * @param key key to find
+	 * @param backward specify whether to walk forward or backward
+	 * @return iterator which can iterator through rows containing the same key
+	 */
+	Iterator find(json::Value key, bool backward) const;
+
+
+	///find for given key allows access to specified page
+	/**
+	 * @param key key to find
+	 * @param fromDoc specifies starting document. The document is excluded (so it
+	 * should contain ID of last returned document.
+	 * @param backward specify whether to walk forward or backward
+	 * @return iterator which can iterator through rows containing the same key
+	 */
+	Iterator find(json::Value key, const std::string_view &fromDoc, bool backward) const;
+
+	///Search for range
+	/**
+	 * @param fromKey starting key
+	 * @param toKey ending key
+	 * @return iterator
+	 *
+	 * @note if fromKey > toKey, result is in reversed order. Note that upper bound is excluded
+	 * whatever upper bound is. So if the fromKey > toKey, there will be no result
+	 * containing fromKey.
+	 */
+	Iterator range(json::Value fromKey, json::Value toKey) const;
+
+	///Search for range
+	/**
+	 * @param fromKey starting key
+	 * @param toKey ending key
+	 * @param include_upper_bound specify whether to include upper bound
+	 * @return iterator
+	 *
+	 * @note if fromKey > toKey, result is in reversed order. Note that upper bound is always
+	 * the key which is above to other
+	 */
+	Iterator range(json::Value fromKey, json::Value toKey, bool include_upper_bound) const;
+	///Search for range
+	/**
+	 * @param fromKey starting key
+	 * @param toKey ending key
+	 * @param fromDoc starting doc - document where to start. The document is always excluded. Note
+	 * that document must be related to fromKey, otherwise it is ignored
+	 * @param include_upper_bound specify whether to include upper bound
+	 * @return iterator
+	 *
+	 * @note if fromKey > toKey, result is in reversed order. Note that upper bound is always
+	 * the key which is above to other
+	 */
+	Iterator range(json::Value fromKey, json::Value toKey, const std::string_view &fromDoc, bool include_upper_bound) const;
+
+	///Search for prefix
+	/**
+	 * @param key key to search, this should be array or string. If array is used, then
+	 * all result with matching columns are returned. if string is used, then all string
+	 * keys with matching prefix
+	 * @return iterator
+	 */
+	Iterator prefix(json::Value key) const;
+
+	///Search for prefix
+	/**
+	 * @param key key to search, this should be array or string. If array is used, then
+	 * all result with matching columns are returned. if string is used, then all string
+	 * keys with matching prefix
+	 * @param backward specify direction
+	 * @return iterator
+	 */
+	Iterator prefix(json::Value key, bool backward) const;
+
+	///Search for prefix
+	/**
+	 * @param key key to search, this should be array or string. If array is used, then
+	 * all result with matching columns are returned. if string is used, then all string
+	 * keys with matching prefix
+	 * @param fromKey allows to start by specified key
+	 * @param fromDoc allows to start by specified document (must be in relation to fromKey) - always excluded
+	 * @param backward specify direction
+	 * @return iterator
+	 */
+	Iterator prefix(json::Value key, json::Value fromKey, const std::string_view &fromDoc, bool backward) const;
+
+	///Scan entire DB
+	Iterator scan() const;
+
+	///Scan entire view specify direction
+	Iterator scan(bool backward) const;
+
+	///Scan entire view
+	Iterator scan(json::Value fromKey, const std::string_view &fromDoc, backward) const;
+
+
 
 	static std::pair<json::Value, std::string_view> parseKey(const KeyView &key);
 	static json::Value parseValue(const std::string_view &value);
@@ -96,10 +210,14 @@ public:
 	static json::Value extractSubValue(unsigned int index, const std::string_view &key);
 
 
+	Key createKey(const json::Value &val, const std::string_view &doc) const;
+	Key createKey(const std::initializer_list<json::Value> &val, const std::string_view &doc) const;
+	Key createDocKey(const std::string_view &doc) const;
+
 
 protected:
-	KeySpaceID kid;
 	DB db;
+	KeySpaceID kid;
 
 
 };

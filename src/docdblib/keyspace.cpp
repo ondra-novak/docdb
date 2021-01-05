@@ -12,42 +12,6 @@
 
 namespace docdb {
 
-static std::size_t guessSize(const json::Value &v) {
-	switch (v.type()) {
-	case json::undefined:
-	case json::null:
-	case json::boolean: return 1;
-	case json::number: return 10;
-	case json::string: return v.getString().length+2;
-	case json::array: {
-		std::size_t x = 0;
-		for (json::Value item: v) {
-			x = x + guessSize(item);
-		}
-		x++;
-		return x;
-	}
-	default: {
-		std::size_t x = 1;
-		v.serializeBinary([&](char){++x;});
-		return x;
-	}}
-}
-
-static std::size_t guessSize(const std::initializer_list<json::Value> &v) {
-	std::size_t x = 0;
-	for (json::Value item: v) {
-		x = x + guessSize(item);
-	}
-	x++;
-	return x;
-}
-
-Key::Key(KeySpaceID keySpaceId, const std::initializer_list<json::Value> &key)
-:Key(keySpaceId,guessSize(key))
-{
-	append(key);
-}
 
 
 Key::Key(KeySpaceID keySpaceId, std::size_t reserve) {
@@ -68,12 +32,6 @@ Key::Key(KeySpaceID keySpaceId, const std::string &key)
 	append(key);
 }
 
-
-Key::Key(KeySpaceID keySpaceId, const json::Value &key)
-:Key(keySpaceId, guessSize(key))
-{
-	append(key);
-}
 
 Key::Key(KeySpaceID keySpaceId)
 :Key(keySpaceId, 100)
