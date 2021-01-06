@@ -65,6 +65,13 @@ public:
 
 	operator std::string_view() const {return keydata;}
 
+	bool operator==(const KeyViewT<T> &other) const {return keydata == other.keydata;}
+	bool operator!=(const KeyViewT<T> &other) const  {return keydata != other.keydata;}
+	bool operator>(const KeyViewT<T> &other) const  {return keydata > other.keydata;}
+	bool operator<(const KeyViewT<T> &other) const {return keydata < other.keydata;}
+	bool operator>=(const KeyViewT<T> &other) const {return keydata >= other.keydata;}
+	bool operator<=(const KeyViewT<T> &other) const {return keydata <= other.keydata;}
+
 protected:
 	T keydata;
 };

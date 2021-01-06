@@ -161,6 +161,8 @@ public:
 	 */
 	void keyspace_putMetadata(KeySpaceID id, const json::Value &data) ;
 
+	///clear whole keyspace (can take a time)
+	void clearKeyspace(KeySpaceID id);
 
 
 	///Stores any arbitrary metadata along with keyspace definition

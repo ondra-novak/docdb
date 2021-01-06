@@ -187,10 +187,12 @@ public:
 	 */
 	Batch createBatch();
 
+	///Retrieves current sequence id
+	SeqID getSeq() const {return lastSeqId;}
 
 protected:
 
-	SeqID lastSeqId = 1;
+	std::atomic<SeqID> lastSeqId;
 	unsigned int spin = 1;
 	unsigned int listeners = 0;
 

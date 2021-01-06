@@ -14,5 +14,6 @@ add_library (docdblib
 	db.cpp
 	incremental_store.cpp
 	doc_store.cpp
+	doc_store_index.cpp
 	view.cpp
 	)

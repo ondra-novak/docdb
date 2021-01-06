@@ -22,9 +22,6 @@ public:
 	 * @param value value
 	 */
 	virtual void operator()(const json::Value &key, const json::Value &value) const = 0;
-	virtual void operator()(const json::Value &key, const std::initializer_list<json::Value> &value) const = 0;
-	virtual void operator()(const std::initializer_list<json::Value> &key, const json::Value &value) const = 0;
-	virtual void operator()(const std::initializer_list<json::Value> &key, const std::initializer_list<json::Value> &value) const = 0;
 	virtual ~EmitFn() {};
 
 

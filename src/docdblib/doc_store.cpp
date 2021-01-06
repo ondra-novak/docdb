@@ -98,7 +98,7 @@ DocStoreViewBase::Iterator DocStoreViewBase::scanDeleted(const std::string_view 
 
 }
 
-DocStoreViewBase::ChangesIterator DocStoreViewBase::scanChanges(SeqID from) {
+DocStoreViewBase::ChangesIterator DocStoreViewBase::scanChanges(SeqID from) const {
 	DB snapshot = incview.getDB().getSnapshot();
 	IncrementalStoreView myinc(incview, snapshot);
 	return ChangesIterator(DocStoreViewBase(*this, myinc),myinc.scanFrom(from));

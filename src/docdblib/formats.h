@@ -246,7 +246,8 @@ namespace _numbers {
 
 }
 
-inline void jsonkey2string(const json::Value &v, std::string &out, codepoints::Type flags = 0) {
+template<typename T>
+inline void jsonkey2string(const json::Value &v, T &out, codepoints::Type flags = 0) {
 	switch (v.type()) {
 	case json::undefined:
 	case json::null: out.push_back(flags|codepoints::null);break;
@@ -271,8 +272,8 @@ inline void jsonkey2string(const json::Value &v, std::string &out, codepoints::T
 		out.push_back(flags|codepoints::stringz);
 		for (const char &c: v.getString()) {
 			switch (c) {
-				case 0: out.append("\x01\x00");break;
-				case 1: out.append("\x01\x01");break;
+				case 0:
+				case 1: out.push_back('\x01');out.push_back(c);break;
 				default: out.push_back(c);break;
 			}
 		}
@@ -293,8 +294,8 @@ inline void jsonkey2string(const json::Value &v, std::string &out, codepoints::T
 	}
 }
 
-
-inline void jsonkey2string(const std::initializer_list<json::Value> &v, std::string &out) {
+template<typename T>
+inline void jsonkey2string(const std::initializer_list<json::Value> &v, T &out) {
 	codepoints::Type pfx = codepoints::array_prefix;
 	for (json::Value item: v) {
 		jsonkey2string(item, out, pfx);

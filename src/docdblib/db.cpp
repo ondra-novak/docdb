@@ -395,6 +395,16 @@ std::string_view KeySpaceIterator::getName() const {
 
 thread_local std::string buffer;
 
+void DB::clearKeyspace(KeySpaceID id) {
+	Batch b;
+	for (auto iter = createIterator({Key(id), Key(id+1), false, true}); iter.next();) {
+		b.Delete(iter.key());
+		if (b.ApproximateSize() > 64000) commitBatch(b);
+	}
+	commitBatch(b);
+
+}
+
 std::string &DB::getBuffer() {
 	std::string &out = buffer;
 	out.clear();

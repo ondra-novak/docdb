@@ -16,7 +16,7 @@ void IncrementalStore::Batch::commit() {
 }
 
 IncrementalStore::Batch::Batch(std::mutex &mx, DB &db)
-:mx(mx),db(db)
+: mx(mx),db(db)
 {
 	mx.lock();
 }

@@ -154,7 +154,7 @@ public:
 	 *
 	 * @return iterator - includeds all documents, live and deleted. Result is ordered in chronologic order
 	 */
-	ChangesIterator scanChanges(SeqID from);
+	ChangesIterator scanChanges(SeqID from) const;
 
 
 
@@ -429,8 +429,9 @@ public:
 	///cancels all pending listens
 	void cancelListen();
 
+	const DB &getDB() const {return incstore.getDB();}
 
-
+	SeqID getSeq() const {return incstore.getSeq();}
 
 protected:
 	IncrementalStore incstore;
