@@ -14,7 +14,9 @@ enum class KeySpaceClass {
 	incremental_store=1,
 	document_index=2,
 	graveyard_index=3,
-	view=4
+	view=4,
+	filterView=5,
+	jsonmap_view=6
 };
 
 }

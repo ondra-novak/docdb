@@ -24,7 +24,7 @@ public:
 
 
 
-class DocStoreIndex: public UpdatableView {
+class DocStoreIndex: public UpdatableView<DocStoreIndex> {
 public:
 
 	using IndexFn = std::function<void(const Document &,  EmitFn &)>;
@@ -60,7 +60,7 @@ public:
 	 */
 	void setSource(const DocStore &store);
 
-	virtual void update() override;
+	void update();
 
 	void indexDoc(const Document &doc);
 	///clears the index

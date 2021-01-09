@@ -41,7 +41,7 @@ const DocStoreViewBase::DocumentHeaderData* DocStoreViewBase::findDoc(
 const DocStoreViewBase::DocumentHeaderData* DocStoreViewBase::findDoc(const DB &snapshot,
 		const std::string_view &docId, unsigned int &revCount) const {
 	const DocumentHeaderData *hdr = nullptr;
-	auto val = DB::getBuffer();
+	auto& val = DB::getBuffer();
 	if (!snapshot.get(Key(kid, docId), val)) {
 		if (kid != gkid) {
 			if (snapshot.get(Key(gkid, docId), val)) {
@@ -58,7 +58,7 @@ DocStoreViewBase::Iterator DocStoreViewBase::scan() const {
 	return scan(false);
 }
 
-DocStoreViewBase::Iterator DocStoreViewBase::scanRange(
+DocStoreViewBase::Iterator DocStoreViewBase::range(
 		const std::string_view &from, const std::string_view &to,
 		bool exclude_begin, bool exclude_end) const {
 
@@ -69,7 +69,7 @@ DocStoreViewBase::Iterator DocStoreViewBase::scanRange(
 	return iter;
 }
 
-DocStoreViewBase::Iterator DocStoreViewBase::scanPrefix(
+DocStoreViewBase::Iterator DocStoreViewBase::prefix(
 		const std::string_view &prefix, bool backward) const {
 	DB snapshot = incview.getDB().getSnapshot();
 	Key b(kid, prefix);
@@ -133,7 +133,7 @@ void DocStoreViewBase::initFilter(Iterator &iter) const {
 }
 
 DocStoreViewBase::Iterator DocStoreViewBase::scan(bool backward) const {
-	return scanPrefix(std::string_view(), backward);
+	return prefix(std::string_view(), backward);
 }
 
 json::Value DocStoreViewBase::parseRevisions(const DocumentHeaderData *hdr, unsigned int revCount) {

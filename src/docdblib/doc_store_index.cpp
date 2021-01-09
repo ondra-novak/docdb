@@ -46,26 +46,34 @@ void DocStoreIndex::setSource(const DocStore &store) {
 class DocStoreIndex::EmitService: public EmitFn, public Batch {
 public:
 
-	EmitService( KeySpaceID kid):kid(kid),tmpkey(kid),  tmpdockey(kid) {}
+	EmitService( KeySpaceID kid):tmpkey(kid),  dockey(kid) {}
 
 	virtual void operator ()(const json::Value &key,const json::Value &value) override;
 
 	void setDocID(const std::string_view &docId) {
 		tmpkey.clear();
-		tmpval.clear();
-		tmpdockey.clear();
-		tmpdockey.push(0);
-		tmpdockey.append(docId);
+		buffer.clear();
+		dockey.clear();
+		dockey.push(0);
+		dockey.append(docId);
 		keys.clear();
+		binkeys.clear();
 		this->docId = docId;
 	}
 
 
-	const KeySpaceID kid;
+	//current document ID
 	std::string_view docId;
+	//list of modified keys in JSON form
 	std::vector<json::Value> keys;
-	Key tmpkey, tmpdockey;
-	std::string tmpval;
+	//list of emited keys in binary form (jsonkey2string)
+	std::string binkeys;
+	//temporary key used to build key during emit - to avoid memory reallocation
+	Key tmpkey;
+	//document key initialized by setDocID
+	Key dockey;
+	//temporary buffer to store value
+	std::string buffer;
 
 };
 
@@ -107,42 +115,72 @@ void DocStoreIndex::purgeDoc(std::string_view docid) {
 
 
 void DocStoreIndex::indexDoc(EmitService &emitBatch, const Document &doc) {
+	//indexing the document
+	//1 - find whether the document is already indexed
+	//2 - if indexed, remove all records from the index for the document
+	//3 - call index function and store keys and values
+	//4 - store list of emited keys along with document
+	//5 - call observers and report modified keys
+
+	//initialize emitBatch with new document id
 	emitBatch.setDocID(doc.id);
+	//this variable is set to true, when ther were deleted rows
 	bool rowsDeleted = false;
-	if (db.get(emitBatch.tmpdockey, emitBatch.tmpval)) {
-		std::string_view kstr(emitBatch.tmpval);
+	//query database whether there is already index for this document
+	if (db.get(emitBatch.dockey, emitBatch.buffer)) {
+		//when true, pick list of keys
+		//keys are binary serialized one follows other, so we need to walk binary string and parse
+		std::string_view kstr(emitBatch.buffer);
+		//until empty
 		while (!kstr.empty()) {
-			json::Value key = string2json(kstr);
+			//we need to know, where each key starts and end. So remember first pointer
+			auto c1 = kstr.data();
+			//deserialize key
+			json::Value key = string2jsonkey(std::move(kstr));
+			//remember second pointer
+			auto c2 = kstr.data();
+			//put key to container of updated keys
 			emitBatch.keys.push_back(key);
-			jsonkey2string(key, emitBatch.tmpkey);
+			//pick binary version of key (using pointers) and append it to temporary key (should be cleared)
+			emitBatch.tmpkey.append(std::string_view(c1, c2-c1));
+			//append document id
 			emitBatch.tmpkey.append(doc.id);
+			//delete record
 			emitBatch.Delete(emitBatch.tmpkey);
+			//clear temporary key
 			emitBatch.tmpkey.clear();
 		}
 
+		//mark that some rows has been deleted
 		rowsDeleted = true;
 	}
+	//we index only not-deleted documents
 	if (!doc.deleted) {
-		auto kl1 = emitBatch.keys.size();
-
+		//call index function
+		//function through the emit() should put rows to the index and generate binkeys
 		indexFn(doc, emitBatch);
-
-		auto kl2 = emitBatch.keys.size();
-		if (kl1 < kl2) {
-			emitBatch.tmpval.clear();
-			while (kl1 < kl2) {
-				json2string(emitBatch.keys[kl1], emitBatch.tmpval);
-				++kl1;
-			}
-			emitBatch.Put(emitBatch.tmpdockey, emitBatch.tmpval);
+		//so if binkeys is not empty, some records has been stored
+		if (!emitBatch.binkeys.empty()) {
+			//also update dockey with new list of keys
+			emitBatch.Put(emitBatch.dockey, emitBatch.binkeys);
+			//some records has been added, so clear this flag
+			rowsDeleted = false;
 		}
-	} else if (rowsDeleted) {
-		emitBatch.Delete(emitBatch.tmpdockey);
 	}
 
-	if (!emitBatch.keys.empty() && !observers.empty()) {
+	//if rows has been deleted (and none added)
+	if (rowsDeleted) {
+		//also remove dockey - document is no longer indexed
+		emitBatch.Delete(emitBatch.dockey);
+	}
+
+	//if there are keys some keys collected
+	if (!emitBatch.keys.empty()) {
+		//broadcast the updated keys to observers (with batch)
 		observers.broadcast(emitBatch, emitBatch.keys);
 	}
+
+	//all done now, called must commit the batch
 
 }
 
@@ -151,11 +189,20 @@ void DocStoreIndex::indexDoc(EmitService &emitBatch, const Document &doc) {
 void docdb::DocStoreIndex::EmitService::operator ()(
 		const json::Value &key,
 		const json::Value &value)  {
+	//put key to keys container
 	keys.push_back(key);
+	//serialize key to binary form and store it to tmpkey
 	jsonkey2string(key, tmpkey);
-	json2string(value, tmpval);
+	//also store it to binkeys, which contains list of serialized keys
+	binkeys.append(tmpkey.content());
+	//serialize value to buffer
+	json2string(value, buffer);
+	//append docid to key
 	tmpkey.append(docId);
-	Put(tmpkey, tmpval);
+	//put key and value to batch
+	Put(tmpkey, buffer);
+	//clear temporary key
 	tmpkey.clear();
-	tmpval.clear();
+	//clear temporary buffer
+	buffer.clear();
 }

@@ -7,6 +7,7 @@
 #include <condition_variable>
 
 #include "incremental_store.h"
+#include "observable.h"
 #ifndef SRC_DOCDBLIB_DOC_STORE_H_
 #define SRC_DOCDBLIB_DOC_STORE_H_
 #include "db.h"
@@ -123,7 +124,7 @@ public:
 	 * @param exclude_end exclude last document if equals to "to"
 	 * @return iterator - only live documents are included (not deleted)
 	 */
-	Iterator scanRange(const std::string_view &from, const std::string_view &to, bool exclude_begin = false, bool exclude_end = false) const;
+	Iterator range(const std::string_view &from, const std::string_view &to, bool exclude_begin = false, bool exclude_end = false) const;
 
 	///Scans for prefix
 	/**
@@ -132,7 +133,7 @@ public:
 	 * @param backward iterate backward
 	 * @return iterator - only live documents are included (not deleted)
 	 */
-	Iterator scanPrefix(const std::string_view &prefix, bool backward = false) const;
+	Iterator prefix(const std::string_view &prefix, bool backward = false) const;
 
 	///Scans all deleted documents
 	/**
@@ -433,10 +434,49 @@ public:
 
 	SeqID getSeq() const {return incstore.getSeq();}
 
+	struct AggregatorAdapter {
+		using IteratorType = Iterator;
+		using SourceType = DocStore;
+
+		static const DB &getDB(const SourceType &src) {return src.getDB();}
+		template<typename Fn>
+		static auto observe(SourceType &src, Fn &&fn) {
+			return src.addObserver([fn = std::forward<Fn>(fn)](Batch &b, const std::string_view &str){
+				return fn(b, std::initializer_list<std::string_view>({str}));
+			});
+		}
+		static void stopObserving(SourceType &src, std::size_t h) {
+			src.removeObserver(h);
+		}
+		static IteratorType find(const SourceType &src, const json::Value &key) {
+			return src.range(key.getString(), key.getString(),false, false);
+		}
+		static IteratorType prefix(const SourceType &src, const json::Value &key) {
+			return src.prefix(key.getString());
+		}
+		static IteratorType range(const SourceType &src, const json::Value &fromKey, const json::Value &toKey, bool include_upper_bound ) {
+			return src.range(fromKey.getString(), toKey.getString(), false, !include_upper_bound);
+		}
+
+	};
+
+private :
+	static std::size_t testObserverFn(bool ret);
+public:
+	template<typename Fn>
+	auto addObserver(Fn &&fn) -> decltype(testObserverFn(fn(std::declval<Batch &>(), std::string_view()))) {
+		return observable.addObserver(std::forward<Fn>(fn));
+	}
+	void removeObserver(std::size_t h) {
+		return observable.removeObserver(h);
+	}
+
 protected:
 	IncrementalStore incstore;
 	unsigned int revHist;
 	std::string wrbuff;
+	Observable<Batch &, const std::string_view &> observable;
+
 
 };
 

@@ -257,7 +257,6 @@ public:
 
 
 
-
 protected:
 	DB db;
 	KeySpaceID kid;
@@ -265,6 +264,7 @@ protected:
 
 };
 
+template<typename Derived>
 class UpdatableView: public View {
 public:
 	using View::View;
@@ -292,21 +292,15 @@ public:
 	using View::getDocKeys;
 	DocKeyIterator getDocKeys(const std::string_view &docid) ;
 
+	void update();
 
-	///allows to observe updated keys
-	/**
-	 * @param fn function which requires two arguments bool(Batch &, const std::vector<json::Value> &). Function
-	 * is called everytime some key is updated - including deleted - it can use batch to store
-	 * its own updates. Second argument contains vector of updated keys. The function must return
-	 *
-	 */
 
 protected:
 	using Obs = Observable<Batch &, const std::vector<json::Value> &>;
-	virtual void update() = 0;
 	std::mutex lock;
 	Obs observers;
 
+	void callUpdate() {static_cast<Derived *>(this)->update();}
 private :
 	static Obs::Handle testObserverFn(bool ret);
 
@@ -320,6 +314,31 @@ public:
 		std::lock_guard _(lock);
 		observers.removeObserver(h);
 	}
+
+
+	struct AggregatorAdapter {
+		using IteratorType = Iterator;
+		using SourceType = UpdatableView<Derived>;
+
+		static const DB &getDB(const SourceType &src) {return src.db;}
+		template<typename Fn>
+		static auto observe(SourceType &src, Fn &&fn) {
+			return src.addKeyUpdateObserver(std::move(fn));
+		}
+		static void stopObserving(SourceType &src, Obs::Handle h) {
+			src.removeKeyUpdateObserver(h);
+		}
+		static IteratorType find(const SourceType &src, const json::Value &key) {
+			return src.find(key);
+		}
+		static IteratorType prefix(const SourceType &src, const json::Value &key) {
+			return src.prefix(key);
+		}
+		static IteratorType range(const SourceType &src, const json::Value &fromKey, const json::Value &toKey, bool include_upper_bound ) {
+			return src.range(fromKey, toKey, include_upper_bound);
+		}
+
+	};
 
 };
 
@@ -350,6 +369,87 @@ inline void View::Iterator::addFilter_ifValue(unsigned int index, Pred &&pred) {
 		return pred(extractSubValue(index, value));
 	});
 }
+
+template<typename Derived>
+json::Value UpdatableView<Derived>::lookup(const json::Value &key, bool set_docid) {
+	callUpdate();return View::lookup(key, set_docid);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::find(json::Value key) {
+	callUpdate();return View::find(key);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::find(json::Value key, bool backward) {
+	callUpdate();return View::find(key, backward);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::find(json::Value key,
+		const std::string_view &fromDoc, bool backward) {
+	callUpdate();return View::find(key, fromDoc, backward);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::range(json::Value fromKey, json::Value toKey) {
+	callUpdate();return View::range(fromKey, toKey);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::range(json::Value fromKey, json::Value toKey, bool include_upper_bound) {
+	callUpdate();return View::range(fromKey, toKey, include_upper_bound);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::range(json::Value fromKey,
+		json::Value toKey, const std::string_view &fromDoc,
+		bool include_upper_bound) {
+	callUpdate();return View::range(fromKey, toKey, fromDoc, include_upper_bound);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::prefix(json::Value key) {
+	callUpdate();return View::prefix(key);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::prefix(json::Value key, bool backward) {
+	callUpdate();return View::prefix(key, backward);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::prefix(json::Value key,
+		json::Value fromKey, const std::string_view &fromDoc, bool backward) {
+	callUpdate();return View::prefix(key, fromKey, fromDoc, backward);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::scan() {
+	callUpdate();return View::scan();
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::scan(bool backward) {
+	callUpdate();return View::scan(backward);
+}
+
+template<typename Derived>
+View::Iterator UpdatableView<Derived>::scan(json::Value fromKey,
+		const std::string_view &fromDoc, bool backward) {
+	callUpdate();return View::scan(fromKey, fromDoc, backward);
+}
+
+template<typename Derived>
+bool UpdatableView<Derived>::isDocumentInView(const std::string_view &docId) {
+	callUpdate();return isDocumentInView(docId);
+}
+
+template<typename Derived>
+View::DocKeyIterator UpdatableView<Derived>::getDocKeys(const std::string_view &docid) {
+	callUpdate();return getDocKeys(docid);
+}
+
 
 
 

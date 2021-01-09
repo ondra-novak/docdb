@@ -24,7 +24,10 @@ namespace docdb {
 
 class KeySpaceIterator;
 
-using Batch = leveldb::WriteBatch;
+class Batch : public ::leveldb::WriteBatch {
+public:
+	using ::leveldb::WriteBatch::WriteBatch;
+};
 
 enum SnapshotMode {
 	///write to the snapshot causes an exception

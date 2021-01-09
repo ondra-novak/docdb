@@ -69,7 +69,7 @@ SeqID IncrementalStore::put(Batch &b, json::Value object) {
 
 
 json::Value IncrementalStoreView::get(SeqID id) const {
-	auto buff = DB::getBuffer();
+	auto &buff = DB::getBuffer();
 	if (!db.get(createKey(id), buff)) return json::Value();
 	else return string2json(buff);
 

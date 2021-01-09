@@ -15,5 +15,9 @@ add_library (docdblib
 	incremental_store.cpp
 	doc_store.cpp
 	doc_store_index.cpp
+	doc_store_map.cpp
+	json_map_view.cpp
 	view.cpp
+	filterview.cpp
+	aggregator_view.cpp
 	)
