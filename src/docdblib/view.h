@@ -301,12 +301,10 @@ protected:
 	Obs observers;
 
 	void callUpdate() {static_cast<Derived *>(this)->update();}
-private :
-	static Obs::Handle testObserverFn(bool ret);
 
 public:
 	template<typename Fn>
-	auto addKeyUpdateObserver(Fn &&fn) -> decltype(testObserverFn(fn(std::declval<Batch &>(), std::declval<std::vector<json::Value> >()))) {
+	auto addKeyUpdateObserver(Fn &&fn)  {
 		std::lock_guard _(lock);
 		return observers.addObserver(std::forward<Fn>(fn));
 	}

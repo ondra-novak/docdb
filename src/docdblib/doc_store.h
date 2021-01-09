@@ -464,7 +464,7 @@ private :
 	static std::size_t testObserverFn(bool ret);
 public:
 	template<typename Fn>
-	auto addObserver(Fn &&fn) -> decltype(testObserverFn(fn(std::declval<Batch &>(), std::string_view()))) {
+	auto addObserver(Fn &&fn) {
 		return observable.addObserver(std::forward<Fn>(fn));
 	}
 	void removeObserver(std::size_t h) {

@@ -169,7 +169,6 @@ public:
 protected:
 	using Obs = Observable<Batch &,const std::string_view &>;
 	Obs observers;
-	static Obs::Handle testObserverFn(bool ret);
 	std::mutex lock;
 
 	void callUpdate() {
@@ -180,7 +179,7 @@ public:
 	void update();
 
 	template<typename Fn>
-	auto addKeyUpdateObserver(Fn &&fn) -> decltype(testObserverFn(fn(std::declval<Batch &>(), std::declval<std::string_view>()))) {
+	auto addKeyUpdateObserver(Fn &&fn){
 		std::lock_guard _(lock);
 		return observers.addObserver(std::forward<Fn>(fn));
 	}

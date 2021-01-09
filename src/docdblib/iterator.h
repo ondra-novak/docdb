@@ -136,12 +136,15 @@ public:
 	///Removes last added filter
 	bool removeFilter();
 
+
 protected:
 	std::unique_ptr<leveldb::Iterator> iter;
 	std::string end_key;
 	bool descending;
 	bool exclude_end;
 	bool (Iterator::*advance_fn)();
+	std::size_t processed = 0;
+	mutable std::size_t stored_size = 0;
 
 	void init(const std::string_view &start_key, bool exclude_begin);
 	bool initial_advance();

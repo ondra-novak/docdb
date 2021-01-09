@@ -20,4 +20,6 @@ add_library (docdblib
 	view.cpp
 	filterview.cpp
 	aggregator_view.cpp
+	json_map.cpp
+	
 	)
