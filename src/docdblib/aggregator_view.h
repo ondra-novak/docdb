@@ -7,7 +7,7 @@
 
 #ifndef SRC_DOCDBLIB_AGGREGATOR_VIEW_H_
 #define SRC_DOCDBLIB_AGGREGATOR_VIEW_H_
-#include "json_map_view.h"
+#include "json_map.h"
 
 namespace docdb {
 
@@ -40,10 +40,10 @@ public:
 };
 
 template<typename Adapter>
-class AggregatorView: public JsonMapView {
+class AggregatorView: public JsonMap {
 public:
 
-	using Super = JsonMapView;
+	using Super = JsonMap;
 	using SrcIterator = typename Adapter::IteratorType;
 	using Source = typename Adapter::SourceType;
 	///Mapping function
@@ -70,17 +70,47 @@ public:
 
 	AggregatorView(Source &src, const std::string_view &name, KeyMapFn &&keyMapFn, AggregatorFn &&aggr);
 	~AggregatorView();
-	json::Value lookup(const json::Value &key, bool set_docid = false) const;
-	json::Value find(json::Value key) const;
-	Iterator range(json::Value fromKey, json::Value toKey) const;
-	Iterator range(json::Value fromKey, json::Value toKey, bool include_upper_bound) const;
-	Iterator prefix(json::Value key) const;
-	Iterator prefix(json::Value key, bool backward) const;
-	Iterator scan() const;
-	Iterator scan(bool backward) const;
-	Iterator scan(json::Value fromKey, bool backward) const;
+	json::Value lookup(const json::Value &key, bool set_docid = false) ;
+	Iterator find(json::Value key) ;
+	Iterator range(json::Value fromKey, json::Value toKey) ;
+	Iterator range(json::Value fromKey, json::Value toKey, bool include_upper_bound) ;
+	Iterator prefix(json::Value key) ;
+	Iterator prefix(json::Value key, bool backward) ;
+	Iterator scan() ;
+	Iterator scan(bool backward) ;
+	Iterator scan(json::Value fromKey, bool backward) ;
 
 	void rebuild();
+
+	struct AggregatorAdapter {
+			using IteratorType = Iterator;
+			using SourceType = AggregatorView<Adapter>;
+
+			static const DB &getDB(const SourceType &src) {return src.db;}
+			template<typename Fn>
+			static auto observe(SourceType &src, Fn &&fn) {
+				return src.addObserver([fn = std::move(fn)](Batch &b, const json::Value &k){
+					return fn(b, std::initializer_list<json::Value>({k}));
+				});
+			}
+			static void stopObserving(SourceType &src, typename Observable<Batch &, json::Value>::Handle h) {
+				src.removeObserver(h);
+			}
+			static IteratorType find(SourceType &src, const json::Value &key) {
+				return src.find(key);
+			}
+			static IteratorType prefix(SourceType &src, const json::Value &key) {
+				return src.prefix(key);
+			}
+			static IteratorType range(SourceType &src, const json::Value &fromKey, const json::Value &toKey, bool include_upper_bound ) {
+				return src.range(fromKey, toKey, include_upper_bound);
+			}
+			static json::Value getKey(IteratorType &iter) {
+				return json::Value(iter.key());
+			}
+
+		};
+
 
 protected:
 	Source &src;
@@ -99,7 +129,7 @@ protected:
 
 	class MapKeySvc: public IMapKey {
 	public:
-		MapKeySvc(Batch &b,Key &&key):b(b),key(std::move(key)) {}
+		MapKeySvc(Batch &b,Key &&key, Observable<Batch &, json::Value> &obs):b(b),obs(obs),key(std::move(key)) {}
 
 		virtual void find(const json::Value &resultKey, const json::Value &srchKey, const json::Value &value = json::undefined) override {
 			invalidateKey(resultKey, srchFind, srchKey, value);
@@ -114,7 +144,8 @@ protected:
 
 	protected:
 		Batch &b;
-		Key &&key;
+		Observable<Batch &, json::Value> &obs;
+		Key key;
 
 		void invalidateKey(const json::Value &key, char op, json::Value args, json::Value custom);
 	};
@@ -127,7 +158,7 @@ template<typename Adapter>
 inline AggregatorView<Adapter>::AggregatorView(Source &source,
 		const std::string_view &name, KeyMapFn &&keyMapFn,
 		AggregatorFn &&aggr)
-:JsonMapView(Adapter::getDB(source), name)
+:JsonMap(Adapter::getDB(source), name)
 ,src(source)
 ,keyMapFn(std::move(keyMapFn))
 ,aggrFn(std::move(aggr))
@@ -146,7 +177,7 @@ inline AggregatorView<Adapter>::~AggregatorView() {
 template<typename Adapter>
 template<typename Cont>
 inline void AggregatorView<Adapter>::onKeyChange(Batch &b, const Cont &cont) {
-	MapKeySvc mapsvc(b, Key(kid));
+	MapKeySvc mapsvc(b, Key(kid), observers);
 	for (json::Value key: cont) {
 		keyMapFn(key, mapsvc);
 	}
@@ -163,6 +194,7 @@ inline void AggregatorView<Adapter>::MapKeySvc::invalidateKey(
 	this->key.append(key);
 	b.Put(this->key, buffer);
 	this->key.clear();
+	obs.broadcast(b, key);
 }
 
 
@@ -175,7 +207,7 @@ inline AggregatorView<Adapter>::Iterator::Iterator(
 
 template<typename Adapter>
 inline bool AggregatorView<Adapter>::Iterator::next() {
-	while (next()) {
+	while (Super::next()) {
 		if (prepareValue()) {
 			return true;
 		}
@@ -186,7 +218,7 @@ inline bool AggregatorView<Adapter>::Iterator::next() {
 
 template<typename Adapter>
 inline bool AggregatorView<Adapter>::Iterator::peek() {
-	while (peek()) {
+	while (Super::peek()) {
 		if (prepareValue()) {
 			return true;
 		} else {
@@ -246,6 +278,56 @@ inline json::Value AggregatorView<Adapter>::runAggregator(const KeyView &key, co
 }
 
 template<typename Adapter>
+typename AggregatorView<Adapter>::Iterator AggregatorView<Adapter>::scan()  {
+	return Iterator(JsonMapView::scan(), *this);
+}
+
+template<typename Adapter>
+typename AggregatorView<Adapter>::Iterator AggregatorView<Adapter>::range(
+		json::Value fromKey, json::Value toKey)  {
+	return Iterator(JsonMapView::range(fromKey,toKey), *this);
+
+}
+
+template<typename Adapter>
+typename AggregatorView<Adapter>::Iterator AggregatorView<Adapter>::range(
+		json::Value fromKey, json::Value toKey,
+		bool include_upper_bound) {
+	return Iterator(JsonMapView::range(fromKey,toKey,include_upper_bound), *this);
+
+}
+
+template<typename Adapter>
+typename AggregatorView<Adapter>::Iterator AggregatorView<Adapter>::prefix(
+		json::Value key)  {
+	return Iterator(JsonMapView::prefix(key), *this);
+}
+
+template<typename Adapter>
+typename AggregatorView<Adapter>::Iterator AggregatorView<Adapter>::prefix(
+		json::Value key, bool backward)  {
+	return Iterator(JsonMapView::prefix(key,backward), *this);
+}
+
+template<typename Adapter>
+typename AggregatorView<Adapter>::Iterator AggregatorView<Adapter>::scan(
+		bool backward)  {
+	return Iterator(JsonMapView::scan(backward), *this);
+}
+
+template<typename Adapter>
+typename AggregatorView<Adapter>::Iterator AggregatorView<Adapter>::scan(
+		json::Value fromKey, bool backward)  {
+	return Iterator(JsonMapView::scan(fromKey, backward), *this);
+}
+
+template<typename Adapter>
+typename AggregatorView<Adapter>::Iterator AggregatorView<Adapter>::find(
+		json::Value key)  {
+	return Iterator(JsonMapView::find(key), *this);
+}
+
+template<typename Adapter>
 inline json::Value docdb::AggregatorView<Adapter>::runAggrFn(SrcIterator &&iter,
 		const json::Value &custom) {
 	if (iter.empty()) return json::undefined;
@@ -255,5 +337,14 @@ inline json::Value docdb::AggregatorView<Adapter>::runAggrFn(SrcIterator &&iter,
 
 }
 
+template<typename Adapter>
+inline void docdb::AggregatorView<Adapter>::rebuild() {
+	Batch b;
+	for (auto iter = src.scan(); iter.next(); ) {
+		json::Value k = Adapter::getKey(iter);
+		onKeyChange(b, json::Value(json::array, {k}));
+		db.commitBatch(b);
+	}
+}
 
 #endif /* SRC_DOCDBLIB_AGGREGATOR_VIEW_H_ */

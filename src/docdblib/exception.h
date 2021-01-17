@@ -58,14 +58,12 @@ protected:
 
 class CantWriteToSnapshot: public DocDBException {
 public:
-	CantWriteToSnapshot();
 	virtual const char *what() const noexcept override;
 
 };
 
 class DocumentIDCantBeEmpty: public DocDBException {
 public:
-	DocumentIDCantBeEmpty();
 	virtual const char *what() const noexcept override;
 };
 

@@ -145,9 +145,7 @@ public:
 	void truncate_content(std::size_t sz) {truncate(sz+keyspaceid_size);}
 
 
-protected:
 
-	std::string keydata;
 
 
 };

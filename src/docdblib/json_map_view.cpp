@@ -24,8 +24,11 @@ json::Value JsonMapView::lookup(const json::Value &key, bool set_docid) const {
 	}
 }
 
-json::Value JsonMapView::find(json::Value key) const {
-	return lookup(key);
+JsonMapView::Iterator JsonMapView::find(json::Value key) const {
+	Key f(createKey(key));
+	Key t(f);
+	t.upper_bound();
+	return Iterator(db.createIterator({f,t,false,true}));
 }
 
 JsonMapView::Iterator JsonMapView::range(json::Value fromKey,
@@ -43,6 +46,7 @@ JsonMapView::Iterator JsonMapView::range(json::Value fromKey, json::Value toKey,
 
 JsonMapView::Iterator JsonMapView::prefix(json::Value key) const {
 	Key f(createKey(key));
+	f.pop();
 	Key t(f);
 	t.upper_bound();
 	return Iterator(db.createIterator({f,t,false,true}));

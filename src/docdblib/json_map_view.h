@@ -98,7 +98,7 @@ public:
 	 * @param key key to find
 	 * @return iterator which can iterator through rows containing the same key
 	 */
-	json::Value find(json::Value key) const;
+	Iterator find(json::Value key) const;
 
 
 	///Search for range

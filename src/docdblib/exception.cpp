@@ -75,6 +75,7 @@ const char *DocumentIDCantBeEmpty::what() const noexcept {
 	return "Document's ID can't be empty";
 }
 
+
 }
 
 

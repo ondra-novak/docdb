@@ -33,6 +33,36 @@ public:
 		return observers.removeObserver(h);
 	}
 
+	struct AggregatorAdapter {
+			using IteratorType = Iterator;
+			using SourceType = JsonMap;
+
+			static const DB &getDB(const SourceType &src) {return src.db;}
+			template<typename Fn>
+			static auto observe(SourceType &src, Fn &&fn) {
+				return src.addObserver([fn = std::move(fn)](Batch &b, const json::Value &k){
+					return fn(b, std::initializer_list<json::Value>({k}));
+				});
+			}
+			static void stopObserving(SourceType &src, typename Observable<Batch &, json::Value>::Handle h) {
+				src.removeObserver(h);
+			}
+			static IteratorType find(const SourceType &src, const json::Value &key) {
+				return src.find(key);
+			}
+			static IteratorType prefix(const SourceType &src, const json::Value &key) {
+				return src.prefix(key);
+			}
+			static IteratorType range(const SourceType &src, const json::Value &fromKey, const json::Value &toKey, bool include_upper_bound ) {
+				return src.range(fromKey, toKey, include_upper_bound);
+			}
+			static json::Value getKey(IteratorType &iter) {
+				return json::Value(iter.key());
+			}
+
+		};
+
+
 protected:
 
 	Observable<Batch &, json::Value> observers;

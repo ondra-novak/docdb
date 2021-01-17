@@ -242,7 +242,7 @@ json::Value DBCoreImpl::getStats() const {
 static Key getKey(ClassID class_id, const std::string_view &name) {
 	Key k(keyspaceManager);
 	std::string val;
-	k.append(std::string_view(reinterpret_cast<const char *>(class_id),sizeof(class_id)));
+	k.append(std::string_view(reinterpret_cast<const char *>(&class_id),sizeof(class_id)));
 	k.append(name);
 	return k;
 }
@@ -251,8 +251,8 @@ static Key getKey(ClassID class_id, const std::string_view &name) {
 
 static Key getKey(KeySpaceID id) {
 	Key k(keyspaceManager);
-	k.append(std::string_view(reinterpret_cast<const char *>(keyspaceManager),sizeof(keyspaceManager)));
-	k.append(std::string_view(reinterpret_cast<const char *>(id),sizeof(keyspaceManager)));
+	k.append(std::string_view(reinterpret_cast<const char *>(&keyspaceManager),sizeof(keyspaceManager)));
+	k.append(std::string_view(reinterpret_cast<const char *>(&id),sizeof(id)));
 	return k;
 }
 
@@ -346,7 +346,7 @@ KeySpaceID DBCoreImpl::allocKeyspace(ClassID classId, const std::string_view &na
 	Key k2=getKey(n);
 	b.Put(k2, val);
 	val.clear();
-	val.append(k2.content());
+	val.push_back(n);
 	b.Put(k, val);
 	commitBatch(b);
 	return n;

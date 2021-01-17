@@ -335,6 +335,10 @@ public:
 		static IteratorType range(const SourceType &src, const json::Value &fromKey, const json::Value &toKey, bool include_upper_bound ) {
 			return src.range(fromKey, toKey, include_upper_bound);
 		}
+		static json::Value getKey(IteratorType &iter) {
+			return json::Value(iter.key());
+		}
+
 
 	};
 

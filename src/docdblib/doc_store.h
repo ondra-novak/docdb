@@ -448,6 +448,10 @@ public:
 		static void stopObserving(SourceType &src, std::size_t h) {
 			src.removeObserver(h);
 		}
+		static json::Value getKey(IteratorType &iter) {
+			return json::Value(iter.id());
+		}
+
 		static IteratorType find(const SourceType &src, const json::Value &key) {
 			return src.range(key.getString(), key.getString(),false, false);
 		}

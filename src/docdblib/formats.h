@@ -420,7 +420,7 @@ inline json::Value extract_subkey(unsigned int index, std::string_view &&key) {
 			case codepoints::number_value+15: key = key.substr(9);break;
 			case codepoints::stringz: {
 				auto n = key.find('\0');
-				key = key.substr(n);
+				key = key.substr(n+1);
 			}break;
 			case codepoints::json: {
 				string2json(std::move(key));
