@@ -15,7 +15,7 @@ JsonMapView::JsonMapView(const DB &db, const std::string_view &name)
 {
 }
 
-json::Value JsonMapView::lookup(const json::Value &key, bool set_docid) const {
+json::Value JsonMapView::lookup(const json::Value &key) const {
 	auto &buffer = DB::getBuffer();
 	if (db.get(createKey(key), buffer)) {
 		return string2json(std::string_view(buffer));

@@ -26,7 +26,7 @@ public:
 	 * @return found value. If key doesn't exists, returns undefined value. If there are multiple results, it selects only one (first in the set).
 	 *
 	 */
-	json::Value lookup(const json::Value &key, bool set_docid = false) const;
+	json::Value lookup(const json::Value &key) const;
 
 
 	class Iterator: public ::docdb::Iterator {

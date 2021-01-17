@@ -228,6 +228,8 @@ public:
 	 */
 	static std::string &getBuffer();
 
+	void compact() {core->compact();}
+
 protected:
 	PDBCore core;
 
