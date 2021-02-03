@@ -250,6 +250,9 @@ public:
 };
 
 
+inline leveldb::Slice string2slice(json::StrViewA data) {
+	return leveldb::Slice(data.data, data.length);
+}
 
 }
 

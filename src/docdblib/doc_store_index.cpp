@@ -156,6 +156,8 @@ void DocStoreIndex::indexDoc(EmitService &emitBatch, const Document &doc) {
 	}
 	//we index only not-deleted documents
 	if (!doc.deleted) {
+
+		emitBatch.buffer.clear();
 		//call index function
 		//function through the emit() should put rows to the index and generate binkeys
 		indexFn(doc, emitBatch);

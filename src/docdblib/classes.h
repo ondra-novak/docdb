@@ -16,7 +16,8 @@ enum class KeySpaceClass {
 	graveyard_index=3,
 	view=4,
 	filterView=5,
-	jsonmap_view=6
+	jsonmap_view=6,
+	user_index=127,
 };
 
 }

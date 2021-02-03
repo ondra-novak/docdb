@@ -42,12 +42,12 @@ View::Iterator::Iterator(Super &&src):Super(std::move(src)) {
 
 bool View::Iterator::next() {
 	cache.reset();
-	return next();
+	return Super::next();
 }
 
 bool View::Iterator::peek() {
 	cache.reset();
-	return peek();
+	return Super::peek();
 
 }
 KeyView View::Iterator::global_key() {

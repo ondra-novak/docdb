@@ -63,7 +63,12 @@ public:
 	::docdb::Logger lg;
 
 	virtual void Logv(const char* format, va_list ap) {
-		lg(format, ap);
+		char buff[256];
+		int n = vsnprintf(buff,sizeof(buff),format,ap);
+		while (n && isspace(buff[n-1])) n--;
+		if (n) {
+			lg(std::string_view(buff,n));
+		}
 	}
 };
 
@@ -109,7 +114,12 @@ public:
 	virtual PDBCore getSnapshot(SnapshotMode mode = writeError) const  override;
 	virtual void compact() override {}
 	virtual json::Value getStats() const override  {return core->getStats();}
-	virtual KeySpaceID allocKeyspace(ClassID  , const std::string_view &) override {throw CantWriteToSnapshot();}
+	virtual KeySpaceID allocKeyspace(ClassID  clsid, const std::string_view &name) override {
+		Key k(getKey(clsid, name));
+		std::string val;
+		if (get(k, val)) return *reinterpret_cast<const KeySpaceID *>(val.data());
+		else throw std::runtime_error("Keyspace not found");
+	}
 	virtual bool freeKeyspace(ClassID, const std::string_view &) override {return false;}
 
 
@@ -285,6 +295,7 @@ void DB::commitBatch(Batch &b) {
 void DB::keyspace_putMetadata(KeySpaceID id, const json::Value &data) {
 	Batch b;
 	keyspace_putMetadata(b, id, data);
+	commitBatch(b);
 }
 
 void DB::keyspace_putMetadata(Batch &b, KeySpaceID id,

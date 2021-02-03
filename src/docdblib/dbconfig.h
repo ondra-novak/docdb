@@ -15,7 +15,7 @@ namespace docdb {
 
 using PCache = std::shared_ptr<leveldb::Cache>;
 using PEnv = std::shared_ptr<leveldb::Env>;
-using Logger = std::function<void(const char *, va_list)>;
+using Logger = std::function<void(std::string_view)>;
 
 struct Config {
 

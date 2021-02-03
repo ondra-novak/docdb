@@ -41,7 +41,9 @@ JsonMapView::Iterator JsonMapView::range(json::Value fromKey, json::Value toKey,
 	Key f(createKey(fromKey));
 	Key t(createKey(toKey));
 	bool bkw = f > t;
-	return Iterator(db.createIterator({f,t,bkw,!bkw}));
+	bool b1 = include_upper_bound || bkw;
+	bool b2 = include_upper_bound || !bkw;
+	return Iterator(db.createIterator({f,t,b1,b2}));
 }
 
 JsonMapView::Iterator JsonMapView::prefix(json::Value key) const {

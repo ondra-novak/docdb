@@ -437,11 +437,11 @@ inline json::Value extract_subkey(unsigned int index, std::string_view &&key) {
 inline json::Value extract_subvalue(unsigned int index, std::string_view &&str) {
 	if (str.empty()) return json::undefined;
 	auto c = static_cast<unsigned char>(str[0]);
-	if (c < (json::opcode::posint+10) && c >= json::opcode::posint) {
-		c -= json::opcode::posint;
+	if (c < (json::opcode::array+10) && c >= json::opcode::array) {
+		c -= json::opcode::array;
 		if (c <= index) return json::undefined;
 		str = str.substr(1);
-		while (index>=0) {
+		while (index>0) {
 			string2json(std::move(str));
 			index--;
 		}
