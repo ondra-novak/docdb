@@ -13,11 +13,4 @@ namespace docdb {
 
 template class AggregatorView<DocStoreIndex::AggregatorAdapter>;
 template class AggregatorView<DocStore::AggregatorAdapter>;
-
-static DocStore *idx;
-static AggregatorView<DocStore::AggregatorAdapter> test1(*idx,
-"aggr1",
-[](const json::Value &key, IMapKey &mk){},
-[](DocStore::Iterator &iter, json::Value v) {return v;});
-
 }

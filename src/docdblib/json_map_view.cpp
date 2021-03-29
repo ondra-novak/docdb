@@ -57,6 +57,7 @@ JsonMapView::Iterator JsonMapView::prefix(json::Value key) const {
 JsonMapView::Iterator JsonMapView::prefix(json::Value key,
 		bool backward) const {
 	Key f(createKey(key));
+	f.pop();
 	Key t(f);
 	if (backward) f.upper_bound(); else t.upper_bound();
 	return Iterator(db.createIterator({f,t,backward,!backward}));
@@ -82,7 +83,8 @@ json::Value JsonMapView::parseValue(const std::string_view &value) {
 }
 
 json::Value JsonMapView::parseValue(std::string_view &&value) {
-	return string2json(std::move(value));
+	if (value.empty() || value[0]<0) return json::Value(); //to see inside agregator and not crash the system
+	else return string2json(std::move(value));
 }
 
 json::Value JsonMapView::extractSubKey(unsigned int index, const KeyView &key) {

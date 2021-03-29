@@ -70,7 +70,7 @@ public:
 
 	AggregatorView(Source &src, const std::string_view &name, KeyMapFn &&keyMapFn, AggregatorFn &&aggr);
 	~AggregatorView();
-	json::Value lookup(const json::Value &key, bool set_docid = false) ;
+	json::Value lookup(const json::Value &key) ;
 	Iterator find(json::Value key) ;
 	Iterator range(json::Value fromKey, json::Value toKey) ;
 	Iterator range(json::Value fromKey, json::Value toKey, bool include_upper_bound) ;
@@ -320,6 +320,15 @@ typename AggregatorView<Adapter>::Iterator AggregatorView<Adapter>::scan(
 		json::Value fromKey, bool backward)  {
 	return Iterator(JsonMapView::scan(fromKey, backward), *this);
 }
+
+template<typename Adapter>
+json::Value AggregatorView<Adapter>::lookup(const json::Value &key)  {
+	auto k = find(key);
+	if (k.next()) return k.value();
+	else return json::Value();
+}
+
+
 
 template<typename Adapter>
 typename AggregatorView<Adapter>::Iterator AggregatorView<Adapter>::find(

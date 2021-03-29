@@ -126,7 +126,7 @@ DocStoreViewBase::Status DocStoreViewBase::getStatus(const std::string_view &doc
 }
 
 void DocStoreViewBase::initFilter(Iterator &iter) const {
-	if (kid == gkid) iter.addFilter([&](const KeyView &key, const std::string_view &value){
+	if (kid == gkid) iter.addFilter([&](const KeyView &, const std::string_view &value){
 		unsigned int dummy;
 		return !DocumentHeaderData::map(value, dummy)->isDeleted();
 	});
