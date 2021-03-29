@@ -11,6 +11,7 @@
 #include <memory>
 #include <string_view>
 #include <leveldb/iterator.h>
+#include "keyspace.h"
 
 namespace docdb {
 
@@ -22,12 +23,13 @@ struct KeyRange;
  * until next() is called
  *
  * @code
- * Iterator iter=*...create....*
- * while (iter.next()) {
+ * for (Iterator iter=*...create....*; iter.next();) {
  * 	 auto key = iter.key();
  * 	 auto value = iter.value();
  * }
  * @endcode
+ *
+ *
  *
  * There is no standard iterator API for this iterator (so you cannot use for-range)
  *
@@ -37,6 +39,14 @@ struct KeyRange;
 class Iterator {
 public:
 
+	using IteratorImpl = leveldb::Iterator;
+
+	struct RangeDef {
+		std::string_view start_key;
+		std::string_view end_key;
+		bool exclude_begin;
+		bool exclude_end;
+	};
 	///Initialize iterator
 	/**
 	 * @param iter leveldb iterator object
@@ -47,10 +57,10 @@ public:
 	 *
 	 * @note You don't need to create iterator by this way. Use DocDB::scan() functions
 	 */
-	Iterator(leveldb::Iterator *iter, const std::string_view &start_key, const std::string_view &end_key, bool exclude_begin, bool exclude_end)
-		:iter(iter),end_key(end_key),descending(start_key>end_key),exclude_end(exclude_end) {
+	Iterator(IteratorImpl *iter, const RangeDef &rdef)
+		:iter(iter),end_key(rdef.end_key),descending(rdef.start_key>rdef.end_key),exclude_end(rdef.exclude_end) {
 
-		init(start_key,exclude_begin);
+		init(rdef.start_key,rdef.exclude_begin);
 	}
 
 	///Prepare next item
@@ -61,13 +71,34 @@ public:
 	 * @retval false no item available (no more results)
 	 */
 	bool next() {
-		return (this->*advance_fn)();
+		bool r =  (this->*advance_fn)();
+		while (r && filter != nullptr && !(*filter)(key(),value())) {
+			r =  (this->*advance_fn)();
+		}
+		return r;
+	}
+
+	///Prepare next item but doesn't advance the pointer
+	/**
+	 * Works same way as next() but ensures, that futher next will not advance to next item. Allows
+	 * to peek item without invalidating them.
+	 *
+	 * @retval true next item is prepared
+	 * @retval false no more items
+	 *
+	 * @note when peek returns true, the first next call of peek() or next() also returns true (so you don't need
+	 * to check its return value)
+	 */
+	bool peek() {
+		bool r = next();
+		if (r) this->advance_fn = &Iterator::peek_null_advance;
+		return r;
 	}
 
 	///Access key (return binary representation of the key)
-	std::string_view key() const {
+	KeyView key() const {
 		auto sl = iter->key();
-		return std::string_view(sl.data(),sl.size());
+		return KeyView(sl);
 	}
 
 	///Access value (return binary representation of the value)
@@ -76,9 +107,6 @@ public:
 		return std::string_view(sl.data(),sl.size());
 	}
 
-	auto orig_key() const {
-		return iter->key();
-	}
 
 	bool empty() const;
 
@@ -92,12 +120,31 @@ public:
 	 */
 	KeyRange range() const;
 
+	///Adds filter
+	/** Filter allows to skip records, which are not pass filter function. They become invisible
+	 * during iteration
+	 *
+	 * @param fn a filter function. The function expects key() and value() and returns true
+	 * to include and false to exclude to iteration
+	 *
+	 * @note multiple filters can be added, they are executed in reverse order of adding. If tou
+	 * need to remove filter, you need to call popFilter().
+	 */
+	template<typename Fn>
+	void addFilter(Fn &&fn);
+
+	///Removes last added filter
+	bool removeFilter();
+
+
 protected:
 	std::unique_ptr<leveldb::Iterator> iter;
 	std::string end_key;
 	bool descending;
 	bool exclude_end;
 	bool (Iterator::*advance_fn)();
+	std::size_t processed = 0;
+	mutable std::size_t stored_size = 0;
 
 	void init(const std::string_view &start_key, bool exclude_begin);
 	bool initial_advance();
@@ -105,40 +152,44 @@ protected:
 	bool check_after_advance() const;
 	bool initial_null_advance();
 	bool not_valid_advance();
+	bool peek_null_advance();
 
+	class Filter {
+	public:
+		Filter(std::unique_ptr<Filter> &&next):next(std::move(next) ) {}
+		virtual bool operator()(const KeyView &key, const std::string_view &value) const = 0;
+		std::unique_ptr<Filter> detachNext() {
+			return std::unique_ptr<Filter>(std::move(next));
+		}
+		std::unique_ptr<Filter> next;
+	};
+
+	std::unique_ptr<Filter> filter;
 };
 
-///Iterates through the database's map
-/**
- * To create iterator use DocDB::mapScan
- *
- */
-class MapIterator: private Iterator {
-public:
-	using Iterator::Iterator;
-	using Iterator::next;
-	using Iterator::value;
-	using Iterator::orig_key;
-	using Iterator::empty;
-	using Iterator::range;
-
-	///Retrieves key
-	/**
-	 * @return current key
-	 */
-	std::string_view key() const {
-		return Iterator::key().substr(1);
-	}
-
-
-};
 
 struct KeyRange {
 	std::string begin;
 	std::string end;
 };
 
+template<typename Fn>
+void docdb::Iterator::addFilter(Fn &&fn) {
+	class Flt: public Filter {
+	public:
+		Flt(Fn &&fn, std::unique_ptr<Filter> &&next):Filter(std::move(next)), fn(std::forward<Fn>(fn)) {}
+		virtual bool operator()(const KeyView &key, const std::string_view &value) const {
+			return fn(key, value) && (next == nullptr || (*next)(key,value));
+		}
+	protected:
+		std::remove_reference_t<Fn> fn;
+	};
+	filter = std::make_unique<Flt>(std::forward<Fn>(fn), std::move(filter));
 }
+
+
+}
+
 
 #endif /* SRC_DOCDBLIB_ITERATOR_H_ */
 

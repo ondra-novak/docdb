@@ -122,4 +122,17 @@ KeyRange Iterator::range() const {
 		!descending?end_key:iter->Valid()?std::string(iter->key().data(), iter->key().size()):end_key
 	};
 }
+
+bool Iterator::removeFilter() {
+	if (filter != nullptr) {
+		filter = filter->detachNext();
+		return true;
+	} else {
+		return false;
+	}
+}
+
+bool Iterator::peek_null_advance() {
+	return true;
+}
 }

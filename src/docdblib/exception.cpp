@@ -35,6 +35,47 @@ void LevelDBException::checkStatus(leveldb::Status &&st)  {
 	if (!st.ok()) throw LevelDBException(std::move(st));
 }
 
+DatabaseOpenError::DatabaseOpenError(int code, const std::string &name)
+	:code(code),name(name)
+{
+}
+
+const char* DatabaseOpenError::what() const noexcept {
+	if (msg.empty()) {
+		msg.append("Failed to open DB: ");
+		msg.append(name);
+		msg.append(" error: ");
+		msg.append(strerror(code));
+	}
+	return msg.c_str();
+}
+
+int DatabaseOpenError::getCode() const {
+	return code;
+}
+
+TooManyKeyspaces::TooManyKeyspaces(const std::string &dbName)
+:name(dbName)
+{
+}
+
+const char* TooManyKeyspaces::what() const noexcept {
+	if (msg.empty()) {
+		msg.append("Failed to allocate keyspace - there are too many keyspaces - DB: ");
+		msg.append(name);
+	}
+	return msg.c_str();
+}
+
+const char *CantWriteToSnapshot::what() const noexcept  {
+	return "Can't write to snapshot";
+}
+
+const char *DocumentIDCantBeEmpty::what() const noexcept {
+	return "Document's ID can't be empty";
+}
+
+
 }
 
 

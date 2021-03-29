@@ -33,6 +33,40 @@ protected:
 
 };
 
+class DatabaseOpenError: public DocDBException {
+public:
+	DatabaseOpenError(int code, const std::string &name);
+
+	virtual const char *what() const noexcept override;
+	int getCode() const;
+protected:
+	mutable std::string msg;
+	int code;
+	std::string name;
+
+};
+
+class TooManyKeyspaces: public DocDBException {
+public:
+	TooManyKeyspaces(const std::string &dbName);
+	virtual const char *what() const noexcept override;
+protected:
+	mutable std::string msg;
+	std::string name;
+
+};
+
+class CantWriteToSnapshot: public DocDBException {
+public:
+	virtual const char *what() const noexcept override;
+
+};
+
+class DocumentIDCantBeEmpty: public DocDBException {
+public:
+	virtual const char *what() const noexcept override;
+};
+
 }
 
 #endif /* SRC_DOCDBLIB_EXCEPTION_H_ */

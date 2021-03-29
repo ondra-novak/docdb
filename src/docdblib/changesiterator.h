@@ -31,16 +31,16 @@ namespace docdb {
  */
 class ChangesIterator: public Iterator {
 public:
-	using Iterator::Iterator;
+	ChangesIterator(Iterator &&iter, SeqID lastSeqId);
 
 	///Retrieve current sequence id
 	SeqID seq() const;
 	///Retrieve document name
 	std::string_view doc() const;
-
-private:
-	using Iterator::key;
-	using Iterator::value;
+	///Retrieves last sequence id valid for time when this iterator was created
+	SeqID getLastSeqId() const;
+protected:
+	SeqID lastSeqId;
 
 };
 

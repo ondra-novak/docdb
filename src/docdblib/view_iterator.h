@@ -29,10 +29,10 @@ public:
 
 
 ///Iterates over results returned by a search operation of the view
-class ViewIterator: private MapIterator {
+class ViewIterator: private Iterator {
 public:
 	///Don't call directly, you don't need to create iterator manually
-	ViewIterator(MapIterator &&iter, IValueTranslator &translator);
+	ViewIterator(Iterator &&iter, IValueTranslator &translator);
 
 	///Allows to change translator
 	ViewIterator(ViewIterator &&iter, IValueTranslator &translator);
@@ -53,8 +53,11 @@ public:
 	json::Value value() const;
 	///Retrieves documeny id - source of this record
 	const std::string_view id() const;
-	using MapIterator::orig_key;
-	using MapIterator::empty;
+
+	///Retrieves original KeyView to easy modify record in the view
+	auto orig_key() const {return Iterator::key();}
+
+	using Iterator::empty;
 protected:
 	IValueTranslator &translator;
 	mutable std::string_view docid;
