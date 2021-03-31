@@ -43,6 +43,11 @@ R"html(<!DOCTYPE html>
 <option>1000</option>
 </select>
 <span>Offset:</span><input type="number" id="offset" step="1">
+<select id="format">
+<option value="norm">Table</option>
+<option value="raw">Raw</option>
+</select>
+
 </div>
 </div>
 <div id="result">
@@ -218,6 +223,7 @@ function start() {
 	title = document.title;
 
 	document.getElementById("operation").addEventListener("change", applyChange);
+	document.getElementById("format").addEventListener("change", applyChange);
 	document.getElementById("limit").addEventListener("change", applyChange);
 	document.getElementById("offset").addEventListener("input", applyChangeDelayed);
 	document.getElementById("search").addEventListener("input", applyChangeDelayed);
@@ -237,7 +243,7 @@ function replaceContent(id, content) {
 var curClass;
 var curName;
 
-const stateFields = ["operation","search","limit","offset"];
+const stateFields = ["operation","search","limit","offset","format"];
 
 function createState() {
 	var state = {};
@@ -312,6 +318,20 @@ function update_directory() {
 		});
 }
 
+function update_info(st) {
+	var uri = path+"/db/"+encodeURIComponent(st.class)+"/"+encodeURIComponent(st.name)+"/info";
+	fetch(uri).then(x=>x.json())
+		.then(data=>{
+			document.getElementById("info_kid").textContent = data.kid;
+			var sz;
+			if (data.size == 0) sz = "<100 KiB";  
+			else if (data.size > 1024*1024) sz = (data.size/(1024*1024)).toFixed(2)+" MiB";
+			else sz = (data.size/1024).toFixed(2)+" KiB";
+			document.getElementById("info_kid").textContent = data.kid;
+			document.getElementById("info_size").textContent = sz;
+		});
+}
+
 function setHash(st) {
 	var h = stateToHash(st);
 	prevHash = h;
@@ -333,6 +353,7 @@ function updateAfterHashChange() {
 	document.getElementById("objname").textContent=st.name;
 	update_directory();
 	update_result(st);
+	update_info(st);
 }
 
 function createTD(val) {
@@ -387,6 +408,7 @@ function update_result(st) {
 	
 	query.offset = st.offset;
 	query.limit = st.limit;
+	if (st.format == "raw") query.raw = 1;
 	uri = uri + "?" + stateToHash(query).substr(1);
 	fetch(uri).then(x=>x.json())
 		.then(data=>{

@@ -38,6 +38,7 @@ public:
 	virtual json::Value getStats() const override;
 	virtual KeySpaceID allocKeyspace(ClassID classId , const std::string_view &name) override;
 	virtual bool freeKeyspace(ClassID class_id, const std::string_view &name) override;
+	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) override;
 
 protected:
 
@@ -121,6 +122,7 @@ public:
 		else throw std::runtime_error("Keyspace not found");
 	}
 	virtual bool freeKeyspace(ClassID, const std::string_view &) override {return false;}
+	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) override {return core->getApproximateSizes(ranges, nranges, sizes);}
 
 
 protected:
@@ -420,6 +422,23 @@ std::string &DB::getBuffer() {
 	std::string &out = buffer;
 	out.clear();
 	return out;
+}
+
+void DBCoreImpl::getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) {
+	leveldb::Range sl_ranges[nranges];
+	for (int i = 0; i < nranges; i++) {
+		sl_ranges[i].start = ranges[i].first;
+		sl_ranges[i].limit = ranges[i].second;
+	}
+	db->GetApproximateSizes(sl_ranges, nranges, sizes);
+}
+
+std::uint64_t DB::getKeyspaceSize(KeySpaceID kid) const {
+	std::pair<Key,Key> r{Key(kid), Key(kid+1)};
+	std::uint64_t res;
+	core->getApproximateSizes(&r, 1, &res);
+	return res;
+
 }
 
 }

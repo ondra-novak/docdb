@@ -145,13 +145,31 @@ bool Inspector::request(std::string_view method, std::string_view path, json::Va
 				std::string dbname = decodeUrlEncode(dbname_enc);
 				if (dbpath.empty()) {
 					DB snp = db.getSnapshot(SnapshotMode::writeIgnore);
-					switch (clsid) {
-					case int(KeySpaceClass::view): queryOnView(snp, dbname, query, output);break;
-					case int(KeySpaceClass::jsonmap_view):queryOnJsonMap(snp, dbname, query, output);break;
-					default: queryOnGenericMap(snp, clsid, dbname, query, output);break;
+					if (query["raw"].defined()) {
+						queryOnGenericMap(snp, clsid, dbname, query, output);
+					} else {
+						switch (clsid) {
+						case int(KeySpaceClass::view): queryOnView(snp, dbname, query, output);break;
+						case int(KeySpaceClass::jsonmap_view):queryOnJsonMap(snp, dbname, query, output);break;
+						default: queryOnGenericMap(snp, clsid, dbname, query, output);break;
+						}
 					}
 					return true;
-				}  else {
+				}  else if (dbpath == "info"){
+					DB snp = db.getSnapshot(SnapshotMode::writeIgnore);
+					KeySpaceID kid = db.allocKeyspace(clsid,  dbname);
+					json::Value metadata = db.keyspace_getMetadata(kid);
+					auto sz = db.getKeyspaceSize(kid);
+					json::Value res(json::object,{
+						json::Value("kid", kid),
+						json::Value("metadata", metadata),
+						json::Value("size", sz)
+					});
+					sendJSON(output, res);
+					return true;
+
+
+				} else {
 					return false;
 				}
 			}

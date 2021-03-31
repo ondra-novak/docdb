@@ -106,6 +106,8 @@ public:
 	 */
 	virtual bool freeKeyspace(ClassID class_id, const std::string_view &name) = 0;
 
+
+	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) = 0;
 };
 
 
@@ -227,6 +229,9 @@ public:
 	 * @return reference to local buffer
 	 */
 	static std::string &getBuffer();
+
+	std::uint64_t getKeyspaceSize(KeySpaceID kod) const;
+
 
 	void compact() {core->compact();}
 

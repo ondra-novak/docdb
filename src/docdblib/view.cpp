@@ -220,7 +220,7 @@ View::Iterator View::scan(bool backward) const {
 View::Iterator View::scan(json::Value fromKey, const std::string_view &fromDoc, bool backward) const {
 	Key b1(createKey(fromKey, fromDoc));
 	Key b2(backward?kid:kid+1);
-	return Iterator(db.createIterator({b1,b2,true,backward}));
+	return Iterator(db.createIterator({b1,b2,true,!backward}));
 }
 
 View::DocKeyIterator View::getDocKeys(const std::string_view &docid) const {
