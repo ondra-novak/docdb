@@ -40,6 +40,8 @@ public:
 
 	template<typename Request, typename QueryParser, typename Response>
 	bool simpleServerRequest(Request &req, const QueryParser &qp);
+	template<typename Request, typename QueryParser>
+	bool userverRequest(Request &req, const QueryParser &qp);
 
 protected:
 	DB db;
@@ -90,6 +92,52 @@ bool Inspector::simpleServerRequest(Request &req, const QueryParser &qp) {
 	if (method != "GET") {
 		try {
 			body = json::Value::parse(req.getBodyStream());
+		} catch (...) {
+
+		}
+	}
+
+	return request(method,qp.getPath(), json::Value(json::object, qp.begin(), qp.end(),[&](const auto &x){
+		return json::Value(x.first, x.second);
+	}), body, Output(req));
+
+}
+
+template<typename Request, typename QueryParser>
+bool Inspector::userverRequest(Request &req, const QueryParser &qp) {
+
+	class Output: public IOutput {
+	public:
+		Request req;
+		std::optional<decltype(std::declval<Request>()->send())> stream;
+
+		Output(Request &req):req(std::move(req)) {}
+		~Output() {
+			if (stream.has_value()) {
+				stream->flush();
+				stream.reset();
+			}
+		}
+
+		virtual void begin(int status, std::string_view contentType) {
+			req->setContentType(contentType);
+			stream = req->send();
+		}
+		virtual void send(const std::string_view &data) {
+			stream->write(data);
+		}
+		virtual void error(int status, const std::string_view &data) {
+			req->sendErrorPage(status,data);
+		}
+
+	};
+
+	json::Value body;
+	auto method = req->getMethod();
+	if (method != "GET") {
+		try {
+			auto stream = req->getBody();
+			body = json::Value::parse([&]{return stream.getChar();});
 		} catch (...) {
 
 		}
