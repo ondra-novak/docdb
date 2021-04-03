@@ -16,4 +16,5 @@ add_library (docdblib
 	json_map.cpp
 	inspector.cpp
 	inspector_html.cpp	
+	inspector_server.cpp
 	)

@@ -18,27 +18,12 @@ namespace docdb {
 
 using namespace json;
 
-template<typename U, typename T>
-T splitAt(const U &search, T &object) {
-	auto s = T(search);
-	auto l = object.size();
-	auto sl = s.size();
-	auto k = object.find(s);
-	if (k > l) {
-		T ret = object;
-		object = object.substr(l);
-		return ret;
-	} else {
-		T ret = object.substr(0,k);
-		object = object.substr(k+sl);
-		return ret;
-	}
-}
-
-
 Inspector::Inspector(DB db):db(db) {
 	// TODO Auto-generated constructor stub
 
+}
+
+Inspector::~Inspector() {
 }
 
 static json::NamedEnum<KeySpaceClass> strClasses({
@@ -61,7 +46,7 @@ json::String getClassName(int clsid) {
 	}
 }
 
-std::string decodeUrlEncode(std::string_view input) {
+std::string Inspector::decodeUrlEncode(std::string_view input) {
 	std::string out;
 	out.reserve(input.length()*3/2);
 	char n=0;
@@ -93,127 +78,130 @@ std::string decodeUrlEncode(std::string_view input) {
 }
 
 
-bool Inspector::request(std::string_view method, std::string_view path, json::Value query, json::Value body, IOutput &&output) {
+bool Inspector::request(std::string_view method, std::string_view path, json::Value query, json::Value , IOutput &&output) {
 
+	if (method == "GET") {
 
+		if (path.substr(0,4) == "/db/") {
 
-	if (path.substr(0,4) == "/db/") {
-
-		std::string_view dbpath = path.substr(4);
-		std::string_view clsname = splitAt("/", dbpath);
-		if (clsname.empty()) {
-			auto iter = db.listKeyspaces();
-			Array res;
-			while (iter.next()) {
-				res.push_back(Value(object,{
-					Value("id",iter.getID()),
-					Value("class", getClassName(iter.getClass())),
-					Value("name", iter.getName())
-				}));
-			}
-			sendJSON(output, res);
-			return true;
-		} else {
-			const KeySpaceClass *cls = strClasses.find(clsname);
-			ClassID clsid;
-			if (cls) {
-				clsid = (int)(*cls);
-			} else {
-				if (clsname.compare(0,4,"user") == 0) {
-					clsid = std::strtol(clsname.data()+4,nullptr,16);
-				} else {
-					return false;
-				}
-			}
-
-			std::string_view dbname_enc=splitAt("/", dbpath);
-			if (dbname_enc.empty()) {
+			std::string_view dbpath = path.substr(4);
+			std::string_view clsname = helper::splitAt("/", dbpath);
+			if (clsname.empty()) {
 				auto iter = db.listKeyspaces();
 				Array res;
 				while (iter.next()) {
-					if (iter.getClass() == clsid) {
-						res.push_back(Value(object,{
-							Value("id",iter.getID()),
-							Value("class", getClassName(iter.getClass())),
-							Value("name", iter.getName())
-						}));
-					}
+					res.push_back(Value(object,{
+						Value("id",iter.getID()),
+						Value("class", getClassName(iter.getClass())),
+						Value("name", iter.getName())
+					}));
 				}
 				sendJSON(output, res);
 				return true;
 			} else {
-				std::string dbname = decodeUrlEncode(dbname_enc);
-				if (dbpath.empty()) {
-					DB snp = db.getSnapshot(SnapshotMode::writeIgnore);
-					if (query["raw"].defined()) {
-						queryOnGenericMap(snp, clsid, dbname, query, output);
+				const KeySpaceClass *cls = strClasses.find(clsname);
+				ClassID clsid;
+				if (cls) {
+					clsid = (int)(*cls);
+				} else {
+					if (clsname.compare(0,4,"user") == 0) {
+						clsid = std::strtol(clsname.data()+4,nullptr,16);
 					} else {
-						switch (clsid) {
-						case int(KeySpaceClass::view): queryOnView(snp, dbname, query, output);break;
-						case int(KeySpaceClass::jsonmap_view):queryOnJsonMap(snp, dbname, query, output);break;
-						default: queryOnGenericMap(snp, clsid, dbname, query, output);break;
+						return false;
+					}
+				}
+
+				std::string_view dbname_enc=helper::splitAt("/", dbpath);
+				if (dbname_enc.empty()) {
+					auto iter = db.listKeyspaces();
+					Array res;
+					while (iter.next()) {
+						if (iter.getClass() == clsid) {
+							res.push_back(Value(object,{
+								Value("id",iter.getID()),
+								Value("class", getClassName(iter.getClass())),
+								Value("name", iter.getName())
+							}));
 						}
 					}
-					return true;
-				}  else if (dbpath == "info"){
-					DB snp = db.getSnapshot(SnapshotMode::writeIgnore);
-					KeySpaceID kid = db.allocKeyspace(clsid,  dbname);
-					json::Value metadata = db.keyspace_getMetadata(kid);
-					auto sz = db.getKeyspaceSize(kid);
-					json::Value res(json::object,{
-						json::Value("kid", kid),
-						json::Value("metadata", metadata),
-						json::Value("size", sz)
-					});
 					sendJSON(output, res);
 					return true;
-
-
 				} else {
-					return false;
+					std::string dbname = decodeUrlEncode(dbname_enc);
+					if (dbpath.empty()) {
+						DB snp = db.getSnapshot(SnapshotMode::writeIgnore);
+						if (query["raw"].defined()) {
+							queryOnGenericMap(snp, clsid, dbname, query, output);
+						} else {
+							switch (clsid) {
+							case int(KeySpaceClass::view): queryOnView(snp, dbname, query, output);break;
+							case int(KeySpaceClass::jsonmap_view):queryOnJsonMap(snp, dbname, query, output);break;
+							default: queryOnGenericMap(snp, clsid, dbname, query, output);break;
+							}
+						}
+						return true;
+					}  else if (dbpath == "info"){
+						DB snp = db.getSnapshot(SnapshotMode::writeIgnore);
+						KeySpaceID kid = db.allocKeyspace(clsid,  dbname);
+						json::Value metadata = db.keyspace_getMetadata(kid);
+						auto sz = db.getKeyspaceSize(kid);
+						json::Value res(json::object,{
+							json::Value("kid", kid),
+							json::Value("metadata", metadata),
+							json::Value("size", sz)
+						});
+						sendJSON(output, res);
+						return true;
+
+
+					} else {
+						return false;
+					}
 				}
 			}
-		}
 
 
-	} else {
-		if (path[0] == '/') {
-			auto fname = path.substr(1);
-			if (fname.empty()) fname = "index.html";
-			auto iter = fileMap.find(fname);
-			if (iter == fileMap.end()) return false;
-			output.begin(200, iter->second.content_type);
-			output.send(iter->second.content);
-/*			auto ext = fname.substr(fname.rfind('.')+1);
-			std::string_view ctx;
-			if (ext == "html") ctx = "text/html;charset=utf-8";
-			else if (ext == "js") ctx = "text/javascript;charset=utf-8";
-			else if (ext == "css") ctx = "text/css;charset=utf-8";
-			else if (ext == "png") ctx = "image/png";
-			else if (ext == "jpg") ctx = "image/jpeg";
-			else if (ext == "svg") ctx = "image/svg";
-			else ctx = "application/octet-stream";
+		} else {
+			if (path[0] == '/') {
+				auto fname = path.substr(1);
+				if (fname.empty()) fname = "index.html";
+				auto iter = fileMap.find(fname);
+				if (iter == fileMap.end()) return false;
+				output.begin(200, iter->second.content_type);
+				output.send(iter->second.content);
+	/*			auto ext = fname.substr(fname.rfind('.')+1);
+				std::string_view ctx;
+				if (ext == "html") ctx = "text/html;charset=utf-8";
+				else if (ext == "js") ctx = "text/javascript;charset=utf-8";
+				else if (ext == "css") ctx = "text/css;charset=utf-8";
+				else if (ext == "png") ctx = "image/png";
+				else if (ext == "jpg") ctx = "image/jpeg";
+				else if (ext == "svg") ctx = "image/svg";
+				else ctx = "application/octet-stream";
 
-			std::ifstream file_in((std::string(fname)));
-			if (!file_in) {
-				return false;
+				std::ifstream file_in((std::string(fname)));
+				if (!file_in) {
+					return false;
+				}
+
+				output.begin(200, ctx);
+				char buff[4096];
+				bool rep = true;
+				while (rep) {
+					file_in.read(buff,4096);
+					auto cnt = file_in.gcount();
+					if (cnt) output.send(std::string_view(buff,cnt));
+					rep = cnt == 4096;
+				}
+				*/
+				return true;
 			}
 
-			output.begin(200, ctx);
-			char buff[4096];
-			bool rep = true;
-			while (rep) {
-				file_in.read(buff,4096);
-				auto cnt = file_in.gcount();
-				if (cnt) output.send(std::string_view(buff,cnt));
-				rep = cnt == 4096;
-			}
-			*/
-			return true;
+
+			return false;
 		}
-
-
-		return false; //zatim
+	} else  {
+		return false;
 	}
 
 
@@ -378,5 +366,6 @@ void Inspector::queryOnGenericMap(DB snp, ClassID clsid, std::string_view name, 
 	output.send("]");
 
 }
+
 
 } /* namespace docdb */
