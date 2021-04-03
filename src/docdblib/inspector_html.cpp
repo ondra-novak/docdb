@@ -11,7 +11,13 @@ R"html(<!DOCTYPE html>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body onload="start()">
+<div class="directory">
+<dl>
+<dt>root</dt>
+<dd><a href="#class=&name=">stats</a></dd>
+</dl>
 <div id="directory">
+</div>
 </div>
 <div id="content">
 <div id="header">
@@ -65,7 +71,7 @@ R"css(body {
 	min-height: 100vh;
 }
 
-#directory {
+.directory {
     height: 100%;
     position: fixed;
     width: 200px;
@@ -84,6 +90,9 @@ R"css(body {
 #nav {
 	display: flex;	
 	background-color: #e9e9e9
+}
+#nav[hidden] {
+	display:none;
 }
 #nav > * {
 	margin: 1px;
@@ -113,28 +122,28 @@ R"css(body {
 	text-align:right;
 }
 
-#directory dl {
+.directory dl {
 	margin: 0;
 }
 
-#directory dl dt {
+.directory dl dt {
 	margin-top: 1em;
 	font-weight: bold;
 	background: linear-gradient(#d5d4d4c4,#ffffffcf);
 	padding: 2px;
 }
 
-#directory dl dd {
+.directory dl dd {
 	margin:0;
 }
 
-#directory dl dd a {
+.directory dl dd a {
 	display: block;
 	padding: 2px 2px 2px 30px;
 	color: black;
 	text-decoration: auto;
 }
-#directory dl dd a:hover {
+.directory dl dd a:hover {
 	background: #d1d0d0;
 }
 
@@ -208,6 +217,39 @@ R"css(body {
 #header {
 	position: sticky;
 	top: 0;
+}
+
+.stats {
+    display: flex;
+}
+
+.stats > div {
+	border-top: 1px solid;
+	flex-grow: 1;
+	margin: 1em;
+	width: 100px;
+}
+
+.stats > div > div {
+   padding: 10px;
+   box-sizing: border-box;
+   position: relative;
+   border-bottom: 1px solid;
+}
+
+.stats > div > div > div {
+	position: absolute;
+	left:0;
+	top:0;
+	bottom:0;
+	background-color: #0000FF20;
+}
+
+.stats > div > button {
+	display:  block;
+	width: 10em;
+	height: 3em;
+	margin: 1em auto;
 })css"}},
 {"code.js",{"text/javascript",R"javascript("use strict"
 
@@ -215,6 +257,9 @@ var path = ".";
 
 var title;
 var prevHash;
+
+var post_enabled;
+var compact_running;
 
 function start() {
 
@@ -230,6 +275,12 @@ function start() {
 	document.getElementById("next").addEventListener("click", goNext.bind(null,1));
 	document.getElementById("prev").addEventListener("click", goNext.bind(null,-1));
 	document.getElementById("reload").addEventListener("click", goNext.bind(null,0));
+
+	post_enabled=fetch(path+"/test",{method:"POST"}).then(st=>{		
+		return st.status==200;
+	});
+	compact_running=Promise.resolve(true);
+
 }
 
 function replaceContent(id, content) {
@@ -282,7 +333,8 @@ var redraw_directory;
 function update_directory() {
 	return fetch(path+"/db/")
 		.then(x=>x.json())
-		.then(data=>{
+		.then(dbinfo=>{
+			var data = dbinfo.keyspaces;
 			var st = createState();
 			redraw_directory = function(st){			
 				var struct = {};
@@ -315,20 +367,25 @@ function update_directory() {
 				replaceContent("directory",dl);
 			};
 			redraw_directory(st);		
+			return  dbinfo;
 		});
 }
 
-function update_info(st) {
-	var uri = path+"/db/"+encodeURIComponent(st.class)+"/"+encodeURIComponent(st.name)+"/info";
-	fetch(uri).then(x=>x.json())
-		.then(data=>{
+function update_info_indirect(data) {
 			document.getElementById("info_kid").textContent = data.kid;
 			var sz;
 			if (data.size == 0) sz = "<100 KiB";  
 			else if (data.size > 1024*1024) sz = (data.size/(1024*1024)).toFixed(2)+" MiB";
 			else sz = (data.size/1024).toFixed(2)+" KiB";
 			document.getElementById("info_kid").textContent = data.kid;
-			document.getElementById("info_size").textContent = sz;
+			document.getElementById("info_size").textContent = sz;	
+}
+
+function update_info(st) {
+	var uri = path+"/db/"+encodeURIComponent(st.class)+"/"+encodeURIComponent(st.name)+"/info";
+	fetch(uri).then(x=>x.json())
+		.then(data=>{
+			update_info_indirect(data);
 		});
 }
 
@@ -351,9 +408,15 @@ function updateAfterHashChange() {
 	if (st.name) curName = st.name;
 	document.getElementById("classname").textContent=st.class;
 	document.getElementById("objname").textContent=st.name;
-	update_directory();
-	update_result(st);
-	update_info(st);
+	var stats = update_directory();
+	if (st.class) {
+	    document.getElementById("nav").hidden=false;
+		update_result(st);
+	    update_info(st);
+	} else {
+		document.getElementById("nav").hidden=true;
+		show_stats(stats);		
+	}
 }
 
 function createTD(val) {
@@ -500,6 +563,72 @@ function goNext(m) {
 	update_result(st);
 	redraw_directory(st);
 	setHash(st);
+}
+
+async function show_stats(stats_promise) {
+	var stats=await stats_promise;
+
+    var screen = document.createElement("div");
+    screen.setAttribute("class","stats");
+    var tbl1 = document.createElement("div");
+    var kspc = stats.keyspaces;
+    var lvst = stats.stats.levels
+    kspc.sort((a,b)=>b.size-a.size);
+    var maxsz = kspc.reduce((a,b)=>a>b.size?a:b.size,1);
+    var totalsz = kspc.reduce((a,b)=>a+b.size,0);
+    kspc.forEach(row=>{
+    	var div = document.createElement("div");
+    	var div2 = document.createElement("div");
+    	div.appendChild(div2);
+    	var text = document.createTextNode(row.class+":"+row.name);
+    	div.appendChild(text);
+    	div2.style.width = (100*row.size/maxsz)+"%";
+    	tbl1.appendChild(div);
+    });
+    screen.appendChild(tbl1);
+
+
+    var tbl2 = document.createElement("div");
+    var maxlevelsz = lvst.reduce((a,b)=>a>b.size_mb?a:b.size_mb,1);
+
+    lvst.forEach(row=>{
+    	var div = document.createElement("div");
+    	var div2 = document.createElement("div");
+    	div.appendChild(div2);
+    	var caption = "Level "+row.level+" (size: "+row.size_mb+" MB / files: "+row.files+")";
+    	var text = document.createTextNode(caption);
+    	div.appendChild(text);
+    	div2.style.width = (100*row.size_mb/maxlevelsz)+"%";
+    	tbl2.appendChild(div);    	
+    });
+
+    (function(){
+    	var div = document.createElement("div");
+    	var caption = "Memory: "+stats.stats.memory_usage;
+    	var text = document.createTextNode(caption);
+    	div.appendChild(text);
+    	tbl2.appendChild(div);   
+    })();
+
+    screen.appendChild(tbl2);
+    post_enabled.then(x=>{if (x) {
+		var bt = document.createElement("button");
+		bt.textContent="Compact";
+		bt.disabled = true;
+		bt.addEventListener("click",function(){    
+		    bt.disabled = true;
+            compact_running = fetch(path+"/compact",{method:"POST"})
+                .then(function(){show_stats(update_directory());});
+		});
+		compact_running.then(()=>{bt.disabled=false;});
+		tbl2.appendChild(bt);
+    }});
+
+    replaceContent("result", screen);
+    update_info_indirect({"size":totalsz,kid:"n/a"});
+	document.getElementById("classname").textContent="root";
+	document.getElementById("objname").textContent="stats";
+
 }
 )javascript"}}
 

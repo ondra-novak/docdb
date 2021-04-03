@@ -93,10 +93,12 @@ bool Inspector::request(std::string_view method, std::string_view path, json::Va
 					res.push_back(Value(object,{
 						Value("id",iter.getID()),
 						Value("class", getClassName(iter.getClass())),
-						Value("name", iter.getName())
+						Value("name", iter.getName()),
+						Value("size", db.getKeyspaceSize(iter.getID())),
 					}));
 				}
-				sendJSON(output, res);
+				sendJSON(output, Value(object,{Value("keyspaces",res),
+						             Value("stats", db.getStats())}));
 				return true;
 			} else {
 				const KeySpaceClass *cls = strClasses.find(clsname);
@@ -200,6 +202,18 @@ bool Inspector::request(std::string_view method, std::string_view path, json::Va
 
 			return false;
 		}
+	} else if (method == "POST") {
+		if (path == "/test") {
+			output.begin(200, "text/plain");
+			return true;
+		} else if (path == "/compact") {
+			db.compact();
+			output.begin(200, "text/plain");
+			return true;
+		} else {
+			return false;
+		}
+
 	} else  {
 		return false;
 	}
