@@ -279,13 +279,17 @@ inline void jsonkey2string(const json::Value &v, T &out, codepoints::Type flags 
 		}
 		out.push_back('\0');
 		break;
-	case json::array: {
-		codepoints::Type pfx = codepoints::array_prefix;
-		for (json::Value item: v) {
-			jsonkey2string(item, out, pfx);
-			pfx = 0;
-		}
-		out.push_back(codepoints::end);
+	case json::array:
+		if (v.empty()) {
+			out.push_back(codepoints::array_prefix|codepoints::end);
+		} else {
+			codepoints::Type pfx = codepoints::array_prefix;
+			for (json::Value item: v) {
+				jsonkey2string(item, out, pfx);
+				pfx = 0;
+			}
+			out.push_back(codepoints::end);
+
 		}break;
 	default:
 		out.push_back(flags|codepoints::json);

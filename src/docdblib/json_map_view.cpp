@@ -10,9 +10,20 @@
 #include "formats.h"
 namespace docdb {
 
-JsonMapView::JsonMapView(const DB &db, const std::string_view &name)
+JsonMapView::JsonMapView(DB db, const std::string_view &name)
 :db(db),kid(this->db.allocKeyspace(KeySpaceClass::jsonmap_view, name))
 {
+}
+
+JsonMapView::JsonMapView(DB db, ClassID classId, const std::string_view &name)
+:db(db),kid(this->db.allocKeyspace(classId, name)) {
+
+}
+
+JsonMapView::JsonMapView(JsonMapView &other, const DB &snapshot)
+:db(snapshot),kid(other.kid)
+{
+
 }
 
 json::Value JsonMapView::lookup(const json::Value &key) const {

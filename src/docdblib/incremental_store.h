@@ -58,7 +58,7 @@ public:
 	///Creates global-wide key for given sequence id
 	Key createKey(SeqID seqId) const;
 
-	const DB &getDB() const {return db;}
+	DB getDB() const {return db;}
 
 protected:
 

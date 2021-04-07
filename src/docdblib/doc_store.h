@@ -18,13 +18,6 @@
 namespace docdb {
 
 struct DocStore_Config {
-	///Enable graveyard for tombstoned documents
-	/**
-	 * Any deleted document is put
-	 * to separate keyspace to increase performace of iterators and search. However, when this option
-	 * is turned on, an extra keyspace is allocated.
-	 */
-	bool graveyard = true;
 
 
 	///Specifies maximum count of entries in revisition history
@@ -46,7 +39,7 @@ public:
 	 * @param name name of the document store
 	 * @param cfg document store configuration
 	 */
-	DocStoreViewBase(const IncrementalStoreView& incview, const std::string_view &name, bool graveyard);
+	DocStoreViewBase(const IncrementalStoreView& incview, const std::string_view &name);
 
 	///Allows change incremental store view (for different snapshot);
 	DocStoreViewBase(const DocStoreViewBase &src, const IncrementalStoreView& incview);
@@ -120,11 +113,20 @@ public:
 	/**
 	 * @param from from document
 	 * @param to to document
+	 * @param include_upper_bound set true to include upper bound of the range
+	 * @return iterator - only live documents are included (not deleted)
+	 */
+	Iterator range(const std::string_view &from, const std::string_view &to, bool include_upper_bound = false) const;
+
+	///Scans range of documents
+	/**
+	 * @param from from document
+	 * @param to to document
 	 * @param exclude_begin exclude first document if equals to "from"
 	 * @param exclude_end exclude last document if equals to "to"
 	 * @return iterator - only live documents are included (not deleted)
 	 */
-	Iterator range(const std::string_view &from, const std::string_view &to, bool exclude_begin = false, bool exclude_end = false) const;
+	Iterator range_ex(const std::string_view &from, const std::string_view &to, bool exclude_begin = false, bool exclude_end = false) const;
 
 	///Scans for prefix
 	/**
@@ -158,6 +160,8 @@ public:
 	ChangesIterator scanChanges(SeqID from) const;
 
 
+	DB getDB() const {return incview.getDB();}
+
 
 
 protected:
@@ -179,7 +183,6 @@ protected:
 
 	static json::Value parseRevisions(const DocumentHeaderData *hdr, unsigned int revCount);
 
-	void initFilter(Iterator &iter) const;
 
 protected:
 	//keyspace id, graveyard key space
@@ -430,7 +433,6 @@ public:
 	///cancels all pending listens
 	void cancelListen();
 
-	const DB &getDB() const {return incstore.getDB();}
 
 	SeqID getSeq() const {return incstore.getSeq();}
 
@@ -438,7 +440,7 @@ public:
 		using IteratorType = Iterator;
 		using SourceType = DocStore;
 
-		static const DB &getDB(const SourceType &src) {return src.getDB();}
+		static DB getDB(const SourceType &src) {return src.getDB();}
 		template<typename Fn>
 		static auto observe(SourceType &src, Fn &&fn) {
 			return src.addObserver([fn = std::forward<Fn>(fn)](Batch &b, const std::string_view &str){
@@ -453,13 +455,13 @@ public:
 		}
 
 		static IteratorType find(const SourceType &src, const json::Value &key) {
-			return src.range(key.getString(), key.getString(),false, false);
+			return src.range(key.getString(), key.getString(), true);
 		}
 		static IteratorType prefix(const SourceType &src, const json::Value &key) {
 			return src.prefix(key.getString());
 		}
 		static IteratorType range(const SourceType &src, const json::Value &fromKey, const json::Value &toKey, bool include_upper_bound ) {
-			return src.range(fromKey.getString(), toKey.getString(), false, !include_upper_bound);
+			return src.range(fromKey.getString(), toKey.getString(), include_upper_bound);
 		}
 
 	};

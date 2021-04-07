@@ -17,7 +17,11 @@ namespace docdb {
 class JsonMapView {
 public:
 
-	JsonMapView(const DB &db, const std::string_view &name);
+	JsonMapView(DB db, const std::string_view &name);
+
+	JsonMapView(DB db, ClassID classId, const std::string_view &name);
+
+	JsonMapView(JsonMapView &other, const DB &snapshot);
 
 	///Perform fast lookup for a value
 	/**
@@ -166,6 +170,8 @@ public:
 	static void createValue(const json::Value &val, std::string &out);
 	static void createValue(const std::initializer_list<json::Value> &val, std::string &out);
 
+
+	DB getDB() const {return db;}
 
 
 protected:

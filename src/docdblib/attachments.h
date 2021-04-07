@@ -7,137 +7,346 @@
 
 #ifndef SRC_DOCDBLIB_ATTACHMENTS_H_
 #define SRC_DOCDBLIB_ATTACHMENTS_H_
-#include "docdb.h"
-#include "updatableobject.h"
+
+#include <queue>
+#include <imtjson/string.h>
+#include <imtjson/array.h>
+#include "json_map.h"
+
+#include "doc_store.h"
+#include "filterview.h"
 #include "iterator.h"
+#include "hash.h"
 
 namespace docdb {
 
-
-///Function is used to generate list of attachment used in the document
-class EmitAttachFn {
-public:
-	virtual void operator()(const std::string_view &att_id) const = 0;
-	virtual ~EmitAttachFn() {}
-};
-///Access and controls attachments
+///Attachments are stored in separate keyspace
 /**
- * Attachments are not part of core-db, however, they can be accessed through separate object.
- * Attachments are stored in same database under different section.
+ * Attachments can be used to store any arbitrary data along with documents, including binary data, such as images or videos.
  *
- * To store attachment along with document, you need to create attchment identification first.
- * The identification should be stored in the document. The attachment's content is stored
- * under same identification.
+ * Attachments are stored as they are as binary blobs. You can split attachment into segments which allows easy manipulation with each attachment
  *
- * During object update, unreferenced attachments are collected and deleted. The function
- * is similar to AbstractView. There must be a function which enumerates identifications
- * of referenced attachments. No longer referenced attachments are removed
- *
- * Note: attachments are bound to the documents. They are not automatically deduplicated.
- * If you store same content with multiple documents, the content is duplicated once
- * per document.
+ * Single documents can have multiple attachments, each attachment is identified by its id
  *
  */
-class Attachments: public UpdatableObject {
+
+class AttachmentView {
 public:
 
-	///Creates attachment container
+	using SegID = std::uint64_t;
+
+	///Create attachment view, This class only R/O access to the attachment table
 	/**
-	 * @param db reference to database
+	 * @param db database object
+	 * @param name name of the view
 	 */
-	Attachments(DocDB &db);
+	AttachmentView(DB db, const std::string_view &name);
 
-	///Put content to the database
+	struct Metadata {
+		json::String ctx;
+		json::String hash;
+		std::queue<SegID> segments;
+
+		void parse(json::Value jmetadata);
+		json::Value compose();
+		void eraseSegments(const JsonMap &jmap, Batch &b);
+	};
+
+
+
+	///This class allows to download attachment per segments
+	class Download {
+	public:
+
+		///Create instance - you should use open() command to retrieve this instance
+		Download(JsonMapView &&jmap, Metadata &&metaData);
+
+		///Returns true, if attachment exists
+		/**
+		 * @retval false attachment cannot be opened, rest of functions will return empty data
+		 * @retval true attachment opened, and you can read
+		 */
+		bool exists() const;
+		///Retrieve content type
+		std::string_view getContentType() const;
+		///Retrieve hash
+		std::string_view getHash() const;
+		///Retrieve seqID of this segment
+		SeqID segID() const;
+		///Read segment
+		/**
+		 * @return returns the whole segment, unless there are data put back. In this case, the put-back-data are read first. Function returns
+		 * empty string, if there are no more data to read
+		 */
+		std::string_view read();
+		///Put back segment or part of segment, so it can be read later
+		/**
+		 * @param data data to be read later
+		 *
+		 * Main purpose of this function is to store unprocessed part of the segment back to the instance so it can be processed later by
+		 * next read() call. The argument should contain part of data returned by previous read() function. However it is possible
+		 * to put back complete different data, you also need to ensure, that data remains valid until they are procesed complete. Note that
+		 * function should be called once before next read(), otherwise it resets state of previous call
+		 */
+		void putBack(std::string_view data);
+
+	protected:
+		JsonMapView jmap;
+		Metadata mdata;
+		std::string buffer;
+
+		std::string_view putBackData;
+		mutable json::Value keyData;
+
+	};
+
+
+
+	///Iterates over attachments
+	class Iterator: public JsonMapView::Iterator {
+	public:
+		using JsonMapView::Iterator::Iterator;
+
+		std::string_view docId() const;
+		std::string_view attId() const;
+		Metadata metadata() const;
+	};
+
+	///Open attachment
 	/**
-	 * @param docid document id
-	 * @param attid attachment identification - binary string not supported (it is terminated by 0)
-	 * @param data data to put
-	 */
-	void put(const std::string_view &docid,
-			 const std::string_view &attid,
-			 const std::string_view data);
-
-	///Put segmented content to the database
-	/**
-	 * @param docid document id
-	 * @param attid attachment identification - binary string not supported (it is terminated by 0)
-	 * @param seg number of segment. Segments are numbered from 0 to n, each segment can have different size.
-	 * @param data data of this segment
-	 */
-	void put(const std::string_view &docid,
-			 const std::string_view &attid,
-			 std::size_t seg,
-			 const std::string_view data);
-
-	///Gets single segment from the database
-	/**
-	 * @param docid document id
-	 * @param attid attechment identification
-	 * @param seqid segment number. If segment was not used during store, it defaults to 0
-	 * @return if segment exists, it returns content, if not, return value is empty
-	 */
-	std::optional<std::string> get(const std::string_view &docid,
-			 const std::string_view &attid,
-			 std::size_t seg = 0);
-
-
-	///Streams out all segments through th function
-	/**
-	 * @param docid document id
-	 * @param attid attachment id
-	 * @param fn function to use
-	 * @retval true at least one segment found
-	 * @retval false no segments found
-	 */
-	template<typename Fn>
-	bool stream_out(const std::string_view &docid, const std::string_view &attid, Fn &&fn);
-
-
-	///Erases all segments of the attachment
-	/**
-	 * @param docid document id
-	 * @param attid attachment identification
-	 */
-	void erase(const std::string_view &docid, const std::string_view &attid);
-
-	///Function maps signe document to list of attachments
-	/**
-	 * @param doc document
-	 * @param emit function which emits single attachment identification.
 	 *
-	 * If document doesn't contain attachments, it don't need to call emit()
+	 * @param docId document id
+	 * @param attId attachment id
+	 * @return Download instance. Function will not fail, when attachment not found. You should call exists() to check, that attachment exists
 	 */
-	virtual void map(const Document &doc, const EmitAttachFn &emit) = 0;
+	Download open(const std::string_view &docId, const std::string_view &attId);
+
+	///Scan for all attachments for given document
+	/**
+	 * @param docId document id
+	 * @param backward scan backward
+	 * @return iterator
+	 */
+	Iterator scan(const std::string_view &docId, bool backward = false);
+
+	///Scan for all attachments for all documents
+	/**
+	 * @param backward scan backward
+	 * @return iterator
+	 */
+	Iterator scan(bool backward = false);
+
+
+protected:
+	JsonMap jmap;
+
+};
+
+///This is emit function for the attachment map
+/**
+ * Function is called to check, whether attachments are still referenced by documents. For each document function emits list of
+ * attachments (their IDs). Attachments not listed in this list are erased from the database.
+ *
+ * It is expected, that each attachment is somehow referenced by the document, and this function is used to collect these references
+ */
+class AttachmentEmitFn {
+public:
+	virtual ~AttachmentEmitFn() {}
+	virtual void operator()(std::string_view attachId) = 0;
+
+};
+
+///Function defines, how reference to the attachment is stored within the document.
+/**
+ * For each document, it should emit all references to the attachments. Attachments missing from the reference are removed
+ */
+using AttachmentIndexFn = std::function<void(const Document &doc, AttachmentEmitFn &)>;
+
+
+///Allows to store attachments with documents
+/**
+ * Attachments are stored in separate keyspace.
+ * Attachment can be any arbitrary binary content. Large content is split into segments. This allows easy streaming attachment without need to read whole attachment
+ * to the memory.
+ *
+ * The class uses JsonMap, which is additionaly split to several parts
+ * - metadata - occupies keys null and true
+ * - segment map - occupies number keys
+ * - directory map - occupies two collumns array, which contains document ID and attachment ID
+ *
+ * To work with attachments, you need to define format, how attachment are referenced within documents. This format is then implementas as function, which must be
+ * passed to the constructor of the object. The purpose of this function (AttachmentIndexFn) is to enumerate all active attachments referenced in the document. When
+ * attachment is dereferenced, it is eventually removed from the database.
+ *
+ * To store attachment, you need to acquire an instance of the Upload class. You can use this class to store multiple attachments per document. Note that only one thread can upload
+ * the attachments, multiple pending uploads can cause update conflict. Once all attachments are uploaded, you need to commit upload and then modify original document
+ * to store references to newly created attachments. Once the document is updated, you can drop the instance of the Update class, which finalizes all writes.
+ *
+ * This allows an atomic update of the attachment. By holding instance of Update prevents to garbage collector to run. Once document is updated, attachments are already uploaded
+ * and ready to be downloaded. Once you drop the instance of the Update class, the garbage collector eventualy removes any not referenced attachments or any old version
+ * of the attachments left in the database
+ *
+ *
+ */
+class Attachments: public AttachmentView {
+public:
+
+	///Minimum segment size. Writes below this size are combined into large segment
+	/** This value affects only newly created instances */
+	static std::size_t cfgMinSegment; /*=10000*/
+	///Maximum segment size. Writes above this size are split into multiple segments
+	/** This value affects only newly created instances */
+	static std::size_t cfgMaxSegment; /*=50000*/
+
+	Attachments(const DocStoreViewBase &docStore, const std::string_view &name, std::size_t revision, AttachmentIndexFn &&indexFn);
+	Attachments(DB db, const std::string_view &name, std::size_t revision, AttachmentIndexFn &&indexFn);
+
+	///Change document source
+	void setSource(const DocStoreViewBase &docStore);
+
+	void run_gc();
+
+	///Update from document source
+	/**
+	 * @param source source database
+	 * @retval true processed
+	 * @retval false delayed, upload lock is held (note function will not schedule
+	 * 			automatic update after lock is release, this need to have source set permanetly
+	 */
+	bool run_gc(const DocStoreViewBase &source);
+
+
+	///list missing attachments (attachments refered by the document but not stored)
+	std::vector<std::string> missing(const Document &doc) const;
+
+	///Upload class allows you atomicaly update attachments
+	/**
+	 * You can create instance using the function upload(). You can upload multiple attachments. Each attachment can be split to
+	 * multiple segments. Once all attachments are uploaded, you can update source document and commit everything to the database.
+	 *
+	 * During upload operation, uploaded data are not visible until committed.
+	 *
+	 * While you keeping this instance, no attachment can be automatically removed
+	 */
+	class Upload {
+	public:
+
+		Upload (Attachments &owner, std::string_view docId , std::size_t minSegment, std::size_t maxSegment);
+		///Drops Upload instance
+		/**
+		 * Unlocks garbage collector, so it can remove no longer referenced attachments
+		 * Any not commited writes are deleted
+		 */
+		~Upload();
+
+
+		Upload (Upload &&other);
+
+		///Initialize writing of the attachment
+		/**
+		 * Function must be called before write(). You can write only one attachment at once.
+		 * Previously opened attachment is closed
+		 *
+		 * @param attId attachment ID
+		 */
+		void open(std::string_view attId, std::string_view content_type);
+
+		///Write data segment
+		void write(std::string_view data);
+
+		///closes current attachment
+		/**
+		 * @return attachment's hash
+		 */
+		json::String close();
+
+		///Commit all writes
+		/**
+		 * Commit is need to make attachments available for download. After commit(), the document can be updated to refer newly uploaded attachments
+		 */
+		void commit();
+
+		///Returns true, if attachment is opened
+		bool isOpened() const { return opened; }
+		///Returns currently opened attachment
+		const std::string& getOpenedAttachment() const { return attId; }
+		///Returns current document
+		const std::string& getDocID() const {return docId;}
+
+
+	protected:
+
+		Attachments &owner;
+		std::size_t minSegment;
+		std::size_t maxSegment;
+		std::string docId;
+		std::string attId;
+		std::string segment;
+		Batch batch;
+		Metadata metadata;
+		Hash128 hashfn;
+		std::queue<SegID> stored_segments;
+		bool opened = false;
+
+		void writeRaw(std::string_view data);
+	};
+
+	///Erase attachment manually
+	void erase(std::string_view docId, std::string_view attId);
+
+	///Erase attachment manually
+	void erase(Batch &b, std::string_view docId, std::string_view attId);
+
+	///Purge document from the database
+	void purgeDoc(std::string_view docId);
+
+	Upload upload(std::string_view docId);
+
+	std::size_t getMaxSegment() const {
+		return maxSegment;
+	}
+
+	void setMaxSegment(std::size_t maxSegment) {
+		this->maxSegment = maxSegment;
+	}
+
+	std::size_t getMinSegment() const {
+		return minSegment;
+	}
+
+	void setMinSegment(std::size_t minSegment) {
+		this->minSegment = minSegment;
+	}
+
+
+
 
 protected:
 
-	virtual void storeState() override;
-	virtual SeqID scanUpdates(ChangesIterator &&iter) override;
-	using AttchKey = DocDB::AttachmentKey;
+	const DocStoreViewBase *source;
+	AttachmentIndexFn indexFn;
+	std::size_t minSegment;
+	std::size_t maxSegment;
+	std::size_t revision;
+
+	std::mutex lock;
+	unsigned int uploadLock;
+	SeqID seqId = 0;
+	SegID segId = 0;
+	json::Array pendingWrites;
+	bool scheduleUpdate = false;
+
+	SegID allocSegment();
+	void lockGC();
+	void unlockGC();
+	void updateMetadata(Batch &b);
+	void run_gc_lk(Batch &b, const DocStoreViewBase &source);
+
+	void onCommit(Batch &b, std::queue<SegID> &segments);
 
 
-
-
+	void loadMetadata();
 };
-
-template<typename Fn>
-inline bool docdb::Attachments::stream_out(const std::string_view &docid,
-		const std::string_view &attid, Fn &&fn) {
-
-	AttchKey key;
-	key.append(docid);
-	key.push_back(0);
-	key.append(attid);
-	key.push_back(0);
-	auto iter = db.mapScanPrefix(key,false);
-	bool ok = false;
-	while (iter.next()) {
-		fn(iter.value());
-		ok = true;
-	}
-	return ok;
-}
-
 
 }
 

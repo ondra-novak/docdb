@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 2.8) 
 add_library (docdblib 
+	hash.cpp
 	compile.cpp 
 	exception.cpp 
 	iterator.cpp
@@ -17,4 +18,5 @@ add_library (docdblib
 	inspector.cpp
 	inspector_html.cpp	
 	inspector_server.cpp
+	attachments.cpp
 	)

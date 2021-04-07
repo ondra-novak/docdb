@@ -17,6 +17,7 @@ enum class KeySpaceClass {
 	view=4,
 	filterView=5,
 	jsonmap_view=6,
+	attachments=7,
 	user_index=127,
 };
 

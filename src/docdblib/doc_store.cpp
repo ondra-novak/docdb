@@ -18,12 +18,12 @@
 using json::Value;
 namespace docdb {
 
-DocStoreViewBase::DocStoreViewBase(const IncrementalStoreView &incview, const std::string_view &name, bool graveyard)
+DocStoreViewBase::DocStoreViewBase(const IncrementalStoreView &incview, const std::string_view &name)
 :incview(incview)
 {
 	DB db = incview.getDB();
 	kid = db.allocKeyspace(KeySpaceClass::document_index, name);
-	gkid = graveyard?db.allocKeyspace(KeySpaceClass::graveyard_index, name):kid;
+	gkid = db.allocKeyspace(KeySpaceClass::graveyard_index, name);
 }
 
 
@@ -43,10 +43,8 @@ const DocStoreViewBase::DocumentHeaderData* DocStoreViewBase::findDoc(const DB &
 	const DocumentHeaderData *hdr = nullptr;
 	auto& val = DB::getBuffer();
 	if (!snapshot.get(Key(kid, docId), val)) {
-		if (kid != gkid) {
-			if (snapshot.get(Key(gkid, docId), val)) {
-				hdr = DocumentHeaderData::map(val, revCount);
-			}
+		if (snapshot.get(Key(gkid, docId), val)) {
+			hdr = DocumentHeaderData::map(val, revCount);
 		}
 	} else {
 		hdr = DocumentHeaderData::map(val, revCount);
@@ -58,14 +56,23 @@ DocStoreViewBase::Iterator DocStoreViewBase::scan() const {
 	return scan(false);
 }
 
-DocStoreViewBase::Iterator DocStoreViewBase::range(
+DocStoreViewBase::Iterator DocStoreViewBase::range_ex(
 		const std::string_view &from, const std::string_view &to,
 		bool exclude_begin, bool exclude_end) const {
 
 	DB snapshot = incview.getDB().getSnapshot();
 	Iterator iter(IncrementalStoreView(incview, snapshot),
 			snapshot.createIterator(Iterator::RangeDef{Key(kid, from), Key(kid, to), exclude_begin, exclude_end}));
-	initFilter(iter);
+	return iter;
+}
+
+DocStoreViewBase::Iterator DocStoreViewBase::range(
+		const std::string_view &from, const std::string_view &to, bool include_upper_bound) const {
+
+	DB snapshot = incview.getDB().getSnapshot();
+	bool backward = from > to;
+	Iterator iter(IncrementalStoreView(incview, snapshot),
+			snapshot.createIterator(Iterator::RangeDef{Key(kid, from), Key(kid, to), backward && !include_upper_bound, !backward && !include_upper_bound}));
 	return iter;
 }
 
@@ -76,7 +83,6 @@ DocStoreViewBase::Iterator DocStoreViewBase::prefix(
 	Iterator iter(IncrementalStoreView(incview, snapshot),
 			backward?snapshot.createIterator(Iterator::RangeDef{Key::upper_bound(b),b, true, false})
 					:snapshot.createIterator(Iterator::RangeDef{b, Key::upper_bound(b), false, true}));
-	initFilter(iter);
 	return iter;
 
 }
@@ -89,11 +95,6 @@ DocStoreViewBase::Iterator DocStoreViewBase::scanDeleted(const std::string_view 
 	Key b(gkid,prefix);
 	Iterator iter(IncrementalStoreView(incview, snapshot),
 					snapshot.createIterator(Iterator::RangeDef{b, Key::upper_bound(b), false, true}));
-	if (kid == gkid)
-		iter.addFilter([&](const KeyView &, const std::string_view &value){
-		unsigned int dummy;
-		return DocumentHeaderData::map(value, dummy)->isDeleted();
-	});
 	return iter;
 
 }
@@ -125,12 +126,6 @@ DocStoreViewBase::Status DocStoreViewBase::getStatus(const std::string_view &doc
 
 }
 
-void DocStoreViewBase::initFilter(Iterator &iter) const {
-	if (kid == gkid) iter.addFilter([&](const KeyView &, const std::string_view &value){
-		unsigned int dummy;
-		return !DocumentHeaderData::map(value, dummy)->isDeleted();
-	});
-}
 
 DocStoreViewBase::Iterator DocStoreViewBase::scan(bool backward) const {
 	return prefix(std::string_view(), backward);
@@ -323,13 +318,13 @@ DocumentRepl DocStoreViewBase::ChangesIterator::replicate_get() const {
 }
 
 DocStoreView::DocStoreView(DB &db, const std::string_view &name, const DocStore_Config &cfg)
-:Super(IncrementalStoreView(db, name), name, cfg.graveyard)
+:Super(IncrementalStoreView(db, name), name)
 {
 
 }
 
 DocStore::DocStore(DB &db, const std::string &name, const DocStore_Config &cfg)
-:Super(IncrementalStoreView(db, name), name, cfg.graveyard)
+:Super(IncrementalStoreView(db, name), name)
 ,incstore(db,name)
 {
 
@@ -377,7 +372,7 @@ bool DocStore::replicate_put(const DocumentRepl &doc) {
 	b.Put(Key(doc.deleted?gkid:kid, doc.id), wrbuff);
 	//determine, whether it is need to delete graveyard
 	//there is gravyeyard and state of deletion changed
-	if (gkid != kid && wasDel != doc.deleted) {
+	if (wasDel != doc.deleted) {
 		//delete document from the other keyspace
 		b.Delete(Key(wasDel?gkid:kid));
 	}
@@ -432,7 +427,7 @@ bool DocStore::put(const Document &doc) {
 	b.Put(Key(doc.deleted?gkid:kid, doc.id), wrbuff);
 	//determine, whether it is need to delete graveyard
 	//there is gravyeyard and state of deletion changed
-	if (gkid != kid && wasDel != doc.deleted) {
+	if (wasDel != doc.deleted) {
 		//delete document from the other keyspace
 		b.Delete(Key(wasDel?gkid:kid));
 	}
