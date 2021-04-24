@@ -39,6 +39,14 @@ struct KeyRange;
 class Iterator {
 public:
 
+	class IFilter {
+	public:
+		virtual bool filter() const = 0;
+		virtual IFilter *detach() = 0;
+		virtual ~IFilter() {}
+	};
+
+
 	using IteratorImpl = leveldb::Iterator;
 
 	struct RangeDef {
@@ -72,7 +80,7 @@ public:
 	 */
 	bool next() {
 		bool r =  (this->*advance_fn)();
-		while (r && filter != nullptr && !(*filter)(key(),value())) {
+		while (r && filter != nullptr && !filter->filter()) {
 			r =  (this->*advance_fn)();
 		}
 		return r;
@@ -120,21 +128,38 @@ public:
 	 */
 	KeyRange range() const;
 
+	///Sets filter
+	/**
+	 * Filter allows to skip record before they become accessible by the caller.
+	 *
+	 * @param fn filter function. Function doesn't accept any argument, however, you can pass reference to the iterator as
+	 * function's clousure. When filter is called, the iterator has already prepared item to examination, so function
+	 * can access the item and return true if pass the item to the called, or false to skip
+	 *
+	 * This function replaces previous filter. If you need to add filter, call addFilter
+	 */
+	template<typename Fn>
+	void setFilter(Fn &&fn);
+
 	///Adds filter
-	/** Filter allows to skip records, which are not pass filter function. They become invisible
-	 * during iteration
+	/**
+	 * Filter allows to skip record before they become accessible by the caller.
 	 *
-	 * @param fn a filter function. The function expects key() and value() and returns true
-	 * to include and false to exclude to iteration
+	 * @param fn filter function. Function doesn't accept any argument, however, you can pass reference to the iterator as
+	 * function's clousure. When filter is called, the iterator has already prepared item to examination, so function
+	 * can access the item and return true if pass the item to the called, or false to skip
 	 *
-	 * @note multiple filters can be added, they are executed in reverse order of adding. If tou
-	 * need to remove filter, you need to call popFilter().
+	 * This function adds new filter to the stack of filters. To remove filter, call removeFilter();
+	 *
 	 */
 	template<typename Fn>
 	void addFilter(Fn &&fn);
 
 	///Removes last added filter
 	bool removeFilter();
+
+	///Removes all filters
+	void removeAllFilters();
 
 
 protected:
@@ -154,17 +179,7 @@ protected:
 	bool not_valid_advance();
 	bool peek_null_advance();
 
-	class Filter {
-	public:
-		Filter(std::unique_ptr<Filter> &&next):next(std::move(next) ) {}
-		virtual bool operator()(const KeyView &key, const std::string_view &value) const = 0;
-		std::unique_ptr<Filter> detachNext() {
-			return std::unique_ptr<Filter>(std::move(next));
-		}
-		std::unique_ptr<Filter> next;
-	};
-
-	std::unique_ptr<Filter> filter;
+	std::unique_ptr<IFilter> filter;
 };
 
 
@@ -174,17 +189,40 @@ struct KeyRange {
 };
 
 template<typename Fn>
-void docdb::Iterator::addFilter(Fn &&fn) {
-	class Flt: public Filter {
+void Iterator::setFilter(Fn &&fn) {
+
+	class Flt: public IFilter {
 	public:
-		Flt(Fn &&fn, std::unique_ptr<Filter> &&next):Filter(std::move(next)), fn(std::forward<Fn>(fn)) {}
-		virtual bool operator()(const KeyView &key, const std::string_view &value) const {
-			return fn(key, value) && (next == nullptr || (*next)(key,value));
-		}
+		Flt(Fn &&fn):fn(std::move(fn)) {}
+		virtual bool filter() const {return fn();}
+		virtual IFilter *detach() {return nullptr;}
 	protected:
-		std::remove_reference_t<Fn> fn;
+		Fn fn;
 	};
-	filter = std::make_unique<Flt>(std::forward<Fn>(fn), std::move(filter));
+
+	filter = std::make_unique<Flt>(std::move(fn));
+}
+
+
+template<typename Fn>
+void Iterator::addFilter(Fn &&fn) {
+
+	class Flt: public IFilter {
+	public:
+		Flt(Fn &&fn, std::unique_ptr<IFilter> &&next):fn(std::move(fn)),next(std::move(next)) {}
+		virtual bool filter() const {return fn() && next->filter();}
+		virtual IFilter *detach() {return next.release();}
+	protected:
+		Fn fn;
+		std::unique_ptr<IFilter> next;
+	};
+
+	if (filter == nullptr) {
+		setFilter(std::move(fn));
+	}
+	else {
+		filter = std::make_unique<Flt>(std::move(fn), std::move(filter));
+	}
 }
 
 

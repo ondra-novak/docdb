@@ -119,7 +119,7 @@ public:
 	 * @param attId attachment id
 	 * @return Download instance. Function will not fail, when attachment not found. You should call exists() to check, that attachment exists
 	 */
-	Download open(const std::string_view &docId, const std::string_view &attId);
+	Download open(const std::string_view &docId, const std::string_view &attId) const;
 
 	///Scan for all attachments for given document
 	/**

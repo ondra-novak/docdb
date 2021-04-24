@@ -20,7 +20,7 @@ JsonMapView::JsonMapView(DB db, ClassID classId, const std::string_view &name)
 
 }
 
-JsonMapView::JsonMapView(JsonMapView &other, const DB &snapshot)
+JsonMapView::JsonMapView(const JsonMapView &other, const DB &snapshot)
 :db(snapshot),kid(other.kid)
 {
 
