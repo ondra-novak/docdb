@@ -137,9 +137,9 @@ public:
 	static const std::string &createValue(const json::Value v);
 
 
-	Key createKey(const std::string_view &doc) const;
+	Key createKey(const json::Value &doc) const;
 
-	bool isDocumentInView(const std::string_view &docId) const;
+	bool isDocumentInView(const json::Value &docId) const;
 protected:
 	DB db;
 	KeySpaceID kid;

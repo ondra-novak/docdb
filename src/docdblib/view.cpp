@@ -18,6 +18,7 @@ namespace docdb {
 std::pair<json::Value, std::string_view> View::parseKey(const KeyView &key) {
 	auto content = key.content();
 	auto v = string2jsonkey(std::move(content));
+	auto docId = string2jsonkey(std::move(docId));
 	return {
 		v, content
 	};

@@ -18,8 +18,8 @@ using Timestamp = std::uint64_t;
 
 struct DocumentBase {
 	///Document ID
-	/** Document Identifier is any arbitrary string - must be unique */
-	std::string id;
+	/** Document Identifier is any arbitrary json - must be unique*/
+	json::Value id;
 	/** Document content. If the content is undefined, the document is either deleted or not-exists */
 	json::Value content;
 	/** last write timestamp */

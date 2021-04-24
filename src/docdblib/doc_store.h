@@ -162,6 +162,7 @@ public:
 
 	DB getDB() const {return incview.getDB();}
 
+	Key createKey(const json::Value &docId, bool deleted) const;
 
 
 protected:
@@ -176,9 +177,9 @@ protected:
 	};
 
 	const DocumentHeaderData* findDoc(const DB &snapshot,
-						const std::string_view &docId, unsigned int &revCount) const;
+						const json::Value &docId, unsigned int &revCount) const;
 
-	const DocumentHeaderData* findDoc(const std::string_view &docId, unsigned int &revCount) const;
+	const DocumentHeaderData* findDoc(const json::Value &docId, unsigned int &revCount) const;
 
 
 	static json::Value parseRevisions(const DocumentHeaderData *hdr, unsigned int revCount);

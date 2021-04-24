@@ -50,7 +50,7 @@ public:
 
 	virtual void operator ()(const json::Value &key,const json::Value &value) override;
 
-	void setDocID(const std::string_view &docId) {
+	void setDocID(const json::Value &docId) {
 		tmpkey.clear();
 		buffer.clear();
 		dockey.clear();
@@ -63,7 +63,7 @@ public:
 
 
 	//current document ID
-	std::string_view docId;
+	json::Value docId;
 	//list of modified keys in JSON form
 	std::vector<json::Value> keys;
 	//list of emited keys in binary form (jsonkey2string)

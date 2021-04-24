@@ -59,7 +59,7 @@ public:
 		json::Value key(unsigned int index) const;
 
 		///Retrieves id of document, which is source of current row
-		std::string_view id() const;
+		json::Value id() const;
 
 		///Retrieves value
 		json::Value value() const;
@@ -97,7 +97,7 @@ public:
 		template<typename Pred>
 		void addFilter_ifValue(unsigned int index, Pred &&pred);
 	protected:
-		mutable std::optional<std::pair<json::Value, std::string_view> > cache;
+		mutable std::optional<std::pair<json::Value, json::Value> > cache;
 	};
 
 	///find for given key

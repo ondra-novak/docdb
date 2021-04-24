@@ -26,6 +26,11 @@ DocStoreViewBase::DocStoreViewBase(const IncrementalStoreView &incview, const st
 	gkid = db.allocKeyspace(KeySpaceClass::graveyard_index, name);
 }
 
+Key DocStoreViewBase::createKey(const json::Value &docId, bool deleted) const {
+	Key r(deleted?gkid:kid, guessKeySize(docId));
+	r.append(docId);
+	return r;
+}
 
 const DocStoreViewBase::DocumentHeaderData *DocStoreViewBase::DocumentHeaderData::map(const std::string_view &buffer, unsigned int &revCount) {
 	revCount = buffer.size() / 8 - 1;
@@ -33,17 +38,19 @@ const DocStoreViewBase::DocumentHeaderData *DocStoreViewBase::DocumentHeaderData
 }
 
 const DocStoreViewBase::DocumentHeaderData* DocStoreViewBase::findDoc(
-		const std::string_view &docId, unsigned int &revCount) const {
+		const json::Value &docId, unsigned int &revCount) const {
 	return findDoc(incview.getDB(), docId, revCount);
 }
 
 
 const DocStoreViewBase::DocumentHeaderData* DocStoreViewBase::findDoc(const DB &snapshot,
-		const std::string_view &docId, unsigned int &revCount) const {
+		const json::Value &docId, unsigned int &revCount) const {
 	const DocumentHeaderData *hdr = nullptr;
 	auto& val = DB::getBuffer();
-	if (!snapshot.get(Key(kid, docId), val)) {
-		if (snapshot.get(Key(gkid, docId), val)) {
+	Key kx = createKey(docId, false);
+	if (!snapshot.get(kx, val)) {
+		kx.transfer(gkid);
+		if (snapshot.get(kx, val)) {
 			hdr = DocumentHeaderData::map(val, revCount);
 		}
 	} else {
@@ -369,7 +376,7 @@ bool DocStore::replicate_put(const DocumentRepl &doc) {
 	//push all revisions to the buffer
 	for (unsigned int i = 0; i < cnt; i++) Index2String_Push<8>::push(doc.revisions[i].getUIntLong(), wrbuff);
 	//put document header to batch
-	b.Put(Key(doc.deleted?gkid:kid, doc.id), wrbuff);
+	b.Put(createKey(doc.id, doc.deleted), wrbuff);
 	//determine, whether it is need to delete graveyard
 	//there is gravyeyard and state of deletion changed
 	if (wasDel != doc.deleted) {
@@ -424,7 +431,7 @@ bool DocStore::put(const Document &doc) {
 	//push other revisions - we can simply copy bytes
 	wrbuff.append(reinterpret_cast<const char *>(hdr->revList), 8*cnt);
 	//put document header to batch
-	b.Put(Key(doc.deleted?gkid:kid, doc.id), wrbuff);
+	b.Put(createKey(doc.id, doc.deleted), wrbuff);
 	//determine, whether it is need to delete graveyard
 	//there is gravyeyard and state of deletion changed
 	if (wasDel != doc.deleted) {

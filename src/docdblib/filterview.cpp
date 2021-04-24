@@ -72,11 +72,13 @@ json::Value FilterView::extractSubValue(unsigned int index, const std::string_vi
 	return extract_subvalue(index, 	std::string_view(value));
 }
 
-Key FilterView::createKey(const std::string_view &doc) const {
-	return Key(kid,doc);
+Key FilterView::createKey(const json::Value &doc) const {
+	Key k(kid,guessKeySize(doc));
+	k.append(doc);
+	return k;
 }
 
-bool FilterView::isDocumentInView(const std::string_view &docId) const {
+bool FilterView::isDocumentInView(const json::Value &docId) const {
 	return db.get(createKey(docId),DB::getBuffer());
 }
 
