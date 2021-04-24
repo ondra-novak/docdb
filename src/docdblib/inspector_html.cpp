@@ -232,18 +232,28 @@ R"css(body {
 
 .stats > div > div {
    padding: 10px;
+   overflow:hidden;
+   text-overflow:ellipsis;
    box-sizing: border-box;
    position: relative;
    border-bottom: 1px solid;
 }
 
-.stats > div > div > div {
+.stats > div > div > div.slider {
 	position: absolute;
 	left:0;
 	top:0;
 	bottom:0;
 	background-color: #0000FF20;
 }
+
+.stats > div > div > div.trash{
+	position: absolute;
+	right: 0;
+	top: 0.25em;
+	cursor: pointer;
+	font-size: 1.5em;
+} 
 
 .stats > div > button {
 	display:  block;
@@ -579,7 +589,15 @@ async function show_stats(stats_promise) {
     kspc.forEach(row=>{
     	var div = document.createElement("div");
     	var div2 = document.createElement("div");
+    	div2.setAttribute("class","slider");
     	div.appendChild(div2);
+    	if (post_enabled) {
+    	    var trash = document.createElement("div");
+    	    trash.setAttribute("class","trash");
+    	    trash.innerText="🗑";
+    	    trash.addEventListener("click",deleteKeySpace.bind(null, row.class, row.name,trash));
+    	    div.appendChild(trash);
+    	}
     	var text = document.createTextNode(row.class+":"+row.name);
     	div.appendChild(text);
     	div2.style.width = (100*row.size/maxsz)+"%";
@@ -629,6 +647,16 @@ async function show_stats(stats_promise) {
 	document.getElementById("classname").textContent="root";
 	document.getElementById("objname").textContent="stats";
 
+}
+
+function deleteKeySpace(cls,name, elem) {
+	if (confirm("Do you really want to erase keyspace: "+cls+":"+name)) {
+	 	var uri = path+"/db/"+encodeURIComponent(cls)+"/"+encodeURIComponent(name);
+	 	elem.innerText="⌛"; 	
+	 	fetch(uri, {"method":"DELETE"}).then(x=>{
+	         location.reload();		
+	 	},x=>{elem.innerText="!"});
+	}
 }
 )javascript"}}
 
