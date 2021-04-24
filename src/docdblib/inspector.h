@@ -199,6 +199,7 @@ bool Inspector::userverRequest(Request &req, const QueryParser &qp) {
 
 		virtual void begin(int status, std::string_view contentType) {
 			req->setContentType(contentType);
+			req->setStatus(status);
 			stream = req->send();
 		}
 		virtual void send(const std::string_view &data) {
