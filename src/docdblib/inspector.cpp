@@ -213,6 +213,31 @@ bool Inspector::request(std::string_view method, std::string_view path, json::Va
 		} else {
 			return false;
 		}
+	} else if (method == "DELETE") {
+		if (path.substr(0,4) == "/db/") {
+
+			std::string_view dbpath = path.substr(4);
+			std::string_view clsname = helper::splitAt("/", dbpath);
+			const KeySpaceClass *cls = strClasses.find(clsname);
+			ClassID clsid;
+			if (cls) {
+				clsid = (int)(*cls);
+			} else {
+				if (clsname.compare(0,4,"user") == 0) {
+					clsid = std::strtol(clsname.data()+4,nullptr,16);
+				} else {
+					return false;
+				}
+			}
+
+			std::string_view dbname_enc=helper::splitAt("/", dbpath);
+			std::string dbname = decodeUrlEncode(dbname_enc);
+			db.freeKeyspace(clsid, dbname);
+			output.begin(202, "text/plain");
+			return true;
+		} else {
+			return false;
+		}
 
 	} else  {
 		return false;
