@@ -52,7 +52,7 @@ json::Value AttachmentView::Metadata::compose() {
 }
 
 
-AttachmentView::Download AttachmentView::open(const std::string_view &docId, const std::string_view &attId) {
+AttachmentView::Download AttachmentView::open(const std::string_view &docId, const std::string_view &attId) const {
 	JsonMapView map (jmap, jmap.getDB().getSnapshot()); //create snapshot
 	json::Value res = map.lookup({docId, attId}); //search for attachment metadata
 	if (res.defined()) {

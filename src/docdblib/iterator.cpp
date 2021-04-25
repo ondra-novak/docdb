@@ -125,11 +125,15 @@ KeyRange Iterator::range() const {
 
 bool Iterator::removeFilter() {
 	if (filter != nullptr) {
-		filter = filter->detachNext();
+		filter = std::unique_ptr<IFilter>(filter->detach());
 		return true;
 	} else {
 		return false;
 	}
+}
+
+void Iterator::removeAllFilters() {
+	filter = nullptr;
 }
 
 bool Iterator::peek_null_advance() {

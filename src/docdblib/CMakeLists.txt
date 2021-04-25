@@ -19,4 +19,5 @@ add_library (docdblib
 	inspector_html.cpp	
 	inspector_server.cpp
 	attachments.cpp
+	replicator.cpp
 	)

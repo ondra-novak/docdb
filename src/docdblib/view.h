@@ -66,36 +66,7 @@ public:
 		///Retrieves single value of multicolumn value
 		json::Value value(unsigned int index) const;
 
-		///Allows to filter result by predicate testing specified key
-		/**
-		 * @param pred predicate. The function receives single argument - key - as json::Value.
-		 * It should return true to include the row to result or false to exclude
-		 */
-		template<typename Pred>
-		void addFilter_ifKey(Pred &&pred);
-		///Allows to filter result by predicate testing specified key
-		/**
-		 * @param index specifies which field to test
-		 * @param pred predicate. The function receives single argument - key - as json::Value.
-		 * It should return true to include the row to result or false to exclude
-		 */
-		template<typename Pred>
-		void addFilter_ifKey(unsigned int index, Pred &&pred);
-		///Allows to filter result by predicate testing specified value
-		/**
-		 * @param pred predicate. The function receives single argument - value - as json::Value.
-		 * It should return true to include the row to result or false to exclude
-		 */
-		template<typename Pred>
-		void addFilter_ifValue(Pred &&pred);
-		///Allows to filter result by predicate testing specified value
-		/**
-		 * @param index specifies which field to test
-		 * @param pred predicate. The function receives single argument - value - as json::Value.
-		 * It should return true to include the row to result or false to exclude
-		 */
-		template<typename Pred>
-		void addFilter_ifValue(unsigned int index, Pred &&pred);
+
 	protected:
 		mutable std::optional<std::pair<json::Value, json::Value> > cache;
 	};
@@ -344,33 +315,6 @@ public:
 
 };
 
-
-template<typename Pred>
-inline void View::Iterator::addFilter_ifKey(Pred &&pred) {
-	addFilter([pred = std::move(pred)](const KeyView &key, const std::string_view &value){
-		return pred(parseKey(key));
-	});
-}
-template<typename Pred>
-inline void View::Iterator::addFilter_ifKey(unsigned int index, Pred &&pred) {
-	addFilter([index, pred = std::move(pred)](const KeyView &key, const std::string_view &value){
-		return pred(extractSubKey(index, key));
-	});
-}
-
-template<typename Pred>
-inline void View::Iterator::addFilter_ifValue( Pred &&pred) {
-	addFilter([pred = std::move(pred)](const KeyView &key, const std::string_view &value){
-		return pred(parseValue(value));
-	});
-}
-
-template<typename Pred>
-inline void View::Iterator::addFilter_ifValue(unsigned int index, Pred &&pred) {
-	addFilter([index, pred = std::move(pred)](const KeyView &key, const std::string_view &value){
-		return pred(extractSubValue(index, value));
-	});
-}
 
 template<typename Derived>
 json::Value UpdatableView<Derived>::lookup(const json::Value &key, bool set_docid) {
