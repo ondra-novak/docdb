@@ -119,7 +119,7 @@ public:
 	 * @param attId attachment id
 	 * @return Download instance. Function will not fail, when attachment not found. You should call exists() to check, that attachment exists
 	 */
-	Download open(const std::string_view &docId, const std::string_view &attId) const;
+	Download open(const json::Value &docId, const std::string_view &attId) const;
 
 	///Scan for all attachments for given document
 	/**
@@ -127,7 +127,7 @@ public:
 	 * @param backward scan backward
 	 * @return iterator
 	 */
-	Iterator scan(const std::string_view &docId, bool backward = false);
+	Iterator scan(const json::Value &docId, bool backward = false);
 
 	///Scan for all attachments for all documents
 	/**
@@ -292,10 +292,10 @@ public:
 	};
 
 	///Erase attachment manually
-	void erase(std::string_view docId, std::string_view attId);
+	void erase(const json::Value &docId, std::string_view attId);
 
 	///Erase attachment manually
-	void erase(Batch &b, std::string_view docId, std::string_view attId);
+	void erase(Batch &b, const json::Value &docId, std::string_view attId);
 
 	///Purge document from the database
 	void purgeDoc(std::string_view docId);

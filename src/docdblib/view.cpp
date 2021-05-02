@@ -18,7 +18,6 @@ namespace docdb {
 std::pair<json::Value, std::string_view> View::parseKey(const KeyView &key) {
 	auto content = key.content();
 	auto v = string2jsonkey(std::move(content));
-	auto docId = string2jsonkey(std::move(docId));
 	return {
 		v, content
 	};
@@ -61,9 +60,9 @@ json::Value View::Iterator::key() const {
 	return cache->first;
 }
 
-std::string_view View::Iterator::id() const {
+json::Value View::Iterator::id() const {
 	if (!cache.has_value()) cache = parseKey(Super::key());
-	return cache->second;
+	return string2jsonkey(std::string_view(cache->second));
 }
 
 json::Value View::Iterator::key(unsigned int index) const {
@@ -85,93 +84,80 @@ View::View(const DB &db, const std::string_view &name)
 
 }
 
-json::Value View::lookup(const json::Value &key, bool set_docid) const {
+json::Value View::lookup(const json::Value &key) const {
 	Iterator iter = find(key);
 	if (iter.next()) {
-		Value v = iter.value();
-		if (set_docid) return v.setKey(iter.id());
-		else return v;
+		return iter.value();
 	} else {
 		return undefined;
 	}
 }
 
-Key View::createKey(const std::initializer_list<json::Value> &val, const std::string_view &doc) const {
-	Key ret(kid,guessKeySize(val)+doc.size()+8);
+json::Value View::lookup(const json::Value &key, json::Value &docId) const {
+	Iterator iter = find(key);
+	if (iter.next()) {
+		docId = iter.id();
+		return iter.value();
+	} else {
+		return undefined;
+	}
+}
+
+
+Key View::createKey(const std::initializer_list<json::Value> &val, const json::Value &docId) const {
+	Key ret(kid,guessKeySize(val)+guessKeySize(docId)+8);
 	ret.append(val);
-	ret.append(doc);
+	ret.append(docId);
 	return ret;
 }
 
-Key View::createKey(const json::Value &val, const std::string_view &doc) const {
-	Key ret(kid,guessKeySize(val)+doc.size()+8);
+Key View::createKey(const json::Value &val, const json::Value &docId) const {
+	Key ret(kid,guessKeySize(val)+guessKeySize(docId)+8);
 	ret.append(val);
-	ret.append(doc);
+	ret.append(docId);
 	return ret;
 }
 
-Key View::createDocKey(const std::string_view &doc) const {
-	Key ret(kid, doc.size()+1);
+Key View::createDocKey(const json::Value &docId) const {
+	Key ret(kid, guessKeySize(docId)+1);
 	ret.push(0);
-	ret.append(doc);
+	ret.append(docId);
 	return ret;
 }
 
-View::Iterator View::find(json::Value key) const {
-	Key b1(createKey(key,std::string_view()));
-	Key b2(b1);
-	b2.upper_bound();
-	return Iterator(db.createIterator({b1,b2,false,true}));
+View::Iterator View::find(const json::Value &key) const {
+	return range(key, nullptr, key, MAX_KEY_VALUE);
 }
 
-View::Iterator View::find(json::Value key, bool backward) const {
-	Key b1(createKey(key,std::string_view()));
-	Key b2(b1);
-	b2.upper_bound();
-	return Iterator(backward
-			?db.createIterator({b2,b1,true,false})
-			:db.createIterator({b1,b2,false,true}));
+View::Iterator View::find(const json::Value &key, bool backward) const {
+	return backward?range(key, MAX_KEY_VALUE, key, nullptr):range(key, nullptr, key, MAX_KEY_VALUE);
 }
 
-View::Iterator View::find(json::Value key, const std::string_view &fromDoc, bool backward) const {
-	Key b1(createKey(key,fromDoc));
-	Key b2(createKey(key,std::string_view()));
-	if (!backward) b2.upper_bound();
-	return Iterator(db.createIterator({b1,b2,true,!backward}));
+View::Iterator View::find(const json::Value &key, const json::Value &fromDoc, bool backward) const {
+	return backward?range(key, fromDoc, key, nullptr):range(key, fromDoc, key, MAX_KEY_VALUE);}
+
+View::Iterator View::range(const json::Value &fromKey, const json::Value &toKey) const {
+	return range(fromKey, nullptr, toKey, nullptr);
 }
 
-View::Iterator View::range(json::Value fromKey, json::Value toKey) const {
-	Key b1(createKey(fromKey,std::string_view()));
-	Key b2(createKey(toKey,std::string_view()));
-	return Iterator(db.createIterator({b1,b2,false,true}));
-}
-
-View::Iterator View::range(json::Value fromKey, json::Value toKey,
-		bool include_upper_bound) const {
-	Key b1(createKey(fromKey,std::string_view()));
-	Key b2(createKey(toKey,std::string_view()));
+View::Iterator View::range(const json::Value &fromKey, const json::Value &toKey, bool include_upper_bound) const {
+	Key b1(createKey(fromKey,nullptr));
+	Key b2(createKey(toKey,nullptr));
+	bool backward = b1 > b2;
 	if (include_upper_bound) {
-		if (b1 > b2) b1.upper_bound(); else b2.upper_bound();
+		if (backward) b1.upper_bound(); else b2.upper_bound();
 	}
-	return Iterator(db.createIterator({b1,b2,false,true}));
+	return Iterator(db.createIterator({b1,b2,backward,!backward}));
 }
 
-View::Iterator View::range(json::Value fromKey, json::Value toKey,
-		const std::string_view &fromDoc, bool include_upper_bound) const {
-	Key b1(createKey(fromKey,fromDoc));
-	Key b2(createKey(toKey,std::string_view()));
-	if (include_upper_bound) {
-		if (b1 > b2) {
-			if (fromDoc.empty()) b1.upper_bound();
-		} else {
-			b2.upper_bound();
-		}
-	}
+View::Iterator View::range(const json::Value &fromKey, const json::Value &fromDocId, const json::Value &toKey, const json::Value &toDocId) const {
+	Key b1(createKey(fromKey,fromDocId));
+	Key b2(createKey(toKey,toDocId));
 	return Iterator(db.createIterator({b1,b2,true,true}));
 
 }
 
-View::Iterator View::prefix(json::Value key) const {
+View::Iterator View::prefix(const json::Value &key) const {
 	Key b1(createKey(key, std::string_view()));
 	b1.pop();
 	Key b2(b1);
@@ -179,7 +165,7 @@ View::Iterator View::prefix(json::Value key) const {
 	return Iterator(db.createIterator({b1,b2,false,true}));
 }
 
-View::Iterator View::prefix(json::Value key, bool backward) const {
+View::Iterator View::prefix(const json::Value &key, bool backward) const {
 	Key b1(createKey(key, std::string_view()));
 	b1.pop();
 	Key b2(b1);
@@ -191,10 +177,9 @@ View::Iterator View::prefix(json::Value key, bool backward) const {
 	return Iterator(db.createIterator({b1,b2,backward,!backward}));
 }
 
-View::Iterator View::prefix(json::Value key, json::Value fromKey,
-		const std::string_view &fromDoc, bool backward) const {
+View::Iterator View::prefix(const json::Value &key, const json::Value &fromKey, const json::Value &fromDoc, bool backward) const {
 	Key b1(createKey(fromKey, fromDoc));
-	Key b2(createKey(key, std::string_view()));
+	Key b2(createKey(key, nullptr));
 	if (!backward) b2.upper_bound();
 	return Iterator(db.createIterator({b1,b2,true,!backward}));
 
@@ -218,13 +203,13 @@ View::Iterator View::scan(bool backward) const {
 	}
 }
 
-View::Iterator View::scan(json::Value fromKey, const std::string_view &fromDoc, bool backward) const {
+View::Iterator View::scan(const json::Value &fromKey, const json::Value &fromDoc, bool backward) const {
 	Key b1(createKey(fromKey, fromDoc));
 	Key b2(backward?kid:kid+1);
 	return Iterator(db.createIterator({b1,b2,true,!backward}));
 }
 
-View::DocKeyIterator View::getDocKeys(const std::string_view &docid) const {
+View::DocKeyIterator View::getDocKeys(const json::Value &docid) const {
 	return DocKeyIterator(db, Key(createDocKey(docid)));
 }
 

@@ -14,6 +14,7 @@
 #include <imtjson/binjson.h>
 #include <imtjson/binjson.tcc>
 #include <imtjson/array.h>
+#include "max_key.h"
 
 namespace docdb {
 
@@ -102,12 +103,14 @@ namespace codepoints {
 	static constexpr Type number_value = 4;  //4-19
 	///string terminated by zero (zero inside is escaped)
 	static constexpr Type stringz = 20;
+	///begin of array. it is same as sub_array, but must be used if there is array in array.
+	static constexpr Type sub_array = 21;
 	///combine with code point to mark sequence as array
 	static constexpr Type array_prefix = 0x20;
 	///arbitrary json (binary stored)
 	static constexpr Type json = 0x40;
 	///doc id follows - used in doc-key map
-	static constexpr Type doc = 0x80;
+	static constexpr Type max_key = 0x41;
 }
 
 namespace _numbers {
@@ -248,6 +251,9 @@ namespace _numbers {
 
 template<typename T>
 inline void jsonkey2string(const json::Value &v, T &out, codepoints::Type flags = 0) {
+	if (v.isCopyOf(MAX_KEY_VALUE)) {
+
+	}
 	switch (v.type()) {
 	case json::undefined:
 	case json::null: out.push_back(flags|codepoints::null);break;
@@ -282,15 +288,20 @@ inline void jsonkey2string(const json::Value &v, T &out, codepoints::Type flags 
 	case json::array:
 		if (v.empty()) {
 			out.push_back(codepoints::array_prefix|codepoints::end);
-		} else {
+		} else if ((flags & codepoints::array_prefix) == 0) {
 			codepoints::Type pfx = codepoints::array_prefix;
 			for (json::Value item: v) {
 				jsonkey2string(item, out, pfx);
 				pfx = 0;
 			}
 			out.push_back(codepoints::end);
-
-		}break;
+		} else {
+			out.push_back(codepoints::sub_array | flags);
+			for (json::Value item: v) {
+				jsonkey2string(item, out, 0);
+			}
+			out.push_back(codepoints::end);
+		} break;
 	default:
 		out.push_back(flags|codepoints::json);
 		v.serializeBinary([&](char c){out.push_back(c);});
@@ -308,6 +319,8 @@ inline void jsonkey2string(const std::initializer_list<json::Value> &v, T &out) 
 	out.push_back(codepoints::end);
 }
 
+inline json::Value string2jsonkey(std::string_view &&key);
+
 inline json::Value string2jsonkey(std::string_view &&key, codepoints::Type t) {
 	json::Value r;
 	switch (t & ~codepoints::array_prefix){
@@ -315,6 +328,7 @@ inline json::Value string2jsonkey(std::string_view &&key, codepoints::Type t) {
 	case codepoints::null: r = nullptr;break;
 	case codepoints::false_value: r = false; break;
 	case codepoints::true_value: r = true; break;
+	case codepoints::max_key: r = MAX_KEY_VALUE;break;
 	case codepoints::number_value:
 	case codepoints::number_value+1:
 	case codepoints::number_value+2:
@@ -341,6 +355,15 @@ inline json::Value string2jsonkey(std::string_view &&key, codepoints::Type t) {
 		});
 		break;
 	}
+	case codepoints::sub_array: {
+		json::Array r;
+		json::Value z = string2jsonkey(std::move(key));
+		while (z.defined()) {
+			r.push_back(z);
+			z = string2jsonkey(std::move(key));
+		}
+		r = z;
+	} break;
 
 	case codepoints::stringz: {
 			std::size_t sz = 0;
@@ -405,7 +428,8 @@ inline json::Value extract_subkey(unsigned int index, std::string_view &&key) {
 			case codepoints::end:
 			case codepoints::null:
 			case codepoints::false_value:
-			case codepoints::true_value: break;
+			case codepoints::true_value:
+			case codepoints::max_key:	break;
 			case codepoints::number_value:
 			case codepoints::number_value+1:
 			case codepoints::number_value+2:
@@ -422,6 +446,9 @@ inline json::Value extract_subkey(unsigned int index, std::string_view &&key) {
 			case codepoints::number_value+13:
 			case codepoints::number_value+14:
 			case codepoints::number_value+15: key = key.substr(9);break;
+			case codepoints::sub_array: {
+				string2json(std::move(key));
+			}break;
 			case codepoints::stringz: {
 				auto n = key.find('\0');
 				key = key.substr(n+1);

@@ -52,7 +52,7 @@ json::Value AttachmentView::Metadata::compose() {
 }
 
 
-AttachmentView::Download AttachmentView::open(const std::string_view &docId, const std::string_view &attId) const {
+AttachmentView::Download AttachmentView::open(const json::Value &docId, const std::string_view &attId) const {
 	JsonMapView map (jmap, jmap.getDB().getSnapshot()); //create snapshot
 	json::Value res = map.lookup({docId, attId}); //search for attachment metadata
 	if (res.defined()) {
@@ -120,7 +120,7 @@ AttachmentView::Metadata AttachmentView::Iterator::metadata() const {
 	return m;
 }
 
-AttachmentView::Iterator AttachmentView::scan(const std::string_view &docId, bool backward) {
+AttachmentView::Iterator AttachmentView::scan(const json::Value &docId, bool backward) {
 	return jmap.prefix({docId}, backward);
 }
 
@@ -421,12 +421,12 @@ void Attachments::loadMetadata() {
 	}
 }
 
-void Attachments::erase(std::string_view docId, std::string_view attId) {
+void Attachments::erase(const json::Value & docId, std::string_view attId) {
 	Batch b;
 	erase(b, docId, attId);
 }
 
-void Attachments::erase(Batch &b, std::string_view docId, std::string_view attId) {
+void Attachments::erase(Batch &b, const json::Value &docId, std::string_view attId) {
 	json::Value key = {docId, attId};
 	auto f = jmap.lookup(key);
 	if (f.defined()) {

@@ -144,7 +144,7 @@ public:
 	void erase(Batch &b, const std::string_view &id);
 
 protected:
-	using Obs = Observable<Batch &,const std::string_view &>;
+	using Obs = Observable<Batch &,const json::Value &>;
 	Obs observers;
 	std::mutex lock;
 

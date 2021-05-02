@@ -14,14 +14,6 @@
 namespace docdb {
 
 
-class EmitFn {
-public:
-	virtual ~EmitFn() {};
-	virtual void operator()(const json::Value &key, const json::Value &value)  = 0;
-
-
-};
-
 
 
 class DocStoreIndex: public UpdatableView<DocStoreIndex> {
