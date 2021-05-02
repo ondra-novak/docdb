@@ -9,17 +9,14 @@
 #define SRC_DOCDBLIB_DOC_STORE_INDEX_H_
 #include "doc_store.h"
 #include "view.h"
-
+#include "emitfn.h"
 
 namespace docdb {
 
 
 
-
 class DocStoreIndex: public UpdatableView<DocStoreIndex> {
 public:
-
-	using IndexFn = std::function<void(const Document &,  EmitFn &)>;
 
 	///Initialize doc store index
 	/**
@@ -70,9 +67,8 @@ protected:
 	const DocStore *source = nullptr;
 	SeqID lastSeqID = 0;
 
-	class EmitService;
 
-	void indexDoc(EmitService &emitBatch, const Document &doc);
+	void indexDoc(IndexBatch &emitBatch, const Document &doc);
 };
 
 

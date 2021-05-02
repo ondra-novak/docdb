@@ -7,6 +7,7 @@
 
 #ifndef SRC_DOCDBLIB_JSON_MAP_VIEW_H_
 #define SRC_DOCDBLIB_JSON_MAP_VIEW_H_
+#include <docdblib/observable.h>
 #include "db.h"
 #include "keyspace.h"
 
@@ -149,9 +150,192 @@ protected:
 };
 
 
+template<typename Derived>
+class UpdatableMap: public JsonMapView {
+public:
 
+	using JsonMapView::JsonMapView;
+
+	json::Value lookup(const json::Value &key);
+	using JsonMapView::lookup;
+	Iterator find(json::Value key);
+	using JsonMapView::find;
+	Iterator range(json::Value fromKey, json::Value toKey);
+	Iterator range(json::Value fromKey, json::Value toKey, bool include_upper_bound);
+	using JsonMapView::range;
+	Iterator prefix(json::Value key);
+	Iterator prefix(json::Value key, bool backward);
+	using JsonMapView::prefix;
+	Iterator scan();
+	Iterator scan(bool backward);
+	Iterator scan(json::Value fromKey, bool backward);
+	using JsonMapView::scan;
+
+	class IndexBatch: public Batch {
+	public:
+		Key k;
+		std::vector<json::Value> keys;
+		std::string valbuf;
+
+		void emit(const json::Value &key, const json::Value &value) {
+			k.append(key);
+			JsonMapView::createValue(value, valbuf);
+			valbuf.clear();
+			Put(k,valbuf);
+			k.clear();
+			valbuf.clear();
+			keys.push_back(key);
+		}
+
+		IndexBatch() {}
+	};
+
+	void update();
+
+	///Erase all keys associated with given document
+	/**
+	 * @param batch batch
+	 * @param docId document ID
+	 */
+	void erase(Batch &batch, const json::Value &key);
+
+	///Starts to index a single document
+	/**
+	 * Function is generic, it doesn't defines format of the document.
+	 *
+	 * @param docId document id, an identification of the document (unique ID)
+	 * @param batch instance of IndexState. This object can be reused between each index to save
+	 * memory and time, because it reuses already allocated buffers
+	 *
+	 * Function resets content of the batch.
+	 */
+	void beginIndex(IndexBatch &batch);
+	///Commits changes collected into index state
+	/**
+	 * @param state to be commited
+	 * @param batch_more if set to true, nothing is written to database, the batch must be commited manually
+	 * using DB:commitBatch(); Default value commits batch to the database now
+	 */
+	void commitIndex(IndexBatch &batch, bool batch_more = false);
+
+
+
+
+protected:
+	using Obs = Observable<Batch &, const std::vector<json::Value> &>;
+	std::mutex lock;
+	Obs observers;
+
+	void callUpdate() {static_cast<Derived *>(this)->update();}
+
+public:
+	template<typename Fn>
+	auto addKeyUpdateObserver(Fn &&fn)  {
+		std::lock_guard _(lock);
+		return observers.addObserver(std::forward<Fn>(fn));
+	}
+	void removeKeyUpdateObserver(Obs::Handle h) {
+		std::lock_guard _(lock);
+		observers.removeObserver(h);
+	}
+
+
+	struct AggregatorAdapter {
+		using IteratorType = Iterator;
+		using SourceType = UpdatableMap<Derived>;
+
+		static const DB &getDB(const SourceType &src) {return src.db;}
+		template<typename Fn>
+		static auto observe(SourceType &src, Fn &&fn) {
+			return src.addKeyUpdateObserver(std::move(fn));
+		}
+		static void stopObserving(SourceType &src, Obs::Handle h) {
+			src.removeKeyUpdateObserver(h);
+		}
+		static IteratorType find(const SourceType &src, const json::Value &key) {
+			return src.find(key);
+		}
+		static IteratorType prefix(const SourceType &src, const json::Value &key) {
+			return src.prefix(key);
+		}
+		static IteratorType range(const SourceType &src, const json::Value &fromKey, const json::Value &toKey, bool include_upper_bound ) {
+			return src.range(fromKey, toKey, include_upper_bound);
+		}
+		static json::Value getKey(IteratorType &iter) {
+			return json::Value(iter.key());
+		}
+
+	};
+
+};
+
+template<typename Derived>
+inline json::Value UpdatableMap<Derived>::lookup(const json::Value &key) {
+	callUpdate();return JsonMapView::lookup(key);
+}
+
+
+template<typename Derived>
+inline typename UpdatableMap<Derived>::Iterator UpdatableMap<Derived>::range(json::Value fromKey, json::Value toKey) {
+	callUpdate();return JsonMapView::range(fromKey, toKey);
 }
 
 
 
+template<typename Derived>
+inline typename UpdatableMap<Derived>::Iterator UpdatableMap<Derived>::range(json::Value fromKey, json::Value toKey, bool include_upper_bound) {
+	callUpdate();return JsonMapView::range(fromKey, toKey, include_upper_bound);
+}
+
+template<typename Derived>
+inline typename UpdatableMap<Derived>::Iterator UpdatableMap<Derived>::prefix(json::Value key) {
+	callUpdate();return JsonMapView::prefix(key);
+}
+
+template<typename Derived>
+inline typename UpdatableMap<Derived>::Iterator UpdatableMap<Derived>::prefix(json::Value key, bool backward) {
+	callUpdate();return JsonMapView::prefix(key, backward);
+}
+
+template<typename Derived>
+inline typename UpdatableMap<Derived>::Iterator UpdatableMap<Derived>::scan() {
+	callUpdate();return JsonMapView::scan();
+}
+
+template<typename Derived>
+inline typename UpdatableMap<Derived>::Iterator UpdatableMap<Derived>::scan(bool backward) {
+	callUpdate();return JsonMapView::scan(backward);
+}
+
+template<typename Derived>
+inline typename UpdatableMap<Derived>::Iterator UpdatableMap<Derived>::scan(json::Value fromKey, bool backward) {
+	callUpdate();return JsonMapView::scan(fromKey, backward);
+}
+
+template<typename Derived>
+inline void UpdatableMap<Derived>::erase(Batch &batch, const json::Value &key) {
+	auto k = createKey(key);
+	batch.Delete(k);
+}
+
+template<typename Derived>
+inline void UpdatableMap<Derived>::beginIndex(IndexBatch &batch) {
+	batch.k.transfer(kid);
+	batch.k.clear();
+	batch.valbuf.clear();
+	batch.keys.clear();
+}
+
+template<typename Derived>
+inline void UpdatableMap<Derived>::commitIndex(IndexBatch &batch, bool batch_more) {
+	//broadcast keys to observers
+	std::lock_guard _(lock);
+	observers.broadcast(batch, batch.keys);
+	//commit batch if batch_more is false
+	if (!batch_more) {
+		db.commitBatch(batch);
+	}
+}
+
+}
 #endif /* SRC_DOCDBLIB_JSON_MAP_VIEW_H_ */

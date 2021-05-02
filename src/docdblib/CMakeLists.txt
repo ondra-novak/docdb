@@ -12,7 +12,6 @@ add_library (docdblib
 	doc_store_map.cpp
 	json_map_view.cpp
 	view.cpp
-	filterview.cpp
 	aggregator_view.cpp
 	json_map.cpp
 	inspector.cpp

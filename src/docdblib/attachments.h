@@ -14,7 +14,6 @@
 #include "json_map.h"
 
 #include "doc_store.h"
-#include "filterview.h"
 #include "iterator.h"
 #include "hash.h"
 

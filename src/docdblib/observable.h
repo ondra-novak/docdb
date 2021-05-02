@@ -7,6 +7,8 @@
 
 #ifndef SRC_DOCDBLIB_OBSERVABLE_H_
 #define SRC_DOCDBLIB_OBSERVABLE_H_
+#include <algorithm>
+#include <memory>
 #include <vector>
 
 namespace docdb {

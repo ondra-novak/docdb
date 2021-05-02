@@ -10,8 +10,8 @@
 #include "formats.h"
 namespace docdb {
 
-DocStoreMap::DocStoreMap(const DB &db, const std::string_view &name, std::size_t revision, MapFn &&mapFn)
-:UpdatableFilterView(db, name)
+DocStoreMap::DocStoreMap(const DB &db, const std::string_view &name, std::size_t revision, IndexFn &&mapFn)
+:Super(db, name)
 ,revision(revision)
 ,mapFn(std::move(mapFn))
 {
@@ -19,7 +19,7 @@ DocStoreMap::DocStoreMap(const DB &db, const std::string_view &name, std::size_t
 }
 
 DocStoreMap::DocStoreMap(const DocStore &store, const std::string_view &name,
-		std::size_t revision, MapFn &&mapFn)
+		std::size_t revision, IndexFn &&mapFn)
 :DocStoreMap(store.getDB(), name, revision, std::move(mapFn))
 {
 }
@@ -48,7 +48,7 @@ void DocStoreMap::update() {
 			db.keyspace_putMetadata(kid, {revision, lastSeqID});
 			db.clearKeyspace(kid);
 		}
-		Batch b;
+		IndexBatch b;
 		for (auto iter = source->scanChanges(lastSeqID);iter.next();){
 			indexDoc(b, iter.get());
 			lastSeqID = iter.seqId();
@@ -62,7 +62,7 @@ void DocStoreMap::update() {
 
 void DocStoreMap::mapDoc(const Document &doc) {
 	std::unique_lock _(lock);
-	Batch b;
+	IndexBatch b;
 	indexDoc(b, doc);
 	db.commitBatch(b);
 }
@@ -76,22 +76,28 @@ void DocStoreMap::clear() {
 
 void DocStoreMap::purgeDoc(std::string_view docid) {
 	std::unique_lock _(lock);
-	Batch b;
-	b.Delete(createKey(docid));
+	IndexBatch b;
+	indexDoc(b, {
+			docid, json::undefined, 0, true, 0
+	});
 	db.commitBatch(b);
 }
 
-void DocStoreMap::indexDoc(Batch &emitBatch, const Document &doc) {
-	auto res = mapFn(doc);
-	if (res.defined()) {
-		auto &buff = DB::getBuffer();
-		json2string(res, buff);
-		emitBatch.Put(createKey(doc.id), buff);
-	} else {
-		emitBatch.Delete(createKey(doc.id));
-	}
-	observers.broadcast(emitBatch,doc.id);
+void DocStoreMap::indexDoc(IndexBatch &emitBatch, const Document &doc) {
 
+	class Emit: public EmitFn {
+	public:
+		IndexBatch &b;
+		virtual void operator()(const json::Value &key, const json::Value &value) override {
+			b.emit(key, value);
+		}
+		Emit(IndexBatch &b):b(b) {}
+	};
+
+	beginIndex(emitBatch);
+	Emit emit(emitBatch);
+	mapFn(doc, emit);
+	commitIndex(emitBatch, true);
 }
 
 }

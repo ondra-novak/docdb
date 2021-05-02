@@ -8,6 +8,9 @@
 #ifndef SRC_DOCDBLIB_VIEW_H_
 #define SRC_DOCDBLIB_VIEW_H_
 
+#include <vector>
+#include <imtjson/value.h>
+
 #include "db.h"
 #include "keyspace.h"
 #include "observable.h"
@@ -229,6 +232,7 @@ public:
 	DocKeyIterator getDocKeys(const json::Value &docid) const;
 
 
+	static void serializeDocKeys(const std::vector<json::Value> &keys, std::string &buffer);
 
 protected:
 	DB db;
@@ -238,11 +242,42 @@ protected:
 };
 
 
-class EmitFn {
+///IndexBatch supports to build index which is stored in the View. It is used with object UpdatableView
+/**
+ * You can initialize this object using UpdatableView::beginIndex.
+ * Once it is initialized, you can call emit() function to generate key-value pair which will be
+ * stored to the index. Once you are done with signle document, you have to call UpdatableView::commitIndex
+ *
+ */
+class IndexBatch: public Batch {
 public:
-	virtual ~EmitFn() {};
-	virtual void operator()(const json::Value &key, const json::Value &value)  = 0;
+	IndexBatch():key(0) {}
+	///Writes key-value pair to the index
+	/**
+	 * @param key key, which must be unique for single document. However it is possible to have multiple documents
+	 * emiting same key.
+	 * @param value a value associated with the key
+	 */
+	void emit(const json::Value &key, const json::Value &value);
+
+	///Commit index to the current batch (but doesn't write to the database)
+	/** @note this function also doesn't broadcast key changes. Do not call directly, use commitIndex() */
+
+	void commit();
+	//current document ID
+	json::Value docId;
+	//list of modified keys in JSON form
+	std::vector<json::Value> keys;
+	//list of previous keys for this document (filled by beginIndex)
+	std::vector<json::Value> prev_keys;
+	//temporary key used to build key during emit - to avoid memory reallocation
+	Key key;
+	//temporary buffer to store value
+	std::string buffer;
+	//document key (serialized docid into buffer);
+	std::string dockey;
 };
+
 
 template<typename Derived>
 class UpdatableView: public View {
@@ -275,6 +310,35 @@ public:
 
 	void update();
 
+	///Erase all keys associated with given document
+	/**
+	 * @param batch batch
+	 * @param docId document ID
+	 */
+	void erase(Batch &batch, const json::Value &docId);
+
+
+
+	///Starts to index a single document
+	/**
+	 * Function is generic, it doesn't defines format of the document.
+	 *
+	 * @param docId document id, an identification of the document (unique ID)
+	 * @param batch instance of IndexState. This object can be reused between each index to save
+	 * memory and time, because it reuses already allocated buffers
+	 *
+	 * Function resets content of the batch.
+	 */
+	void beginIndex(const json::Value &docId, IndexBatch &batch);
+	///Commits changes collected into index state
+	/**
+	 * @param state to be commited
+	 * @param batch_more if set to true, nothing is written to database, the batch must be commited manually
+	 * using DB:commitBatch(); Default value commits batch to the database now
+	 */
+	void commitIndex(IndexBatch &batch, bool batch_more = false);
+
+
 
 protected:
 	using Obs = Observable<Batch &, const std::vector<json::Value> &>;
@@ -282,6 +346,8 @@ protected:
 	Obs observers;
 
 	void callUpdate() {static_cast<Derived *>(this)->update();}
+
+
 
 public:
 	template<typename Fn>
@@ -405,9 +471,57 @@ View::DocKeyIterator UpdatableView<Derived>::getDocKeys(const  json::Value &doci
 	callUpdate();return getDocKeys(docid);
 }
 
+template<typename Derived>
+inline void UpdatableView<Derived>::beginIndex(const json::Value &docId, IndexBatch &batch) {
+	batch.docId = docId;
+	batch.buffer.clear();
+	batch.key.clear();
+	batch.key.transfer(kid);
+	batch.key.append(docId);
+	batch.dockey = batch.key.content();
+	batch.key.clear();
+	batch.prev_keys.clear();
+	batch.keys.clear();
+	auto kiter = getDocKeys(docId);
+	while (kiter.next()) batch.prev_keys.push_back(kiter.key());
+}
+
+template<typename Derived>
+inline void UpdatableView<Derived>::erase(Batch &batch, const json::Value &docId) {
+	Key k(kid);
+	DocKeyIterator iter = getDocKeys(docId);
+	if (!iter.empty()) {
+		k.append(docId);
+		std::string dock = k.content();
+		while (iter.next()) {
+			k.clear();
+			k.append(iter.key());
+			k.append(dock);
+			batch.Delete(k);
+		}
+		k.clear();
+		k.push_back(0);
+		k.append(dock);
+		batch.Delete(k);
+	}
+}
+
+template<typename Derived>
+inline void docdb::UpdatableView<Derived>::commitIndex(IndexBatch &batch, bool batch_more) {
+	//commit index to batch
+	batch.commit();
+	//broadcast keys to observers
+	std::lock_guard _(lock);
+	observers.broadcast(batch, batch.keys);
+	//commit batch if batch_more is false
+	if (!batch_more) {
+		db.commitBatch(batch);
+	}
+}
 
 
 
 }
+
 
 #endif /* SRC_DOCDBLIB_VIEW_H_ */
