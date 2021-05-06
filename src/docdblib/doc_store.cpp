@@ -324,7 +324,7 @@ DocumentRepl DocStoreViewBase::ChangesIterator::replicate_get() const {
 
 }
 
-DocStoreView::DocStoreView(DB &db, const std::string_view &name, const DocStore_Config &cfg)
+DocStoreView::DocStoreView(DB &db, const std::string_view &name)
 :Super(IncrementalStoreView(db, name), name)
 {
 
@@ -333,6 +333,7 @@ DocStoreView::DocStoreView(DB &db, const std::string_view &name, const DocStore_
 DocStore::DocStore(DB &db, const std::string &name, const DocStore_Config &cfg)
 :Super(IncrementalStoreView(db, name), name)
 ,incstore(db,name)
+,revHist(cfg.rev_history_length)
 {
 
 }

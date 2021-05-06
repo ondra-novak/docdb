@@ -308,7 +308,7 @@ public:
 	 * @param name name of the document store
 	 * @param cfg configuration
 	 */
-	DocStoreView(DB &db, const std::string_view &name, const DocStore_Config &cfg);
+	DocStoreView(DB &db, const std::string_view &name);
 };
 
 

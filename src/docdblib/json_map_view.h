@@ -150,6 +150,7 @@ protected:
 };
 
 
+///JsonMap which can be automaticaly updated
 template<typename Derived>
 class UpdatableMap: public JsonMapView {
 public:
@@ -192,10 +193,10 @@ public:
 
 	void update();
 
-	///Erase all keys associated with given document
+	///Erase key
 	/**
 	 * @param batch batch
-	 * @param docId document ID
+	 * @param key to erase
 	 */
 	void erase(Batch &batch, const json::Value &key);
 
