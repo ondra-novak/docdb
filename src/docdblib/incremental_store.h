@@ -70,15 +70,15 @@ public:
 	 * @return handle for removing observer
 	 */
 	template<typename Fn>
-	auto addUpdateObserver(Fn &&fn)  {
-		return observers.addObserver(std::forward<Fn>(fn));
+	auto addObserver(Fn &&fn)  {
+		return observers->addObserver(std::forward<Fn>(fn));
 	}
 	///Removes observer
 	/**
 	 * @param h handle returned by addUpdateObserver
 	 */
-	void removeUpdateObserver(IObservable::Handle h) {
-		observers.removeObserver(h);
+	void removeObserver(AbstractObservable::Handle h) {
+		observers->removeObserver(h);
 	}
 
 protected:
@@ -88,7 +88,7 @@ protected:
 	KeySpaceID kid;
 
 	using Obs = Observable<Batch &, SeqID, json::Value>;
-	Obs &observers = db.getObservable<Obs>(kid);
+	json::RefCntPtr<Obs> observers = db.getObservable<Obs>(kid);
 
 };
 
@@ -126,10 +126,9 @@ public:
 	 * @param db database object
 	 * @param name name of the incremental store.
 	 */
-	IncrementalStore(DB db, const std::string_view &name);
+	IncrementalStore(const DB &db, const std::string_view &name);
 
-	IncrementalStore(const IncrementalStore &source, DB snapshot);
-
+	~IncrementalStore();
 
 	///Put document to the store
 	/**

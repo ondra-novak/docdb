@@ -37,10 +37,16 @@ public:
 
 	using DocID=json::Value;
 
-	DocStoreView(DB db, const std::string_view &name);
+	DocStoreView(const DB &db, const std::string_view &name);
+
+	DocStoreView(const DB &db, IncrementalStoreView &incview, const std::string_view &name);
 
 	///allows to change snapshot
 	DocStoreView(const DocStoreView &source, DB snapshot);
+
+	DocStoreView(const DocStoreView &other);
+
+	virtual ~DocStoreView();
 
 	class Iterator;
 	class ChangesIterator;
@@ -158,19 +164,31 @@ public:
 	ChangesIterator scanChanges(SeqID from) const;
 
 
-	DB getDB() const {return incview.getDB();}
+	DB getDB() const {return incview->getDB();}
 
 
 	DocStoreView getSnapshot() const;
 
+	template<typename Fn>
+	auto addObserver(Fn &&fn) {
+		return observable->addObserver(std::forward<Fn>(fn));
+	}
+	void removeObserver(std::size_t h) {
+		return observable->removeObserver(h);
+	}
+
 protected:
 	//keyspace id, graveyard key space
-	IncrementalStore incview;
+	IncrementalStoreView *incview;
 	JsonMapBase active;
 	JsonMapBase erased;
+	union {
+		IncrementalStoreView iview;
+		IncrementalStore istore;
+	};
 
 	using Obs = Observable<Batch &, const Document &>;
-	Obs &observable;
+	json::RefCntPtr<Obs> observable;
 
 	static const int indexID = 0;
 	static const int indexDeleted = 1;
@@ -308,7 +326,10 @@ public:
 	 * @param name name of the store
 	 * @param cfg configuration
 	 */
-	DocStore(DB &db, const std::string &name, const DocStore_Config &cfg);
+	DocStore(const DB &db, const std::string &name, const DocStore_Config &cfg);
+
+
+	virtual ~DocStore();
 
 	///Replicate document to this storage
 	/**
@@ -369,7 +390,7 @@ public:
 	 */
 	bool purge(const std::string_view &id, const DocRevision &rev);
 
-	SeqID getSeq() const {return incview.getSeq();}
+	SeqID getSeq() const {return istore.getSeq();}
 
 	struct AggregatorAdapter {
 		using IteratorType = Iterator;
@@ -403,14 +424,6 @@ public:
 
 private :
 	static std::size_t testObserverFn(bool ret);
-public:
-	template<typename Fn>
-	auto addObserver(Fn &&fn) {
-		return observable.addObserver(std::forward<Fn>(fn));
-	}
-	void removeObserver(std::size_t h) {
-		return observable.removeObserver(h);
-	}
 
 protected:
 	unsigned int revHist;

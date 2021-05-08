@@ -220,7 +220,7 @@ View::DocKeyIterator::DocKeyIterator(const DB db, const Key &key):rdidx(0) {
 bool View::DocKeyIterator::next() {
 	if (rdidx >= buffer.size()) return false;
 	std::string_view tmp(buffer.data()+rdidx, buffer.size()-rdidx);
-	rdkey = string2json(std::move(tmp));
+	rdkey = string2jsonkey(std::move(tmp));
 	rdidx = buffer.size() - tmp.size();
 	return true;
 }
@@ -228,7 +228,7 @@ bool View::DocKeyIterator::next() {
 bool View::DocKeyIterator::peek() {
 	if (rdidx >= buffer.size()) return false;
 	std::string_view tmp(buffer.data()+rdidx, buffer.size()-rdidx);
-	rdkey = string2json(std::move(tmp));
+	rdkey = string2jsonkey(std::move(tmp));
 	return true;
 }
 
@@ -240,85 +240,69 @@ bool View::DocKeyIterator::empty() const {
 	return rdidx >= buffer.size();
 }
 
-void View::serializeDocKeys(const std::vector<json::Value> &keys, std::string &buffer) {
-	buffer.clear();
-	for (const auto &k: keys) {
-		json2string(k, buffer);
-	}
-}
 
 void IndexBatch::emit(const json::Value &k, const json::Value &v) {
 	//key already initialized with current keyspace
 	//append k
 	key.append(k);
+	//also store serialized key to new_keys
+	new_keys.append(key.content());
 	//append docId
 	key.append(dockey);
 	//create value (serialize to buffer)
 	json2string(v, buffer);
-	//push current key to list of keys
-	keys.push_back(k);
 	//store key-value pair to batch
 	Put(key, buffer);
 	//clear key buffer
 	key.clear();
 	//clear value buffer
 	buffer.clear();
+	//broadcast this emit
+	observable->broadcast(*this, k, v, docId);
+	//find whether this key was previously used
+	auto iter = std::find(prev_keys.begin(), prev_keys.end(), k);
+	//if did, remove it
+	if (iter != prev_keys.end()) {
+		//swap with end
+		std::swap(*iter, prev_keys.back());
+		//pop back it
+		prev_keys.pop_back();
+	}
 }
 
 void IndexBatch::commit() {
 
-	//after key-value pairs has been created (emit), we continue hear
-	//retrieve count of created keys
-	auto klen = key.size();
+	///erase all unused previous keys
+	for (Value k: prev_keys) {
+		//reuse key field
+		key.clear();
+		//append key
+		key.append(k);
+		//append dockey
+		key.append(dockey);
+		//delete it
+		Delete(key);
+		//broadcast deletion of the key
+		observable->broadcast(*this, k, json::undefined, docId);
+	}
+
 	//if no keys has been created
-	if (klen == 0) {
+	if (new_keys.empty()) {
 		//are there some previous keys (must be erased)
 		if (!prev_keys.empty()) {
 			//yes - so first erase record about allocated keys
-			//reuse key field
 			key.clear();
 			key.push_back(0);
 			key.append(dockey);
 			Delete(key);
-			//now process all previous keys and erase them
-			//erase keys in reverse order (it is simple)
-			while (!prev_keys.empty()) {
-				json::Value k (std::move(prev_keys.back()));
-				key.clear();
-				key.append(k);
-				key.append(dockey);
-				Delete(key);
-				prev_keys.pop_back();
-			}
-			//erased everything
 		}
-		//all done
 	} else {
-		//some keys has been created
-		//serialize list of keys to buffer, to be stored
-		View::serializeDocKeys(keys, buffer);
-		//update doc->keys record with newly generated keys
+		//new keys generated
 		key.clear();
 		key.push_back(0);
 		key.append(dockey);
-		Put(key, buffer);
-		//process previous keys to check and erase them
-		while (!prev_keys.empty()) {
-			json::Value k ( std::move(prev_keys.back()));
-			auto kend = keys.begin()+klen;
-			//try find this key in list of generated keys
-			//if not found it must be erased
-			if (std::find(keys.begin(),kend,k) == kend) {
-				key.clear();
-				key.append(k);
-				key.append(dockey);
-				//erase this key
-				Delete(key);
-				keys.push_back(k);
-			}
-			prev_keys.pop_back();
-		}
-		//all done
+		//record new keys
+		Put(key, new_keys);
 	}
 }
 

@@ -36,19 +36,18 @@ IncrementalStoreView::IncrementalStoreView(const IncrementalStoreView &src, DB s
 
 }
 
-IncrementalStore::IncrementalStore(DB db, const std::string_view &name)
+IncrementalStore::IncrementalStore(const DB &db, const std::string_view &name)
 	:IncrementalStoreView(db, name)
 	 ,lastSeqId(findLastID())
 {
-
+	this->db.keyspaceLock(kid, true);
 }
 
-IncrementalStore::IncrementalStore(const IncrementalStore &source, DB snapshot)
-	:IncrementalStoreView(source, snapshot),
-	 lastSeqId(~SeqID(0))
-{
 
+IncrementalStore::~IncrementalStore() {
+	this->db.keyspaceLock(kid, false);
 }
+
 
 
 SeqID IncrementalStore::put(json::Value object) {
@@ -63,7 +62,7 @@ SeqID IncrementalStore::put(Batch &b, json::Value object) {
 	write_buff.clear();
 	json2string(object, write_buff);
 	b.Put(createKey(seqId),write_buff);
-	observers.broadcast(b, seqId, object);
+	observers->broadcast(b, seqId, object);
 	return seqId;
 }
 

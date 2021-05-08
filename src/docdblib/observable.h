@@ -7,6 +7,7 @@
 
 #ifndef SRC_DOCDBLIB_OBSERVABLE_H_
 #define SRC_DOCDBLIB_OBSERVABLE_H_
+#include <imtjson/refcnt.h>
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -14,7 +15,7 @@
 
 namespace docdb {
 
-class IObservable {
+class AbstractObservable: public json::RefCntObj {
 public:
 	using Handle = std::size_t;
 
@@ -22,13 +23,15 @@ public:
 	virtual void removeObserver(Handle h) = 0;
 	virtual bool empty() const = 0;
 
-	virtual ~IObservable() {};
+	virtual ~AbstractObservable() {};
 };
 
-typedef std::unique_ptr<IObservable> (*ObservableFactory)();
+using PAbstractObservable = json::RefCntPtr<AbstractObservable>;
+
+typedef PAbstractObservable (*ObservableFactory)();
 
 template<typename ... Args>
-class Observable: public IObservable {
+class Observable: public AbstractObservable {
 public:
 
 
@@ -46,8 +49,8 @@ public:
 	}
 
 	static ObservableFactory getFactory() {
-		return []() -> std::unique_ptr<IObservable>{
-			return std::make_unique<Observable>();
+		return []() -> PAbstractObservable{
+			return PAbstractObservable(new Observable);
 		};
 	}
 
@@ -69,6 +72,9 @@ protected:
 };
 
 template<typename ... Args>
+using PObservable = json::RefCntPtr<Observable<Args...> >;
+
+template<typename ... Args>
 template<typename Fn>
 inline auto Observable<Args ... >::addObserver(Fn &&fn)-> decltype(std::is_invocable<Handle, bool(Args...)>::value) {
 	std::lock_guard _(lock);
@@ -77,7 +83,7 @@ inline auto Observable<Args ... >::addObserver(Fn &&fn)-> decltype(std::is_invoc
 	class Obs: public Observer {
 	public:
 		Obs(Fn &&fn):fn(std::forward<Fn>(fn)) {}
-		virtual bool exec(Args ... args) noexcept override {
+		virtual bool exec(Args  ... args) noexcept override {
 			return  fn(std::forward<Args>(args)...);
 		}
 	protected:

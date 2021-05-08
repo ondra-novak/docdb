@@ -39,11 +39,11 @@ void JsonMapBase::clear() {
 
 void JsonMap::set(Batch &b, const json::Value &key, const json::Value &value) {
 	JsonMapBase::set(b,key,value);
-	observers.broadcast(b, key, value);
+	observers->broadcast(b, key, value);
 }
 void JsonMap::erase(Batch &b, const json::Value &key) {
 	JsonMapBase::erase(b,key);
-	observers.broadcast(b, key, json::undefined);
+	observers->broadcast(b, key, json::undefined);
 
 }
 
@@ -51,7 +51,15 @@ JsonMap::JsonMap(DB db, const std::string_view &name)
 	:JsonMapBase(db, name)
 	,observers(db.getObservable<Obs>(kid))
 {
+	db.keyspaceLock(kid, true);
+}
 
+JsonMap::~JsonMap() {
+	db.keyspaceLock(kid, false);
+}
+
+KeySpaceID JsonMapBase::getKID() const {
+	return kid;
 }
 
 }

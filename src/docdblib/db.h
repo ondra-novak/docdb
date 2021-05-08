@@ -111,8 +111,10 @@ public:
 
 	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) = 0;
 
-	virtual IObservable &getObservable(KeySpaceID kid, ObservableFactory factory) = 0;
+	virtual PAbstractObservable getObservable(KeySpaceID kid, ObservableFactory factory) = 0;
 
+	///Lock or unlock keyspace for exclusive use
+	virtual bool keyspaceLock(KeySpaceID kid, bool lock) = 0;
 
 };
 
@@ -173,6 +175,7 @@ public:
 	void keyspace_putMetadata(KeySpaceID id, const json::Value &data) ;
 
 	///clear whole keyspace (can take a time)
+	/** doesn't frees the keyspace */
 	void clearKeyspace(KeySpaceID id);
 
 
@@ -243,14 +246,38 @@ public:
 
 	///Retrieves observable object for given keyspace
 	template<typename X>
-	X &getObservable(KeySpaceID kid) {
-		return dynamic_cast<X &>(core->getObservable(kid, X::getFactory()));
+	json::RefCntPtr<X> getObservable(KeySpaceID kid) {
+		auto r = json::RefCntPtr<X>::dynamicCast(core->getObservable(kid, X::getFactory()));
+		if (r == nullptr) throw std::bad_cast();
+		return r;
 	}
+
+	///Lock or unlock keyspace for exclusive use
+	/**
+	 * Allows to lock keyspace for exclusive use. This prevents to other
+	 * objects to lock the same keyspace. This lock doesn't check ownership,
+	 * so you can still write to the keyspace without the lock. however if you
+	 * need exclusive access, you need to acquire this lock.
+	 *
+	 * There is only one feature, which uses the lock, the function freeKeyspace(),
+	 * which checks this lock and prevents deleting the data when the lock
+	 * is held.
+	 *
+	 * View (readonly) objects don't require lock, however updatable objects
+	 * do.  If the lock is already held, an exception is thrown
+	 *
+	 * @param kid keyspace id to lock or unlock
+	 * @param lock set true to lock, false to unlock
+	 * @exception KeyspaceAlreadyLocked request to lock already locked keyspace
+	 */
+	void keyspaceLock(KeySpaceID kid, bool lock);
+
 
 protected:
 	PDBCore core;
 
 };
+
 
 class KeySpaceIterator: public Iterator {
 public:

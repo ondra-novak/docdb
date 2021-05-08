@@ -145,11 +145,11 @@ public:
 
 
 	template<typename Fn>
-	auto addKeyUpdateObserver(Fn &&fn)  {
-		observable.addObserver(std::forward<Fn>(fn));
+	auto addObserver(Fn &&fn)  {
+		observable->addObserver(std::forward<Fn>(fn));
 	}
-	void removeKeyUpdateObserver(IObservable::Handle h) {
-		observable.removeObserver(h);
+	void removeObserver(AbstractObservable::Handle h) {
+		observable->removeObserver(h);
 	}
 
 protected:
@@ -157,7 +157,7 @@ protected:
 	KeySpaceID kid;
 
 	using Obs = Observable<Batch &, const std::vector<json::Value> &>;
-	Obs &observable = db.getObservable<Obs>(kid);
+	json::RefCntPtr<Obs> observable = db.getObservable<Obs>(kid);
 };
 
 
@@ -166,7 +166,20 @@ template<typename Derived>
 class UpdatableMap: public JsonMapView {
 public:
 
-	using JsonMapView::JsonMapView;
+	UpdatableMap(const DB &db, const std::string_view &name)
+	:JsonMapView(db, name) {
+		this->db.keyspaceLock(kid, true);
+	}
+
+	UpdatableMap(const DB &db, ClassID classId, const std::string_view &name)
+	:JsonMapView(db, classId, name) {
+		this->db.keyspaceLock(kid, true);
+	}
+	~UpdatableMap() {
+		db.keyspaceLock(kid, false);
+	}
+
+
 
 	json::Value lookup(const json::Value &key);
 	using JsonMapView::lookup;
@@ -329,7 +342,7 @@ inline void UpdatableMap<Derived>::beginIndex(IndexBatch &batch) {
 template<typename Derived>
 inline void UpdatableMap<Derived>::commitIndex(IndexBatch &batch, bool batch_more) {
 	//broadcast keys to observers
-	observable.broadcast(batch, batch.keys);
+	observable->broadcast(batch, batch.keys);
 	//commit batch if batch_more is false
 	if (!batch_more) {
 		db.commitBatch(batch);

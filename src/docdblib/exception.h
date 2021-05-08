@@ -7,6 +7,7 @@
 
 #ifndef SRC_DOCDBLIB_EXCEPTION_H_
 #define SRC_DOCDBLIB_EXCEPTION_H_
+#include <docdblib/keyspace.h>
 #include <leveldb/status.h>
 #include <exception>
 
@@ -65,6 +66,16 @@ public:
 class DocumentIDCantBeEmpty: public DocDBException {
 public:
 	virtual const char *what() const noexcept override;
+};
+
+
+class KeyspaceAlreadyLocked: public DocDBException{
+public:
+	KeyspaceAlreadyLocked(KeySpaceID id);
+	virtual const char *what() const noexcept override;
+protected:
+	mutable std::string msg;
+	KeySpaceID id;
 };
 
 }

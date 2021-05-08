@@ -9,6 +9,7 @@
 #include "exception.h"
 
 #include <algorithm>
+#include <sstream>
 namespace docdb {
 
 
@@ -75,6 +76,17 @@ const char *DocumentIDCantBeEmpty::what() const noexcept {
 	return "Document's ID can't be empty";
 }
 
+const char* KeyspaceAlreadyLocked::what() const noexcept {
+	if (msg.empty()) {
+		std::ostringstream out;
+		out << "Keyspace is already locked: " << id;
+		msg = out.str();
+	}
+	return msg.c_str();
+}
+
+KeyspaceAlreadyLocked::KeyspaceAlreadyLocked(KeySpaceID id)
+:id(id) {}
 
 }
 

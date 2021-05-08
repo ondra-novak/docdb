@@ -232,23 +232,23 @@ public:
 	DocKeyIterator getDocKeys(const json::Value &docid) const;
 
 
-	static void serializeDocKeys(const std::vector<json::Value> &keys, std::string &buffer);
-
 	template<typename Fn>
-	auto addKeyUpdateObserver(Fn &&fn)  {
-		return observable.addObserver(std::forward<Fn>(fn));
+	auto addObserver(Fn &&fn)  {
+		return observable->addObserver(std::forward<Fn>(fn));
 	}
-	void removeKeyUpdateObserver(IObservable::Handle h) {
-		observable.removeObserver(h);
+	void removeObserver(AbstractObservable::Handle h) {
+		observable->removeObserver(h);
 	}
 
+
+	///key, value, document-id
+	using Obs = Observable<Batch &, const json::Value &, const json::Value &, const json::Value &>;
 
 protected:
 	DB db;
 	KeySpaceID kid;
 
-	using Obs = Observable<Batch &, const std::vector<json::Value> &>;
-	Obs &observable = db.getObservable<Obs>(kid);
+	json::RefCntPtr<Obs> observable = db.getObservable<Obs>(kid);
 
 
 };
@@ -279,8 +279,6 @@ public:
 	//current document ID
 	json::Value docId;
 	//list of modified keys in JSON form
-	std::vector<json::Value> keys;
-	//list of previous keys for this document (filled by beginIndex)
 	std::vector<json::Value> prev_keys;
 	//temporary key used to build key during emit - to avoid memory reallocation
 	Key key;
@@ -288,13 +286,22 @@ public:
 	std::string buffer;
 	//document key (serialized docid into buffer);
 	std::string dockey;
+	//serialized keys to be stored
+	std::string new_keys;
+	json::RefCntPtr<View::Obs> observable;
 };
 
 
 template<typename Derived>
 class UpdatableView: public View {
 public:
-	using View::View;
+	UpdatableView(const DB &db, const std::string_view &name)
+	:View(db, name) {
+		this->db.keyspaceLock(kid, true);
+	}
+	~UpdatableView() {
+		db.keyspaceLock(kid, false);
+	}
 
 	using View::lookup;
 	json::Value lookup(const json::Value &key);
@@ -368,10 +375,12 @@ public:
 		static const DB &getDB(const SourceType &src) {return src.db;}
 		template<typename Fn>
 		static auto observe(SourceType &src, Fn &&fn) {
-			return src.addKeyUpdateObserver(std::move(fn));
+			return src.addObserver([fn = std::forward<Fn>(fn)](Batch &b, const json::Value &k, const json::Value &, const json::Value &) {
+				return fn(b, std::initializer_list<json::Value>({k}));
+			});
 		}
 		static void stopObserving(SourceType &src, Obs::Handle h) {
-			src.removeKeyUpdateObserver(h);
+			src.removeObserver(h);
 		}
 		static IteratorType find(const SourceType &src, const json::Value &key) {
 			return src.find(key);
@@ -481,7 +490,7 @@ inline void UpdatableView<Derived>::beginIndex(const json::Value &docId, IndexBa
 	batch.dockey = batch.key.content();
 	batch.key.clear();
 	batch.prev_keys.clear();
-	batch.keys.clear();
+	batch.observable = observable;
 	auto kiter = getDocKeys(docId);
 	while (kiter.next()) batch.prev_keys.push_back(kiter.key());
 }
@@ -510,8 +519,6 @@ template<typename Derived>
 inline void docdb::UpdatableView<Derived>::commitIndex(IndexBatch &batch, bool batch_more) {
 	//commit index to batch
 	batch.commit();
-	//broadcast keys to observers
-	observable.broadcast(batch, batch.keys);
 	//commit batch if batch_more is false
 	if (!batch_more) {
 		db.commitBatch(batch);

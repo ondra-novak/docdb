@@ -26,6 +26,8 @@ public:
 	void set(Batch &b, const json::Value &key, const json::Value &value);
 	void erase(Batch &b, const json::Value &key);
 	void clear();
+
+	KeySpaceID getKID() const;
 };
 
 ///JsonMap - maps json value to a json value
@@ -36,6 +38,7 @@ class JsonMap: public JsonMapBase {
 public:
 
 	JsonMap(DB db, const std::string_view &name);
+	~JsonMap();
 
 	void set(Batch &b, const json::Value &key, const json::Value &value);
 	void set(const json::Value &key, const json::Value &value);
@@ -45,10 +48,10 @@ public:
 
 	template<typename Fn>
 	auto addObserver(Fn &&fn) {
-		return observers.addObserver(std::forward<Fn>(fn));
+		return observers->addObserver(std::forward<Fn>(fn));
 	}
 	auto removeObserver(std::size_t h) {
-		return observers.removeObserver(h);
+		return observers->removeObserver(h);
 	}
 
 	struct AggregatorAdapter {
@@ -86,7 +89,7 @@ public:
 
 protected:
 
-	Obs &observers;
+	json::RefCntPtr<Obs> observers;
 
 
 

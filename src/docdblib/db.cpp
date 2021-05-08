@@ -5,7 +5,7 @@
  *      Author: ondra
  */
 
-
+#include <unordered_set>
 #include <filesystem>
 #include <leveldb/db.h>
 #include <leveldb/filter_policy.h>
@@ -39,7 +39,8 @@ public:
 	virtual KeySpaceID allocKeyspace(ClassID classId , const std::string_view &name) override;
 	virtual bool freeKeyspace(ClassID class_id, const std::string_view &name) override;
 	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) override;
-	virtual IObservable &getObservable(KeySpaceID kid,  ObservableFactory factory) override;
+	virtual PAbstractObservable getObservable(KeySpaceID kid,  ObservableFactory factory) override;
+	virtual bool keyspaceLock(KeySpaceID kid, bool unlock) override;
 
 protected:
 
@@ -56,8 +57,10 @@ protected:
 	bool sync_writes;
 	std::mutex lock;
 
-	using ObservableMap = std::unordered_map<KeySpaceID, std::unique_ptr<IObservable> >;
+	using ObservableMap = std::unordered_map<KeySpaceID, PAbstractObservable >;
+	using KeyspaceLockMap = std::unordered_set<KeySpaceID>;
 	ObservableMap observableMap;
+	KeyspaceLockMap lockMap;
 
 };
 
@@ -126,7 +129,8 @@ public:
 	}
 	virtual bool freeKeyspace(ClassID, const std::string_view &) override {return false;}
 	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) override {return core->getApproximateSizes(ranges, nranges, sizes);}
-	virtual IObservable &getObservable(KeySpaceID kid, ObservableFactory factory) {return core->getObservable(kid,factory);}
+	virtual PAbstractObservable getObservable(KeySpaceID kid, ObservableFactory factory) {return core->getObservable(kid,factory);}
+	virtual bool keyspaceLock(KeySpaceID , bool ) override {return false;};
 
 
 protected:
@@ -168,6 +172,9 @@ public:
 	virtual bool freeKeyspace(ClassID , const std::string_view &) override {
 		throw CantWriteToSnapshot();
 	}
+	virtual bool keyspaceLock(KeySpaceID , bool ) override {
+		throw CantWriteToSnapshot();
+	}
 };
 
 class DBCoreImpl::SnapshotFwd: public DBCoreImpl::SnapshotIgn {
@@ -184,6 +191,9 @@ public:
 	}
 	virtual bool freeKeyspace(ClassID a, const std::string_view &b) override {
 		return core->freeKeyspace(a,b);
+	}
+	virtual bool keyspaceLock(KeySpaceID kid, bool lock) override {
+		return core->keyspaceLock(kid, lock);
 	}
 };
 
@@ -380,6 +390,9 @@ bool DBCoreImpl::freeKeyspace(ClassID class_id, const std::string_view &name) {
 
 	auto id = *reinterpret_cast<const KeySpaceID *>(val.data());
 
+	if (lockMap.find(id) != lockMap.end())
+		throw KeyspaceAlreadyLocked(id);
+
 	Key ct1(id);
 	Key ct2(ct1);
 	ct2.upper_bound();
@@ -391,6 +404,7 @@ bool DBCoreImpl::freeKeyspace(ClassID class_id, const std::string_view &name) {
 
 	db->Delete(opts, getKey(id));
 	db->Delete(opts, k);
+	observableMap.erase(id);
 	return true;
 }
 
@@ -445,11 +459,28 @@ std::uint64_t DB::getKeyspaceSize(KeySpaceID kid) const {
 
 }
 
-inline IObservable& DBCoreImpl::getObservable(KeySpaceID kid, ObservableFactory factory) {
+PAbstractObservable DBCoreImpl::getObservable(KeySpaceID kid, ObservableFactory factory) {
 	std::lock_guard _(lock);
 	auto &ret = observableMap[kid];
 	if (ret == nullptr) ret = factory();
-	return *ret;
+	return ret;
+}
+
+bool DBCoreImpl::keyspaceLock(KeySpaceID kid, bool lk) {
+	std::lock_guard _(lock);
+	if (lk) {
+		auto res = lockMap.insert(kid);
+		return res.second;
+	} else {
+		lockMap.erase(kid);
+		return true;
+	}
+}
+
+void DB::keyspaceLock(KeySpaceID kid, bool lock) {
+	if (!core->keyspaceLock(kid, lock)) {
+		if (lock) throw KeyspaceAlreadyLocked(kid);
+	}
 }
 
 }

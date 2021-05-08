@@ -18,19 +18,48 @@
 using json::Value;
 namespace docdb {
 
-DocStoreView::DocStoreView(DB db, const std::string_view &name)
-		:incview(db, name)
+DocStoreView::DocStoreView(const DB &db, const std::string_view &name)
+		:incview(&iview)
 		 ,active(db, (ClassID)KeySpaceClass::document_index, name)
 		 ,erased(db, (ClassID)KeySpaceClass::graveyard_index, name)
-		 ,observable(db.getObservable<Obs>(db.allocKeyspace(KeySpaceClass::document_index, name)))
+		 ,iview(db, name)
+		 ,observable(active.getDB().getObservable<Obs>(active.getKID()))
 {
 }
 
+DocStoreView::DocStoreView(const DB &db, IncrementalStoreView &incview, const std::string_view &name)
+ 	 :incview(&incview)
+	 ,active(db, (ClassID)KeySpaceClass::document_index, name)
+	 ,erased(db, (ClassID)KeySpaceClass::graveyard_index, name)
+	 ,observable(active.getDB().getObservable<Obs>(active.getKID()))
+{
+
+}
+
+DocStoreView::DocStoreView(const DocStoreView &other)
+	:incview(&iview)
+	,active(other.active)
+	,erased(other.erased)
+	,iview(*other.incview)
+	,observable(other.observable)
+	{
+
+	}
+
+DocStoreView::~DocStoreView() {
+	if (incview == &iview) {
+		iview.~IncrementalStoreView();
+		incview = nullptr;
+	}
+}
+
 DocStoreView::DocStoreView(const DocStoreView &source, DB snapshot)
-	:incview(source.incview, snapshot)
+	:incview(&iview)
 	,active(source.active, snapshot)
 	,erased(source.erased, snapshot)
+	,iview(source.iview, snapshot)
 	,observable(source.observable)
+
 {
 }
 
@@ -58,7 +87,7 @@ DocumentRepl DocStoreView::replicate_get(const DocID &docId) const {
 		};
 	}
 	SeqID seq = dochdr[0].getUIntLong();
-	auto docdata = incview.get(seq);
+	auto docdata = incview->get(seq);
 	return {docId,
 		docdata[indexContent],
 		docdata[indexTimestamp].getUIntLong(),
@@ -80,7 +109,7 @@ Document DocStoreView::get(const DocID &docId) const {
 		};
 	}
 	SeqID seq = dochdr[0].getUIntLong();
-	auto docdata = incview.get(seq);
+	auto docdata = incview->get(seq);
 	return {docId,
 		docdata[indexContent],
 		docdata[indexTimestamp].getUIntLong(),
@@ -111,28 +140,28 @@ DocStoreView DocStoreView::getSnapshot() const {
 }
 
 DocStoreView::Iterator DocStoreView::scan() const {
-	return Iterator(incview, getSnapshot().active.scan());
+	return Iterator(*incview, getSnapshot().active.scan());
 }
 
 DocStoreView::Iterator DocStoreView::scan(bool backward) const {
-	return Iterator(incview, getSnapshot().active.scan(backward));
+	return Iterator(*incview, getSnapshot().active.scan(backward));
 }
 
 DocStoreView::Iterator DocStoreView::range(const DocID &from, const DocID &to, bool include_upper_bound) const {
-	return Iterator(incview, getSnapshot().active.range(from, to, include_upper_bound));
+	return Iterator(*incview, getSnapshot().active.range(from, to, include_upper_bound));
 }
 DocStoreView::Iterator DocStoreView::prefix(const DocID &prefix, bool backward) const {
-	return Iterator(incview, getSnapshot().active.range(prefix, backward));
+	return Iterator(*incview, getSnapshot().active.range(prefix, backward));
 }
 DocStoreView::Iterator DocStoreView::scanDeleted() const {
-	return Iterator(incview, getSnapshot().erased.scan());
+	return Iterator(*incview, getSnapshot().erased.scan());
 }
 DocStoreView::Iterator DocStoreView::scanDeleted(const DocID &prefix) const {
-	return Iterator(incview, getSnapshot().erased.prefix(prefix));
+	return Iterator(*incview, getSnapshot().erased.prefix(prefix));
 }
 
 DocStoreView::ChangesIterator DocStoreView::scanChanges(SeqID from) const {
-	return ChangesIterator(incview.scanFrom(from));
+	return ChangesIterator(incview->scanFrom(from));
 }
 
 json::Value DocStoreView::Iterator::id() const {
@@ -246,6 +275,26 @@ DocumentRepl DocStoreView::ChangesIterator::replicate_get() const {
 		data[indexDeleted].getBool(),
 		data[indexRevisions]
 	};
+}
+
+DocStore::DocStore(const DB &db, const std::string &name, const DocStore_Config &cfg)
+	:DocStoreView(db, istore, name)
+	,revHist(cfg.rev_history_length)
+
+{
+	new(&istore) IncrementalStore(db, name);
+	active.getDB().keyspaceLock(active.getKID(), true);
+	erased.getDB().keyspaceLock(erased.getKID(), true);
+}
+
+DocStore::~DocStore() {
+	active.getDB().keyspaceLock(active.getKID(), false);
+	erased.getDB().keyspaceLock(erased.getKID(), false);
+	if (incview == &istore) {
+		istore.~IncrementalStore();
+		incview = nullptr;
+	}
+
 }
 
 } /* namespace docdb */
