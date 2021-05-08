@@ -40,6 +40,7 @@ public:
 	virtual bool freeKeyspace(ClassID class_id, const std::string_view &name) override;
 	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) override;
 	virtual PAbstractObservable getObservable(KeySpaceID kid,  ObservableFactory factory) override;
+	virtual CommitObservable &getCommitObservable() override;
 	virtual bool keyspaceLock(KeySpaceID kid, bool unlock) override;
 
 protected:
@@ -60,6 +61,7 @@ protected:
 	using ObservableMap = std::unordered_map<KeySpaceID, PAbstractObservable >;
 	using KeyspaceLockMap = std::unordered_set<KeySpaceID>;
 	ObservableMap observableMap;
+	CommitObservable commitObservable;
 	KeyspaceLockMap lockMap;
 
 };
@@ -130,6 +132,7 @@ public:
 	virtual bool freeKeyspace(ClassID, const std::string_view &) override {return false;}
 	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) override {return core->getApproximateSizes(ranges, nranges, sizes);}
 	virtual PAbstractObservable getObservable(KeySpaceID kid, ObservableFactory factory) {return core->getObservable(kid,factory);}
+	virtual CommitObservable &getCommitObservable() override {return core->getCommitObservable();}
 	virtual bool keyspaceLock(KeySpaceID , bool ) override {return false;};
 
 
@@ -227,6 +230,7 @@ static leveldb::WriteOptions getWriteOptions(bool sync) {
 void DBCoreImpl::commitBatch(Batch &b) {
 	auto opt = getWriteOptions(sync_writes);
 	db->Write(opt, &b);
+	commitObservable.broadcast(b);
 	b.Clear();
 }
 
@@ -464,6 +468,10 @@ PAbstractObservable DBCoreImpl::getObservable(KeySpaceID kid, ObservableFactory 
 	auto &ret = observableMap[kid];
 	if (ret == nullptr) ret = factory();
 	return ret;
+}
+
+CommitObservable& DBCoreImpl::getCommitObservable() {
+	return commitObservable;
 }
 
 bool DBCoreImpl::keyspaceLock(KeySpaceID kid, bool lk) {

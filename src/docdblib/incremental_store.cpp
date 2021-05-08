@@ -11,19 +11,7 @@
 #include "formats.h"
 namespace docdb {
 
-void IncrementalStore::Batch::commit() {
-	db.commitBatch(*this);
-}
 
-IncrementalStore::Batch::Batch(std::mutex &mx, DB &db)
-: mx(mx),db(db)
-{
-	mx.lock();
-}
-
-IncrementalStore::Batch::~Batch() {
-	mx.unlock();
-}
 
 IncrementalStoreView::IncrementalStoreView(DB db, const std::string_view &name)
 	:db(db), kid(db.allocKeyspace(KeySpaceClass::incremental_store, name))
@@ -51,19 +39,18 @@ IncrementalStore::~IncrementalStore() {
 
 
 SeqID IncrementalStore::put(json::Value object) {
-	Batch b = createBatch();
+	Batch b;
 	SeqID r = put(b, object);
-	b.commit();
+	db.commitBatch(b);
 	return r;
 }
 SeqID IncrementalStore::put(Batch &b, json::Value object) {
-	if (lastSeqId == ~SeqID(0)) throw std::runtime_error("No space to write");
-	auto seqId = ++lastSeqId;
-	write_buff.clear();
-	json2string(object, write_buff);
-	b.Put(createKey(seqId),write_buff);
-	observers->broadcast(b, seqId, object);
-	return seqId;
+	SeqID id = ++lastSeqId;
+	std::string &buff = db.getBuffer();
+	json2string(object, buff);
+	b.Put(createKey(id), buff);
+	observers->broadcast(b, id, object);
+	return id;
 }
 
 
@@ -107,9 +94,6 @@ Key IncrementalStoreView::createKey(SeqID seqId) const {
 	return out;
 }
 
-IncrementalStore::Batch IncrementalStore::createBatch() {
-	return Batch(lock, db);
-}
 
 SeqID IncrementalStore::findLastID() const {
 	Key k1(kid);

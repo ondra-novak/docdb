@@ -102,25 +102,6 @@ protected:
 class IncrementalStore: public IncrementalStoreView {
 public:
 
-
-	///Incremental storage's batch
-	class Batch: public ::docdb::Batch {
-	public:
-		~Batch();
-		///commits all writes and clears the batch
-		void commit();
-		Batch(const Batch &) = delete;
-		Batch(Batch &&) = delete;
-
-	protected:
-		Batch(std::mutex &mx, DB &db);
-
-		friend class IncrementalStore;
-		std::mutex &mx;
-		DB &db;
-	};
-
-
 	///Inicialize incrementar store
 	/**
 	 * @param db database object
@@ -176,12 +157,7 @@ public:
 
 protected:
 
-	SeqID lastSeqId;
-	unsigned int spin = 1;
-	unsigned int listeners = 0;
-
-	std::mutex lock;
-	std::string write_buff;
+	std::atomic<SeqID> lastSeqId;
 
 	SeqID findLastID() const;
 

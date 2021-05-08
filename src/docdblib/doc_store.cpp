@@ -86,13 +86,13 @@ DocumentRepl DocStoreView::replicate_get(const DocID &docId) const {
 			json::undefined
 		};
 	}
-	SeqID seq = dochdr[0].getUIntLong();
+	SeqID seq = dochdr[hdrSeq].getUIntLong();
 	auto docdata = incview->get(seq);
 	return {docId,
 		docdata[indexContent],
 		docdata[indexTimestamp].getUIntLong(),
 		isdel,
-		docdata[indexRevisions]
+		dochdr[hdrRevisions]
 	};
 }
 
@@ -114,14 +114,20 @@ Document DocStoreView::get(const DocID &docId) const {
 		docdata[indexContent],
 		docdata[indexTimestamp].getUIntLong(),
 		isdel,
-		docdata[indexRevisions][0].getUIntLong()
+		dochdr[hdrRevisions][0].getUIntLong()
 	};
 }
 
 DocRevision DocStoreView::getRevision(const DocID &docId) const {
 	bool isdel;
 	auto dochdr = getDocHeader(docId, isdel);
-	return dochdr[1].getUIntLong();
+	return dochdr[hdrRevisions][0].getUIntLong();
+}
+
+json::Value DocStoreView::getRevisions(const DocID &docId) const {
+	bool isdel;
+	auto dochdr = getDocHeader(docId, isdel);
+	return dochdr[hdrRevisions];
 }
 
 DocStoreView::Status DocStoreView::getStatus(const DocID &docId) const {
@@ -161,8 +167,12 @@ DocStoreView::Iterator DocStoreView::scanDeleted(const DocID &prefix) const {
 }
 
 DocStoreView::ChangesIterator DocStoreView::scanChanges(SeqID from) const {
-	return ChangesIterator(incview->scanFrom(from));
+	auto snapshot = getSnapshot();
+	return ChangesIterator(snapshot,snapshot.incview->scanFrom(from));
 }
+
+DocStoreView::ChangesIterator::ChangesIterator(const DocStoreView &store, Super &&iter)
+	:Super(std::move(iter)),snapshot(store) {}
 
 json::Value DocStoreView::Iterator::id() const {
 	return key();
@@ -218,9 +228,10 @@ Document DocStoreView::Iterator::get() const {
 }
 
 DocumentRepl DocStoreView::Iterator::replicate_get() const {
-	json::Value d = getDocContent();
+	auto h = getDocHdr();
+	auto d = getDocContent();
 	return {
-		id(),d[indexContent],d[indexTimestamp].getUIntLong(),d[indexDeleted].getBool(), d[indexRevisions]
+		id(),d[indexContent],d[indexTimestamp].getUIntLong(),d[indexDeleted].getBool(), h[hdrRevisions]
 	};
 }
 
@@ -252,7 +263,7 @@ bool DocStoreView::ChangesIterator::deleted() const {
 }
 
 DocRevision DocStoreView::ChangesIterator::revision() const {
-	return getData()[indexRevisions][0].getUIntLong();
+	return snapshot.getRevision(id());
 }
 
 Document DocStoreView::ChangesIterator::get() const {
@@ -262,7 +273,7 @@ Document DocStoreView::ChangesIterator::get() const {
 		data[indexContent],
 		data[indexTimestamp].getUIntLong(),
 		data[indexDeleted].getBool(),
-		data[indexRevisions][0].getUIntLong()
+		snapshot.getRevision(data[indexID])
 	};
 }
 
@@ -273,13 +284,14 @@ DocumentRepl DocStoreView::ChangesIterator::replicate_get() const {
 		data[indexContent],
 		data[indexTimestamp].getUIntLong(),
 		data[indexDeleted].getBool(),
-		data[indexRevisions]
+		snapshot.getRevisions(data[indexID])
 	};
 }
 
 DocStore::DocStore(const DB &db, const std::string &name, const DocStore_Config &cfg)
 	:DocStoreView(db, istore, name)
 	,revHist(cfg.rev_history_length)
+	,timestampFn(cfg.timestampFn?cfg.timestampFn:defaultTimestampFn)
 
 {
 	new(&istore) IncrementalStore(db, name);
@@ -295,6 +307,106 @@ DocStore::~DocStore() {
 		incview = nullptr;
 	}
 
+}
+
+
+
+DocStoreView::Iterator::Iterator(const IncrementalStoreView &incview, Super &&src)
+:JsonMapView::Iterator(std::move(src)),incview(incview)
+{
+}
+
+Timestamp DocStore::defaultTimestampFn() {
+	return Timestamp(
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+void DocStore::writeHeader(Batch &b, const Value &docId, bool replace,
+		bool wasdel, bool isdel, SeqID seq, Value rev) {
+	Key k = active.createKey(docId);
+	if (replace) {
+		if (wasdel) {
+			k.transfer(erased.getKID());
+			if (!isdel) {
+				b.Delete(k);
+				k.transfer(active.getKID());
+			}
+		} else {
+			if (isdel) {
+				b.Delete(k);
+				k.transfer(erased.getKID());
+			}
+		}
+	} else {
+		if (isdel) {
+			k.transfer(erased.getKID());
+		}
+	}
+	std::string &buff = DB::getBuffer();
+	JsonMapView::createValue( { seq, rev }, buff);
+	b.Put(k, buff);
+}
+
+bool DocStore::replicate_put(Batch &b, const DocumentRepl &doc) {
+	if (!doc.id.defined()) throw DocumentIDCantBeEmpty();
+	bool wasdel;
+	Value hdr = getDocHeader(doc.id, wasdel);
+	if (hdr.defined()) {
+		SeqID seq = hdr[0].getUIntLong();
+		Value rev = hdr[1];
+		auto pos = doc.revisions.indexOf(rev);
+		if (pos == Value::npos && !wasdel) return false; //conflict
+		if (pos == 0) return true; //already stored
+		istore.erase(b, seq);
+	}
+	SeqID seq = istore.put(b, {
+			doc.id,
+			doc.deleted,
+			doc.timestamp,
+			doc.revisions,
+			doc.content
+	});
+
+	writeHeader(b, doc.id, hdr.defined(), wasdel, doc.deleted, seq, doc.revisions);
+	observable->broadcast(b, doc);
+	return true;
+}
+
+bool DocStore::put(Batch &b, const Document &doc) {
+	if (!doc.id.defined()) throw DocumentIDCantBeEmpty();
+	bool wasdel;
+	std::hash<Value> h;
+	DocRevision newrev = h(doc.content);
+	Value hdr = getDocHeader(doc.id, wasdel);
+	Value revs(json::array);
+	if (hdr.defined()) {
+		SeqID seq = hdr[hdrSeq].getUIntLong();
+		revs = hdr[hdrRevisions];
+		if (doc.rev != 0 || !wasdel) {
+			DocRevision prevRev = revs[0].getUIntLong();
+			if (doc.rev != prevRev) return false; //conflict;
+			if (newrev == prevRev) return true; //no change
+		}
+		istore.erase(b, seq);
+	} else {
+		if (doc.rev != 0) return false; //conflict - revision must be 0
+	}
+	revs.unshift(newrev);
+	if (revs.size() > revHist) {
+		revs = revs.slice(0,revHist);
+	}
+
+	SeqID seq = istore.put(b, {
+			doc.id,
+			doc.deleted,
+			doc.timestamp,
+			doc.content
+	});
+
+	writeHeader(b, doc.id, hdr.defined(), wasdel, doc.deleted, seq, revs);
+	observable->broadcast(b, doc);
+	return true;
 }
 
 } /* namespace docdb */

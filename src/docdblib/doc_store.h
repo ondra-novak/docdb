@@ -29,6 +29,11 @@ struct DocStore_Config {
 	 */
 	std::size_t rev_history_length = 100;
 
+	///Defines timestamp function.
+	/**
+	 * If set to nullptr, it uses time in milliseconds as timestamp
+	 */
+	Timestamp (*timestampFn)() = nullptr;
 };
 
 
@@ -78,6 +83,8 @@ public:
 	 * document and retrieve the latest revision id
 	 */
 	DocRevision getRevision(const DocID &docId) const;
+
+	json::Value getRevisions(const DocID &docId) const;
 
 	///Retrieves document header
 	/**
@@ -187,20 +194,22 @@ protected:
 		IncrementalStore istore;
 	};
 
-	using Obs = Observable<Batch &, const Document &>;
+	using Obs = Observable<Batch &, const DocumentBase &>;
 	json::RefCntPtr<Obs> observable;
 
 	static const int indexID = 0;
 	static const int indexDeleted = 1;
 	static const int indexTimestamp = 2;
-	static const int indexRevisions = 3;
-	static const int indexContent = 4;
+	static const int indexContent = 3;
 
+	static const int hdrSeq = 0;
+	static const int hdrRevisions = 1;
 };
 
 class DocStoreView::Iterator: public JsonMapView::Iterator {
 public:
 	using Super = JsonMapView::Iterator;
+
 	Iterator(const IncrementalStoreView& incview, Super &&src);
 
 	///Retrieve current document id
@@ -259,7 +268,7 @@ class DocStoreView::ChangesIterator: public IncrementalStoreView::Iterator {
 public:
 	using Super = IncrementalStoreView::Iterator;
 
-	using IncrementalStoreView::Iterator::Iterator;
+	ChangesIterator(const DocStoreView &store, Super &&iter);
 
 	///Retrieve current document id
 	/**
@@ -300,7 +309,7 @@ public:
 protected:
 	mutable json::Value cache;
 	const json::Value getData() const;
-
+	DocStoreView snapshot;
 };
 
 
@@ -330,6 +339,9 @@ public:
 
 
 	virtual ~DocStore();
+
+	bool replicate_put(Batch &b, const DocumentRepl &doc);
+	bool put(Batch &b, const Document &doc);
 
 	///Replicate document to this storage
 	/**
@@ -399,7 +411,7 @@ public:
 		static DB getDB(const SourceType &src) {return src.getDB();}
 		template<typename Fn>
 		static auto observe(SourceType &src, Fn &&fn) {
-			return src.addObserver([fn = std::forward<Fn>(fn)](Batch &b, const Document &doc){
+			return src.addObserver([fn = std::forward<Fn>(fn)](Batch &b, const DocumentBase &doc){
 				return fn(b, std::initializer_list<json::Value>({doc.id}));
 			});
 		}
@@ -422,14 +434,14 @@ public:
 
 	};
 
-private :
-	static std::size_t testObserverFn(bool ret);
+	static Timestamp defaultTimestampFn();
 
 protected:
 	unsigned int revHist;
 	std::string wrbuff;
-
-
+	Timestamp (*timestampFn)();
+	void writeHeader(Batch &b, const json::Value &docId, bool replace,
+			bool wasdel, bool isdel, SeqID seq, json::Value rev);
 };
 
 
