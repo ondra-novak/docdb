@@ -39,6 +39,7 @@ public:
 	virtual KeySpaceID allocKeyspace(ClassID classId , const std::string_view &name) override;
 	virtual bool freeKeyspace(ClassID class_id, const std::string_view &name) override;
 	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) override;
+	virtual IObservable &getObservable(KeySpaceID kid,  ObservableFactory factory) override;
 
 protected:
 
@@ -55,6 +56,8 @@ protected:
 	bool sync_writes;
 	std::mutex lock;
 
+	using ObservableMap = std::unordered_map<KeySpaceID, std::unique_ptr<IObservable> >;
+	ObservableMap observableMap;
 
 };
 
@@ -123,6 +126,7 @@ public:
 	}
 	virtual bool freeKeyspace(ClassID, const std::string_view &) override {return false;}
 	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) override {return core->getApproximateSizes(ranges, nranges, sizes);}
+	virtual IObservable &getObservable(KeySpaceID kid, ObservableFactory factory) {return core->getObservable(kid,factory);}
 
 
 protected:
@@ -439,6 +443,13 @@ std::uint64_t DB::getKeyspaceSize(KeySpaceID kid) const {
 	core->getApproximateSizes(&r, 1, &res);
 	return res;
 
+}
+
+inline IObservable& DBCoreImpl::getObservable(KeySpaceID kid, ObservableFactory factory) {
+	std::lock_guard _(lock);
+	auto &ret = observableMap[kid];
+	if (ret == nullptr) ret = factory();
+	return *ret;
 }
 
 }

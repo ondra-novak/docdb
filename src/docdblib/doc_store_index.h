@@ -66,6 +66,7 @@ protected:
 	IndexFn indexFn;
 	const DocStore *source = nullptr;
 	SeqID lastSeqID = 0;
+	std::mutex lock;
 
 
 	void indexDoc(IndexBatch &emitBatch, const Document &doc);

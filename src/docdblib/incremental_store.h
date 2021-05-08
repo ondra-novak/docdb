@@ -7,6 +7,7 @@
 
 #ifndef SRC_DOCDBLIB_INCREMENTAL_STORE_H_
 #define SRC_DOCDBLIB_INCREMENTAL_STORE_H_
+#include <docdblib/observable.h>
 #include <condition_variable>
 #include <mutex>
 
@@ -23,9 +24,9 @@ namespace docdb {
 class IncrementalStoreView {
 public:
 
-	IncrementalStoreView(DB &db, const std::string_view &name);
+	IncrementalStoreView(DB db, const std::string_view &name);
 	///Initialize view for specified snapshot
-	IncrementalStoreView(const IncrementalStoreView &src, DB &snapshot);
+	IncrementalStoreView(const IncrementalStoreView &src, DB snapshot);
 	///Retrieve document under specified sequence id
 	/**
 	 * @param id sequence id
@@ -41,7 +42,7 @@ public:
 		Iterator(::docdb::Iterator &&args):Super(std::move(args)) {}
 
 		///Return document at given ID
-		json::Value doc() const;
+		json::Value value() const;
 		///Returns sequence id
 		SeqID seqId() const;
 	};
@@ -53,18 +54,41 @@ public:
 	 * new inserts. To iterate from the beginning, you need to pass 0.
 	 * @return iterator which is able to iterate new inserts
 	 */
-	Iterator scanFrom(SeqID from);
+	Iterator scanFrom(SeqID from) const;
 
 	///Creates global-wide key for given sequence id
 	Key createKey(SeqID seqId) const;
 
 	DB getDB() const {return db;}
 
+	///Add observer
+	/**
+	 * @param fn funciton, which receives three arguments (Batch &, SeqID, Value). The first argument
+	 * is reference to Batch, which can be used to include additional updates to other tables. Second argument
+	 * is sequence id of the newly inserted object, third argument is stored value
+	 *
+	 * @return handle for removing observer
+	 */
+	template<typename Fn>
+	auto addUpdateObserver(Fn &&fn)  {
+		return observers.addObserver(std::forward<Fn>(fn));
+	}
+	///Removes observer
+	/**
+	 * @param h handle returned by addUpdateObserver
+	 */
+	void removeUpdateObserver(IObservable::Handle h) {
+		observers.removeObserver(h);
+	}
+
 protected:
 
 	DB db;
 	///keyspace id
 	KeySpaceID kid;
+
+	using Obs = Observable<Batch &, SeqID, json::Value>;
+	Obs &observers = db.getObservable<Obs>(kid);
 
 };
 
@@ -102,10 +126,10 @@ public:
 	 * @param db database object
 	 * @param name name of the incremental store.
 	 */
-	IncrementalStore(DB &db, const std::string_view &name);
+	IncrementalStore(DB db, const std::string_view &name);
 
-	///Destroy incremental store
-	~IncrementalStore();
+	IncrementalStore(const IncrementalStore &source, DB snapshot);
+
 
 	///Put document to the store
 	/**
@@ -126,6 +150,7 @@ public:
 	SeqID put(Batch &batch, json::Value object);
 
 
+
 	///Erase specified id
 	/** Erase operation is not subject of notification */
 	void erase(SeqID id);
@@ -137,46 +162,6 @@ public:
 	 */
 	void erase(::docdb::Batch &b, SeqID id);
 
-
-
-
-	///Listen for changes
-	/** Called from separated thread listens for changes. The function returns when
-	 * change is detected or timeout ellapsed whichever comes first
-	 *
-	 * @param id last seen sequence id.
-	 * @param period period to wait
-	 * @return Function returns last sequence ID. This value should be above the first argument if
-	 * there is a change. It returns same sequence id, when time ellapsed. It returns 0, when
-	 * no waiting is longer possible - because the object is being destroyed. In this case, the
-	 * caller must not call any function of this object.
-	 *
-	 * @note because function cancelListen can be used anytime, the function can return earlier then
-	 * specified timeout. In this case returned value will be equal to specified sequenced ID
-	 */
-	template<typename _Rep, typename _Period>
-	SeqID listenFor(SeqID id, const std::chrono::duration<_Rep, _Period> &period);
-
-	///Listen for changes
-	/** Called from separated thread listens for changes. The function returns when
-	 * change is detected or timeout ellapsed whichever comes first
-	 *
-	 * @param id last seen sequence id.
-	 * @param __atime absolute time of timeout
-	 * @return Function returns last sequence ID. This value should be above the first argument if
-	 * there is a change. It returns same sequence id, when time ellapsed. It returns 0, when
-	 * no waiting is longer possible - because the object is being destroyed. In this case, the
-	 * caller must not call any function of this object.
-	 *
-	 * @note because function cancelListen can be used anytime, the function can return earlier then
-	 * specified timeout. In this case returned value will be equal to specified sequenced ID
-	 *
-	 */
-	template<typename _Clock, typename _Duration>
-	SeqID listenUntil(SeqID id, const std::chrono::time_point<_Clock, _Duration>& __atime);
-
-	///cancels all pending listens
-	void cancelListen();
 
 	///Create write batch - you can put multiple writes as single batch
 	/**
@@ -192,45 +177,21 @@ public:
 
 protected:
 
-	std::atomic<SeqID> lastSeqId;
+	SeqID lastSeqId;
 	unsigned int spin = 1;
 	unsigned int listeners = 0;
 
 	std::mutex lock;
-	std::condition_variable listen;
 	std::string write_buff;
 
 	SeqID findLastID() const;
 
+protected:
+
+public:
+
+
 };
-
-
-template<typename _Rep, typename _Period>
-inline docdb::SeqID docdb::IncrementalStore::listenFor(SeqID id, const std::chrono::duration<_Rep, _Period> &period) {
-	std::unique_lock lk(lock);
-	if (lastSeqId == 0) return lastSeqId;
-	unsigned int s = spin;
-	listeners++;
-	listen.wait_for(lk, period, [&]{
-		return lastSeqId != id || spin != s;
-	});
-	if (listeners-- == 0) listen.notify_all();
-	return lastSeqId;
-}
-
-template<typename _Clock, typename _Duration>
-inline docdb::SeqID docdb::IncrementalStore::listenUntil(SeqID id, const std::chrono::time_point<_Clock, _Duration> &atime) {
-	std::unique_lock lk(lock);
-	if (lastSeqId == 0) return lastSeqId;
-	unsigned int s = spin;
-	listeners++;
-	listen.wait_until(lk, atime, [&]{
-		return lastSeqId != id || spin != s;
-	});
-	if (listeners-- == 0) listen.notify_all();
-	return lastSeqId;
-}
-
 
 }
 #endif /* SRC_DOCDBLIB_INCREMENTAL_STORE_H_ */

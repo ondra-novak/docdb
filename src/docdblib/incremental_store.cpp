@@ -25,32 +25,31 @@ IncrementalStore::Batch::~Batch() {
 	mx.unlock();
 }
 
-IncrementalStoreView::IncrementalStoreView(DB &db, const std::string_view &name)
+IncrementalStoreView::IncrementalStoreView(DB db, const std::string_view &name)
 	:db(db), kid(db.allocKeyspace(KeySpaceClass::incremental_store, name))
 {
 
 }
 
-IncrementalStoreView::IncrementalStoreView(const IncrementalStoreView &src, DB &snapshot)
+IncrementalStoreView::IncrementalStoreView(const IncrementalStoreView &src, DB snapshot)
 	:db(snapshot),kid(src.kid) {
 
 }
 
-IncrementalStore::IncrementalStore(DB &db, const std::string_view &name)
+IncrementalStore::IncrementalStore(DB db, const std::string_view &name)
 	:IncrementalStoreView(db, name)
 	 ,lastSeqId(findLastID())
 {
 
 }
 
-IncrementalStore::~IncrementalStore() {
-	std::unique_lock lk(lock);
-	lastSeqId = 0;
-	listen.notify_all();
-	listen.wait(lk, [&]{
-		return listeners == 0;
-	});
+IncrementalStore::IncrementalStore(const IncrementalStore &source, DB snapshot)
+	:IncrementalStoreView(source, snapshot),
+	 lastSeqId(~SeqID(0))
+{
+
 }
+
 
 SeqID IncrementalStore::put(json::Value object) {
 	Batch b = createBatch();
@@ -59,11 +58,12 @@ SeqID IncrementalStore::put(json::Value object) {
 	return r;
 }
 SeqID IncrementalStore::put(Batch &b, json::Value object) {
+	if (lastSeqId == ~SeqID(0)) throw std::runtime_error("No space to write");
 	auto seqId = ++lastSeqId;
 	write_buff.clear();
 	json2string(object, write_buff);
 	b.Put(createKey(seqId),write_buff);
-	listen.notify_all();
+	observers.broadcast(b, seqId, object);
 	return seqId;
 }
 
@@ -85,7 +85,7 @@ void IncrementalStore::erase(::docdb::Batch &b, SeqID id) {
 	b.Delete(createKey(id));
 }
 
-IncrementalStore::Iterator IncrementalStoreView::scanFrom(SeqID from) {
+IncrementalStore::Iterator IncrementalStoreView::scanFrom(SeqID from) const{
 	Key k1 = createKey(from);
 	Key k2(kid+1);
 	return db.createIterator(Iterator::RangeDef{
@@ -93,15 +93,8 @@ IncrementalStore::Iterator IncrementalStoreView::scanFrom(SeqID from) {
 	});
 }
 
-void IncrementalStore::cancelListen() {
-	std::unique_lock lk(lock);
-	spin++;
-	listen.notify_all();
-}
-
-
-json::Value IncrementalStore::Iterator::doc() const {
-	return string2json(value());
+json::Value IncrementalStore::Iterator::value() const {
+	return string2json(::docdb::Iterator::value());
 }
 
 SeqID IncrementalStore::Iterator::seqId() const {

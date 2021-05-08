@@ -19,6 +19,7 @@
 #include "shared/refcnt.h"
 #include "iterator.h"
 #include "keyspace.h"
+#include "observable.h"
 
 namespace docdb {
 
@@ -41,6 +42,7 @@ enum SnapshotMode {
 
 class DBCore;
 using PDBCore = ondra_shared::RefCntPtr<DBCore>;
+
 
 ///Abstract interface defines minimal set of function defined at core level
 class DBCore: public ondra_shared:: RefCntObj {
@@ -108,6 +110,10 @@ public:
 
 
 	virtual void getApproximateSizes(const std::pair<Key,Key> *ranges, int nranges, std::uint64_t *sizes) = 0;
+
+	virtual IObservable &getObservable(KeySpaceID kid, ObservableFactory factory) = 0;
+
+
 };
 
 
@@ -232,8 +238,14 @@ public:
 
 	std::uint64_t getKeyspaceSize(KeySpaceID kod) const;
 
-
 	void compact() {core->compact();}
+
+
+	///Retrieves observable object for given keyspace
+	template<typename X>
+	X &getObservable(KeySpaceID kid) {
+		return dynamic_cast<X &>(core->getObservable(kid, X::getFactory()));
+	}
 
 protected:
 	PDBCore core;

@@ -128,7 +128,7 @@ AttachmentView::Iterator AttachmentView::scan(bool backward) {
 	return jmap.prefix(json::array, backward);
 }
 
-Attachments::Attachments(const DocStoreViewBase &docStore, const std::string_view &name, std::size_t revision, AttachmentIndexFn &&indexFn)
+Attachments::Attachments(const DocStoreView &docStore, const std::string_view &name, std::size_t revision, AttachmentIndexFn &&indexFn)
 :AttachmentView(docStore.getDB(), name)
 ,source(&docStore)
 ,indexFn(std::move(indexFn))
@@ -150,7 +150,7 @@ Attachments::Attachments(DB db, const std::string_view &name, std::size_t revisi
 	loadMetadata();
 }
 
-void Attachments::setSource(const DocStoreViewBase &docStore) {
+void Attachments::setSource(const DocStoreView &docStore) {
 	source = &docStore;
 }
 
@@ -187,7 +187,7 @@ protected:
 
 };
 
-bool Attachments::run_gc(const DocStoreViewBase &source) {
+bool Attachments::run_gc(const DocStoreView &source) {
 	std::unique_lock m(lock, std::try_to_lock);
 	if (!m.owns_lock()) {
 		scheduleUpdate = true;
@@ -331,7 +331,7 @@ void Attachments::unlockGC() {
 	}
 }
 
-void Attachments::run_gc_lk(Batch &b, const DocStoreViewBase &source) {
+void Attachments::run_gc_lk(Batch &b, const DocStoreView &source) {
 	AttachSet emitFn;
 	std::vector<std::string_view> attchSet;
 
@@ -449,7 +449,7 @@ void Attachments::purgeDoc(std::string_view docId) {
 	jmap.getDB().commitBatch(b);
 }
 
-void AttachmentView::Metadata::eraseSegments(const JsonMap &jmap, Batch &b) {
+void AttachmentView::Metadata::eraseSegments(const JsonMapBase &jmap, Batch &b) {
 	while (!segments.empty()) {
 		SegID s = segments.front();
 		segments.pop();

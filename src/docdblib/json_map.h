@@ -13,16 +13,34 @@
 
 namespace docdb {
 
-class JsonMap: public JsonMapView {
+///JsonMapBase is universal lowlevel map which maps json value to json value
+/**
+ * JsonMapBase is intended to be used by other objects when they implementing their internals
+ * As top level standalone object you should use JsonMap,
+ */
+class JsonMapBase: public JsonMapView {
 public:
 
 	using JsonMapView::JsonMapView;
 
 	void set(Batch &b, const json::Value &key, const json::Value &value);
+	void erase(Batch &b, const json::Value &key);
+	void clear();
+};
+
+///JsonMap - maps json value to a json value
+/**
+ * It is general purpose map. It also supports observers
+ */
+class JsonMap: public JsonMapBase {
+public:
+
+	JsonMap(DB db, const std::string_view &name);
+
+	void set(Batch &b, const json::Value &key, const json::Value &value);
 	void set(const json::Value &key, const json::Value &value);
 	void erase(Batch &b, const json::Value &key);
 	void erase(const json::Value &key);
-	void clear();
 
 
 	template<typename Fn>
@@ -40,7 +58,7 @@ public:
 			static const DB &getDB(const SourceType &src) {return src.db;}
 			template<typename Fn>
 			static auto observe(SourceType &src, Fn &&fn) {
-				return src.addObserver([fn = std::move(fn)](Batch &b, const json::Value &k){
+				return src.addObserver([fn = std::move(fn)](Batch &b, const json::Value &k, const json::Value &){
 					return fn(b, std::initializer_list<json::Value>({k}));
 				});
 			}
@@ -63,9 +81,12 @@ public:
 		};
 
 
+
+	using Obs = Observable<Batch &, json::Value, json::Value>;
+
 protected:
 
-	Observable<Batch &, json::Value> observers;
+	Obs &observers;
 
 
 

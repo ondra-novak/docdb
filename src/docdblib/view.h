@@ -234,9 +234,21 @@ public:
 
 	static void serializeDocKeys(const std::vector<json::Value> &keys, std::string &buffer);
 
+	template<typename Fn>
+	auto addKeyUpdateObserver(Fn &&fn)  {
+		return observable.addObserver(std::forward<Fn>(fn));
+	}
+	void removeKeyUpdateObserver(IObservable::Handle h) {
+		observable.removeObserver(h);
+	}
+
+
 protected:
 	DB db;
 	KeySpaceID kid;
+
+	using Obs = Observable<Batch &, const std::vector<json::Value> &>;
+	Obs &observable = db.getObservable<Obs>(kid);
 
 
 };
@@ -341,24 +353,12 @@ public:
 
 
 protected:
-	using Obs = Observable<Batch &, const std::vector<json::Value> &>;
-	std::mutex lock;
-	Obs observers;
 
 	void callUpdate() {static_cast<Derived *>(this)->update();}
 
 
 
 public:
-	template<typename Fn>
-	auto addKeyUpdateObserver(Fn &&fn)  {
-		std::lock_guard _(lock);
-		return observers.addObserver(std::forward<Fn>(fn));
-	}
-	void removeKeyUpdateObserver(Obs::Handle h) {
-		std::lock_guard _(lock);
-		observers.removeObserver(h);
-	}
 
 
 	struct AggregatorAdapter {
@@ -511,8 +511,7 @@ inline void docdb::UpdatableView<Derived>::commitIndex(IndexBatch &batch, bool b
 	//commit index to batch
 	batch.commit();
 	//broadcast keys to observers
-	std::lock_guard _(lock);
-	observers.broadcast(batch, batch.keys);
+	observable.broadcast(batch, batch.keys);
 	//commit batch if batch_more is false
 	if (!batch_more) {
 		db.commitBatch(batch);

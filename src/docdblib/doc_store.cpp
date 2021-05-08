@@ -18,489 +18,234 @@
 using json::Value;
 namespace docdb {
 
-DocStoreViewBase::DocStoreViewBase(const IncrementalStoreView &incview, const std::string_view &name)
-:incview(incview)
+DocStoreView::DocStoreView(DB db, const std::string_view &name)
+		:incview(db, name)
+		 ,active(db, (ClassID)KeySpaceClass::document_index, name)
+		 ,erased(db, (ClassID)KeySpaceClass::graveyard_index, name)
+		 ,observable(db.getObservable<Obs>(db.allocKeyspace(KeySpaceClass::document_index, name)))
 {
-	DB db = incview.getDB();
-	kid = db.allocKeyspace(KeySpaceClass::document_index, name);
-	gkid = db.allocKeyspace(KeySpaceClass::graveyard_index, name);
 }
 
-Key DocStoreViewBase::createKey(const json::Value &docId, bool deleted) const {
-	Key r(deleted?gkid:kid, guessKeySize(docId));
-	r.append(docId);
-	return r;
+DocStoreView::DocStoreView(const DocStoreView &source, DB snapshot)
+	:incview(source.incview, snapshot)
+	,active(source.active, snapshot)
+	,erased(source.erased, snapshot)
+	,observable(source.observable)
+{
 }
 
-const DocStoreViewBase::DocumentHeaderData *DocStoreViewBase::DocumentHeaderData::map(const std::string_view &buffer, unsigned int &revCount) {
-	revCount = buffer.size() / 8 - 1;
-	return reinterpret_cast<const DocumentHeaderData *>(buffer.data());
+json::Value DocStoreView::getDocHeader(const DocID &docId, bool &isdel) const {
+	auto dochdr = active.lookup(docId);
+	isdel = false;
+	if (!dochdr.defined()) {
+		isdel = true;
+		dochdr = erased.lookup(docId);
+	}
+	return dochdr;
+
 }
 
-const DocStoreViewBase::DocumentHeaderData* DocStoreViewBase::findDoc(
-		const json::Value &docId, unsigned int &revCount) const {
-	return findDoc(incview.getDB(), docId, revCount);
+DocumentRepl DocStoreView::replicate_get(const DocID &docId) const {
+	bool isdel;
+	auto dochdr = getDocHeader(docId, isdel);
+	if (!dochdr.defined()) {
+		return {
+			docId,
+			json::undefined,
+			0,
+			true,
+			json::undefined
+		};
+	}
+	SeqID seq = dochdr[0].getUIntLong();
+	auto docdata = incview.get(seq);
+	return {docId,
+		docdata[indexContent],
+		docdata[indexTimestamp].getUIntLong(),
+		isdel,
+		docdata[indexRevisions]
+	};
 }
 
+Document DocStoreView::get(const DocID &docId) const {
+	bool isdel;
+	auto dochdr = getDocHeader(docId, isdel);
+	if (!dochdr.defined()) {
+		return {
+			docId,
+			json::undefined,
+			0,
+			true,
+			0
+		};
+	}
+	SeqID seq = dochdr[0].getUIntLong();
+	auto docdata = incview.get(seq);
+	return {docId,
+		docdata[indexContent],
+		docdata[indexTimestamp].getUIntLong(),
+		isdel,
+		docdata[indexRevisions][0].getUIntLong()
+	};
+}
 
-const DocStoreViewBase::DocumentHeaderData* DocStoreViewBase::findDoc(const DB &snapshot,
-		const json::Value &docId, unsigned int &revCount) const {
-	const DocumentHeaderData *hdr = nullptr;
-	auto& val = DB::getBuffer();
-	Key kx = createKey(docId, false);
-	if (!snapshot.get(kx, val)) {
-		kx.transfer(gkid);
-		if (snapshot.get(kx, val)) {
-			hdr = DocumentHeaderData::map(val, revCount);
-		}
+DocRevision DocStoreView::getRevision(const DocID &docId) const {
+	bool isdel;
+	auto dochdr = getDocHeader(docId, isdel);
+	return dochdr[1].getUIntLong();
+}
+
+DocStoreView::Status DocStoreView::getStatus(const DocID &docId) const {
+	bool isdel;
+	auto dochdr = getDocHeader(docId, isdel);
+	if (dochdr.defined()) {
+		return isdel?deleted:exists;
 	} else {
-		hdr = DocumentHeaderData::map(val, revCount);
+		return not_exists;
+	}
+
+}
+
+DocStoreView DocStoreView::getSnapshot() const {
+	return DocStoreView(*this, getDB().getSnapshot(SnapshotMode::writeError));
+}
+
+DocStoreView::Iterator DocStoreView::scan() const {
+	return Iterator(incview, getSnapshot().active.scan());
+}
+
+DocStoreView::Iterator DocStoreView::scan(bool backward) const {
+	return Iterator(incview, getSnapshot().active.scan(backward));
+}
+
+DocStoreView::Iterator DocStoreView::range(const DocID &from, const DocID &to, bool include_upper_bound) const {
+	return Iterator(incview, getSnapshot().active.range(from, to, include_upper_bound));
+}
+DocStoreView::Iterator DocStoreView::prefix(const DocID &prefix, bool backward) const {
+	return Iterator(incview, getSnapshot().active.range(prefix, backward));
+}
+DocStoreView::Iterator DocStoreView::scanDeleted() const {
+	return Iterator(incview, getSnapshot().erased.scan());
+}
+DocStoreView::Iterator DocStoreView::scanDeleted(const DocID &prefix) const {
+	return Iterator(incview, getSnapshot().erased.prefix(prefix));
+}
+
+DocStoreView::ChangesIterator DocStoreView::scanChanges(SeqID from) const {
+	return ChangesIterator(incview.scanFrom(from));
+}
+
+json::Value DocStoreView::Iterator::id() const {
+	return key();
+}
+
+bool DocStoreView::Iterator::next() {
+	cache = json::undefined;
+	hdr = json::undefined;
+	return Super::next();
+}
+
+bool DocStoreView::Iterator::peek() {
+	cache = json::undefined;
+	hdr = json::undefined;
+	return Super::peek();
+}
+
+const json::Value &DocStoreView::Iterator::getDocContent() const {
+	if (!cache.defined()) {
+		cache = incview.get(seqId());
+	}
+	return cache;
+}
+
+const json::Value &DocStoreView::Iterator::getDocHdr() const {
+	if (!hdr.defined()) {
+		hdr = value();
 	}
 	return hdr;
 }
 
-DocStoreViewBase::Iterator DocStoreViewBase::scan() const {
-	return scan(false);
+json::Value DocStoreView::Iterator::content() const {
+	return getDocContent()[indexContent];
 }
 
-DocStoreViewBase::Iterator DocStoreViewBase::range_ex(
-		const std::string_view &from, const std::string_view &to,
-		bool exclude_begin, bool exclude_end) const {
-
-	DB snapshot = incview.getDB().getSnapshot();
-	Iterator iter(IncrementalStoreView(incview, snapshot),
-			snapshot.createIterator(Iterator::RangeDef{Key(kid, from), Key(kid, to), exclude_begin, exclude_end}));
-	return iter;
+bool DocStoreView::Iterator::deleted() const {
+	return getDocContent()[indexDeleted].getBool();
 }
 
-DocStoreViewBase::Iterator DocStoreViewBase::range(
-		const std::string_view &from, const std::string_view &to, bool include_upper_bound) const {
-
-	DB snapshot = incview.getDB().getSnapshot();
-	bool backward = from > to;
-	Iterator iter(IncrementalStoreView(incview, snapshot),
-			snapshot.createIterator(Iterator::RangeDef{Key(kid, from), Key(kid, to), backward && !include_upper_bound, !backward && !include_upper_bound}));
-	return iter;
+SeqID DocStoreView::Iterator::seqId() const {
+	return SeqID(getDocHdr()[0].getUIntLong());
 }
 
-DocStoreViewBase::Iterator DocStoreViewBase::prefix(
-		const std::string_view &prefix, bool backward) const {
-	DB snapshot = incview.getDB().getSnapshot();
-	Key b(kid, prefix);
-	Iterator iter(IncrementalStoreView(incview, snapshot),
-			backward?snapshot.createIterator(Iterator::RangeDef{Key::upper_bound(b),b, true, false})
-					:snapshot.createIterator(Iterator::RangeDef{b, Key::upper_bound(b), false, true}));
-	return iter;
-
-}
-DocStoreViewBase::Iterator DocStoreViewBase::scanDeleted() const {
-	return scanDeleted(std::string_view());
+DocRevision DocStoreView::Iterator::revision() const {
+	return SeqID(getDocHdr()[1].getUIntLong());
 }
 
-DocStoreViewBase::Iterator DocStoreViewBase::scanDeleted(const std::string_view &prefix) const {
-	DB snapshot = incview.getDB().getSnapshot();
-	Key b(gkid,prefix);
-	Iterator iter(IncrementalStoreView(incview, snapshot),
-					snapshot.createIterator(Iterator::RangeDef{b, Key::upper_bound(b), false, true}));
-	return iter;
-
-}
-
-DocStoreViewBase::ChangesIterator DocStoreViewBase::scanChanges(SeqID from) const {
-	DB snapshot = incview.getDB().getSnapshot();
-	IncrementalStoreView myinc(incview, snapshot);
-	return ChangesIterator(DocStoreViewBase(*this, myinc),myinc.scanFrom(from));
-}
-
-DocStoreViewBase::DocStoreViewBase(const DocStoreViewBase &src,
-		const IncrementalStoreView &incview)
-:incview(incview),kid(src.kid),gkid(src.gkid)
-{
-}
-
-DocRevision DocStoreViewBase::getRevision(const std::string_view &docId) const {
-	unsigned int revCount;
-	auto hdr = findDoc(docId, revCount);
-	if (!hdr || !revCount) return 0;
-	else return hdr->getRev(0);
-}
-
-DocStoreViewBase::Status DocStoreViewBase::getStatus(const std::string_view &docId) const {
-	unsigned int revCount;
-	auto hdr = findDoc(docId, revCount);
-	if (!hdr || !revCount) return not_exists;
-	return hdr->isDeleted()?deleted:exists;
-
-}
-
-
-DocStoreViewBase::Iterator DocStoreViewBase::scan(bool backward) const {
-	return prefix(std::string_view(), backward);
-}
-
-json::Value DocStoreViewBase::parseRevisions(const DocumentHeaderData *hdr, unsigned int revCount) {
-	auto revisions = json::ArrayValue::create(revCount);
-	for (unsigned int i = 0; i < revCount; i++) {
-		Value rev(hdr->getRev(i));
-		revisions->push_back(rev.getHandle());
-	}
-	return Value(json::PValue::staticCast(revisions));
-}
-
-DocumentRepl DocStoreViewBase::replicate_get(const std::string_view &docId) const {
-	DB snapshot = incview.getDB().getSnapshot();
-	IncrementalStoreView myincview(incview, snapshot);
-	unsigned int revCount;
-	const DocumentHeaderData *hdr = findDoc(snapshot, docId, revCount);
-	if (!hdr) return DocumentRepl{std::string(docId),Value(),0,true,json::array};
-	auto revisions = parseRevisions(hdr, revCount);
-	SeqID seqId = hdr->getSeqID();
-	bool deleted = hdr->isDeleted();
-
-	json::Value doc = myincview.get(seqId);
-	json::Value timestamp = doc[index_timestamp];
-	json::Value content = doc[index_content];
-	return DocumentRepl{
-		std::string(docId),
-		content,
-		timestamp.getUIntLong(),
-		deleted,
-		revisions
-	};
-
-
-}
-
-SeqID DocStoreViewBase::DocumentHeaderData::getSeqID() const {
-	return string2index(std::string_view(seqIdDel)) >> 1;
-}
-
-bool DocStoreViewBase::DocumentHeaderData::isDeleted() const {
-	return (string2index(std::string_view(seqIdDel)) & 1) != 0;
-}
-
-DocRevision DocStoreViewBase::DocumentHeaderData::getRev(unsigned int idx) const {
-	return string2index(std::string_view(revList[idx]));
-}
-
-Document DocStoreViewBase::get(const std::string_view &docId) const {
-	DB snapshot = incview.getDB().getSnapshot();
-	IncrementalStoreView myincview(incview, snapshot);
-	unsigned int revCount;
-	const DocumentHeaderData *hdr = findDoc(snapshot, docId, revCount);
-	if (!hdr) return Document{std::string(docId),Value(),0,true,0};
-
-	auto rev = revCount?hdr->getRev(0):DocRevision(0);
-	auto seqId = hdr->getSeqID();
-	auto deleted = hdr->isDeleted();
-
-
-	json::Value doc = myincview.get(seqId);
-	json::Value timestamp = doc[index_timestamp];
-	json::Value content = doc[index_content];
-	return Document{
-		std::string(docId),
-		content,
-		timestamp.getUIntLong(),
-		deleted,
-		rev
+Document DocStoreView::Iterator::get() const {
+	json::Value d = getDocContent();
+	return {
+		id(),d[indexContent],d[indexTimestamp].getUIntLong(),d[indexDeleted].getBool(), revision()
 	};
 }
 
-DocStoreViewBase::Iterator::Iterator(const IncrementalStoreView &incview, Super &&src)
-	:Super(std::move(src)),incview(incview) {}
-
-std::string_view DocStoreViewBase::Iterator::id() const {
-	return key().content();
-}
-
-json::Value DocStoreViewBase::Iterator::content() const {
-	unsigned int revCount;
-	auto hdr = DocumentHeaderData::map(value(),revCount);
-	return incview.get(hdr->getSeqID())[index_content];
-}
-
-
-bool DocStoreViewBase::Iterator::deleted() const {
-	unsigned int dummy;
-	return DocumentHeaderData::map(value(),dummy)->isDeleted();
-}
-
-SeqID DocStoreViewBase::Iterator::seqId() const {
-	unsigned int dummy;
-	return DocumentHeaderData::map(value(),dummy)->getSeqID();
-}
-
-DocRevision DocStoreViewBase::Iterator::revision() const {
-	unsigned int dummy;
-	auto hdr = DocumentHeaderData::map(value(),dummy);
-	if (dummy) return hdr->getRev(0); else return 0;
-}
-
-Document DocStoreViewBase::Iterator::get() const {
-	unsigned int revCount;
-	auto hdr = DocumentHeaderData::map(value(),revCount);
-	auto docData = incview.get(hdr->getSeqID());
-
-	return Document{
-		std::string(id()),
-		docData[index_content],
-		docData[index_timestamp].getUInt(),
-		hdr->isDeleted(),
-		revCount?hdr->getRev(0):0
-	};
-
-}
-
-DocumentRepl DocStoreViewBase::Iterator::replicate_get() const {
-	unsigned int revCount;
-	auto hdr = DocumentHeaderData::map(value(),revCount);
-	auto docData = incview.get(hdr->getSeqID());
-	auto revList = parseRevisions(hdr, revCount);
-
-	return DocumentRepl{
-		std::string(id()),
-		docData[index_content],
-		docData[index_timestamp].getUInt(),
-		hdr->isDeleted(),
-		revList
+DocumentRepl DocStoreView::Iterator::replicate_get() const {
+	json::Value d = getDocContent();
+	return {
+		id(),d[indexContent],d[indexTimestamp].getUIntLong(),d[indexDeleted].getBool(), d[indexRevisions]
 	};
 }
 
-DocStoreViewBase::ChangesIterator::ChangesIterator(const DocStoreViewBase &docStore, Super &&iter)
-:Super(std::move(iter))
-,docStore(docStore)
-{
+DocStoreView::DocID DocStoreView::ChangesIterator::id() const {
+	return getData()[indexID];
 }
 
-std::string DocStoreViewBase::ChangesIterator::id() const {
-	return Super::doc()[index_docId].getString();
+bool DocStoreView::ChangesIterator::next() {
+	cache = json::undefined;
+	return Super::next();
 }
 
-json::Value DocStoreViewBase::ChangesIterator::content() const {
-	return Super::doc()[index_content].getString();
+bool DocStoreView::ChangesIterator::peek() {
+	cache = json::undefined;
+	return Super::peek();
 }
 
-bool DocStoreViewBase::ChangesIterator::deleted() const {
-	return get().deleted;
+const json::Value DocStoreView::ChangesIterator::getData() const {
+	if (!cache.defined()) cache = Super::value();
+	return cache;
 }
 
-Document DocStoreViewBase::ChangesIterator::get() const {
-	Value v = Super::doc();
-	auto id = v[index_docId].getString();
-	unsigned int dummy;
-	auto hdr = docStore.findDoc(id, dummy);
-	return Document {
-		std::string(id),
-		v[index_content],
-		v[index_timestamp].getUInt(),
-		hdr->isDeleted(),
-		dummy?hdr->getRev(0):0
+json::Value DocStoreView::ChangesIterator::content() const {
+	return getData()[indexContent];
+}
+
+bool DocStoreView::ChangesIterator::deleted() const {
+	return getData()[indexDeleted].getBool();
+}
+
+DocRevision DocStoreView::ChangesIterator::revision() const {
+	return getData()[indexRevisions][0].getUIntLong();
+}
+
+Document DocStoreView::ChangesIterator::get() const {
+	auto data = getData();
+	return {
+		data[indexID],
+		data[indexContent],
+		data[indexTimestamp].getUIntLong(),
+		data[indexDeleted].getBool(),
+		data[indexRevisions][0].getUIntLong()
 	};
 }
 
-SeqID DocStoreViewBase::ChangesIterator::seqId() const {
-	return Super::seqId();
-}
-
-DocRevision DocStoreViewBase::ChangesIterator::revision() const {
-	return get().rev;
-}
-
-DocumentRepl DocStoreViewBase::ChangesIterator::replicate_get() const {
-	Value v = Super::doc();
-	auto id = v[index_docId].getString();
-	unsigned int dummy;
-	auto hdr = docStore.findDoc(id, dummy);
-	auto revList = parseRevisions(hdr, dummy);
-
-	return DocumentRepl{
-		std::string(id),
-		v[index_content],
-		v[index_timestamp].getUInt(),
-		hdr->isDeleted(),
-		revList
+DocumentRepl DocStoreView::ChangesIterator::replicate_get() const {
+	auto data = getData();
+	return {
+		data[indexID],
+		data[indexContent],
+		data[indexTimestamp].getUIntLong(),
+		data[indexDeleted].getBool(),
+		data[indexRevisions]
 	};
-
-}
-
-DocStoreView::DocStoreView(DB &db, const std::string_view &name)
-:Super(IncrementalStoreView(db, name), name)
-{
-
-}
-
-DocStore::DocStore(DB &db, const std::string &name, const DocStore_Config &cfg)
-:Super(IncrementalStoreView(db, name), name)
-,incstore(db,name)
-,revHist(cfg.rev_history_length)
-{
-
-}
-
-bool DocStore::replicate_put(const DocumentRepl &doc) {
-	unsigned int revCnt = 0;
-	SeqID prevSeqID = 0;
-	bool wasDel = false;
-
-	//create batch - it also locks incremental store - only one batch can be active
-	IncrementalStore::Batch b = incstore.createBatch();
-	//retrieve header of current document
-	const DocumentHeaderData *hdr = findDoc(doc.id, revCnt);
-	//in case, that documen was found
-	if (hdr != nullptr && revCnt) {
-		//retrieve lastest revision from the header
-		auto r = hdr->getRev(0);
-		//find revision in list of the revisions
-		auto p = doc.revisions.findIndex([&](const Value &x) {
-			return x.getUIntLong() == r;
-		});
-		//if revision not found, it is conflict, because we cannot connect this document
-		if (p == -1) return false;
-		//if revision is same, assume the content is also same
-		if (p == 0) return true;
-		//retrieve previous sequence id - to connect history (if enabled)
-		prevSeqID = hdr->getSeqID();
-		//retrieve whether document has been deleted
-		wasDel = hdr->isDeleted();
-	}
-	//retrieve current timestamp
-	auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-	//store document to the incremental store (receive new seqId)
-	SeqID newSeq = incstore.put(b, {doc.id,timestamp,doc.content});
-	//receive a temporary buffer
-	wrbuff.clear();
-	//push sequence id and deleted flag to the buffer
-	Index2String_Push<8>::push((newSeq<<1) | (doc.deleted?1:0), wrbuff);
-	//calculate count of revisions
-	auto cnt = std::min<std::size_t>(doc.revisions.size(), revHist);
-	//push all revisions to the buffer
-	for (unsigned int i = 0; i < cnt; i++) Index2String_Push<8>::push(doc.revisions[i].getUIntLong(), wrbuff);
-	//put document header to batch
-	b.Put(createKey(doc.id, doc.deleted), wrbuff);
-	//determine, whether it is need to delete graveyard
-	//there is gravyeyard and state of deletion changed
-	if (wasDel != doc.deleted) {
-		//delete document from the other keyspace
-		b.Delete(Key(wasDel?gkid:kid));
-	}
-	//if history is not enabled and there is prevSeqID
-	if (prevSeqID) {
-		//erase prevSeqID from the incremental store
-		incstore.erase(b, prevSeqID);
-	}
-	//commit whole batch
-	b.commit();
-	//unlock batch
-	return true;
-}
-
-bool DocStore::put(const Document &doc) {
-	unsigned int revCnt = 0;
-	SeqID prevSeqID = 0;
-	bool wasDel = false;
-	DocRevision newRev = std::hash<json::Value>()(doc.content);
-
-	//create batch - it also locks incremental store - only one batch can be active
-	IncrementalStore::Batch b = incstore.createBatch();
-	//retrieve header of current document
-	const DocumentHeaderData *hdr = findDoc(doc.id, revCnt);
-	//in case, that documen was found
-	if (hdr != nullptr && revCnt) {
-		//retrieve lastest revision from the header
-		auto r = hdr->getRev(0);
-		if (r != doc.rev) return false;
-		//retrieve previous sequence id - to connect history (if enabled)
-		prevSeqID = hdr->getSeqID();
-		//retrieve whether document has been deleted
-		wasDel = hdr->isDeleted();
-	} else {
-		if (doc.rev) return false;
-	}
-	//retrieve current timestamp
-	auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-	//store document to the incremental store (receive new seqId)
-	SeqID newSeq = incstore.put(b, {doc.id,timestamp,doc.content});
-	//receive a temporary buffer
-	wrbuff.clear();
-	//push sequence id and deleted flag to the buffer
-	Index2String_Push<8>::push((newSeq<<1) | (doc.deleted?1:0), wrbuff);
-	//calculate count of revisions
-	auto cnt = std::min<unsigned int>(revCnt, revHist-1);
-	//push new revision
-	Index2String_Push<8>::push(newRev, wrbuff);
-	//push other revisions - we can simply copy bytes
-	wrbuff.append(reinterpret_cast<const char *>(hdr->revList), 8*cnt);
-	//put document header to batch
-	b.Put(createKey(doc.id, doc.deleted), wrbuff);
-	//determine, whether it is need to delete graveyard
-	//there is gravyeyard and state of deletion changed
-	if (wasDel != doc.deleted) {
-		//delete document from the other keyspace
-		b.Delete(Key(wasDel?gkid:kid));
-	}
-	//if history is not enabled and there is prevSeqID
-	if (prevSeqID) {
-		//erase prevSeqID from the incremental store
-		incstore.erase(b, prevSeqID);
-	}
-	//commit whole batch
-	b.commit();
-	//unlock batch
-	return true;
-}
-
-
-bool DocStore::erase(const std::string_view &id, const DocRevision &rev) {
-	return put(Document({std::string(id), Value(), 0, true, rev}));
-}
-
-bool DocStore::purge(const std::string_view &id) {
-	unsigned int revCnt = 0;
-	//create batch - it also locks incremental store - only one batch can be active
-	IncrementalStore::Batch b = incstore.createBatch();
-	//retrieve header of current document
-	const DocumentHeaderData *hdr = findDoc(id, revCnt);
-	//in case, that documen was found
-	if (hdr != nullptr && revCnt) {
-
-		b.Delete(Key(hdr->isDeleted()?gkid:kid, id));
-
-		incstore.erase(b, hdr->getSeqID());
-
-		b.commit();
-
-		return true;
-	} else {
-		return false;
-	}
-
-
-}
-
-bool DocStore::purge(const std::string_view &id, const DocRevision &rev) {
-	unsigned int revCnt = 0;
-	//create batch - it also locks incremental store - only one batch can be active
-	IncrementalStore::Batch b = incstore.createBatch();
-	//retrieve header of current document
-	const DocumentHeaderData *hdr = findDoc(id, revCnt);
-	//in case, that documen was found
-	if (hdr != nullptr && revCnt && hdr->getRev(0) == rev) {
-
-		b.Delete(Key(hdr->isDeleted()?gkid:kid, id));
-
-		incstore.erase(b, hdr->getSeqID());
-
-		b.commit();
-
-		return true;
-	} else {
-		return false;
-	}
-}
-
-void DocStore::cancelListen() {
-	incstore.cancelListen();
 }
 
 } /* namespace docdb */

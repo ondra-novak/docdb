@@ -10,25 +10,50 @@
 #include <algorithm>
 #include <memory>
 #include <vector>
+#include <mutex>
 
 namespace docdb {
 
+class IObservable {
+public:
+	using Handle = std::size_t;
+
+	virtual void clear() = 0;
+	virtual void removeObserver(Handle h) = 0;
+	virtual bool empty() const = 0;
+
+	virtual ~IObservable() {};
+};
+
+typedef std::unique_ptr<IObservable> (*ObservableFactory)();
+
 template<typename ... Args>
-class Observable {
+class Observable: public IObservable {
 public:
 
-	using Handle = std::size_t;
 
 	template<typename Fn>
 	auto addObserver(Fn &&fn) -> decltype(std::is_invocable<Handle, bool(Args...)>::value);
-	void removeObserver(Handle h);
+	virtual void removeObserver(Handle h) override;
 	template<typename ... XArgs>
 	void broadcast(XArgs && ... args);
-	bool empty() const {return !list.empty();}
-	void clear() {list.clear();}
+	virtual bool empty() const override {
+		std::lock_guard _(lock);
+		return !list.empty();}
+	virtual void clear() override {
+		std::lock_guard _(lock);
+		list.clear();
+	}
+
+	static ObservableFactory getFactory() {
+		return []() -> std::unique_ptr<IObservable>{
+			return std::make_unique<Observable>();
+		};
+	}
 
 protected:
 
+	mutable std::mutex lock;
 	Handle nxt = 1;
 	class Observer {
 	public:
@@ -46,6 +71,8 @@ protected:
 template<typename ... Args>
 template<typename Fn>
 inline auto Observable<Args ... >::addObserver(Fn &&fn)-> decltype(std::is_invocable<Handle, bool(Args...)>::value) {
+	std::lock_guard _(lock);
+
 	Handle h = nxt++;
 	class Obs: public Observer {
 	public:
@@ -64,6 +91,8 @@ inline auto Observable<Args ... >::addObserver(Fn &&fn)-> decltype(std::is_invoc
 
 template<typename ... Args>
 inline void Observable<Args ...>::removeObserver(Handle h) {
+	std::lock_guard _(lock);
+
 	auto iter = std::remove_if(list.begin(), list.end(), [&](const auto &itm){
 		return itm.first == h;
 	});
@@ -73,6 +102,8 @@ inline void Observable<Args ...>::removeObserver(Handle h) {
 template<typename ... Args>
 template<typename ... XArgs>
 inline void Observable<Args ...>::broadcast(XArgs &&... args) {
+	std::lock_guard _(lock);
+
 	auto iter = std::remove_if(list.begin(), list.end(), [&](const auto &itm){
 		return !itm.second->exec(std::forward<XArgs>(args)...);
 	});

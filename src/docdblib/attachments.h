@@ -48,7 +48,7 @@ public:
 
 		void parse(json::Value jmetadata);
 		json::Value compose();
-		void eraseSegments(const JsonMap &jmap, Batch &b);
+		void eraseSegments(const JsonMapBase &jmap, Batch &b);
 	};
 
 
@@ -137,7 +137,7 @@ public:
 
 
 protected:
-	JsonMap jmap;
+	JsonMapBase jmap;
 
 };
 
@@ -197,11 +197,11 @@ public:
 	/** This value affects only newly created instances */
 	static std::size_t cfgMaxSegment; /*=50000*/
 
-	Attachments(const DocStoreViewBase &docStore, const std::string_view &name, std::size_t revision, AttachmentIndexFn &&indexFn);
+	Attachments(const DocStoreView &docStore, const std::string_view &name, std::size_t revision, AttachmentIndexFn &&indexFn);
 	Attachments(DB db, const std::string_view &name, std::size_t revision, AttachmentIndexFn &&indexFn);
 
 	///Change document source
-	void setSource(const DocStoreViewBase &docStore);
+	void setSource(const DocStoreView &docStore);
 
 	void run_gc();
 
@@ -212,7 +212,7 @@ public:
 	 * @retval false delayed, upload lock is held (note function will not schedule
 	 * 			automatic update after lock is release, this need to have source set permanetly
 	 */
-	bool run_gc(const DocStoreViewBase &source);
+	bool run_gc(const DocStoreView &source);
 
 
 	///list missing attachments (attachments refered by the document but not stored)
@@ -322,7 +322,7 @@ public:
 
 protected:
 
-	const DocStoreViewBase *source;
+	const DocStoreView *source;
 	AttachmentIndexFn indexFn;
 	std::size_t minSegment;
 	std::size_t maxSegment;
@@ -339,7 +339,7 @@ protected:
 	void lockGC();
 	void unlockGC();
 	void updateMetadata(Batch &b);
-	void run_gc_lk(Batch &b, const DocStoreViewBase &source);
+	void run_gc_lk(Batch &b, const DocStoreView &source);
 
 	void onCommit(Batch &b, std::queue<SegID> &segments);
 

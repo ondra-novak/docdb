@@ -11,11 +11,10 @@
 #include "formats.h"
 namespace docdb {
 
-void JsonMap::set(Batch &b, const json::Value &key, const json::Value &value) {
+void JsonMapBase::set(Batch &b, const json::Value &key, const json::Value &value) {
 	auto &buff = DB::getBuffer();
 	json2string(value, buff);
 	b.Put(createKey(key), buff);
-	observers.broadcast(b, key);
 }
 
 void JsonMap::set(const json::Value &key, const json::Value &value) {
@@ -24,9 +23,8 @@ void JsonMap::set(const json::Value &key, const json::Value &value) {
 	db.commitBatch(b);
 }
 
-void JsonMap::erase(Batch &b, const json::Value &key) {
+void JsonMapBase::erase(Batch &b, const json::Value &key) {
 	b.Delete(createKey(key));
-	observers.broadcast(b, key);
 }
 
 void JsonMap::erase(const json::Value &key) {
@@ -35,8 +33,25 @@ void JsonMap::erase(const json::Value &key) {
 	db.commitBatch(b);
 }
 
-void JsonMap::clear() {
+void JsonMapBase::clear() {
 	db.clearKeyspace(kid);
+}
+
+void JsonMap::set(Batch &b, const json::Value &key, const json::Value &value) {
+	JsonMapBase::set(b,key,value);
+	observers.broadcast(b, key, value);
+}
+void JsonMap::erase(Batch &b, const json::Value &key) {
+	JsonMapBase::erase(b,key);
+	observers.broadcast(b, key, json::undefined);
+
+}
+
+JsonMap::JsonMap(DB db, const std::string_view &name)
+	:JsonMapBase(db, name)
+	,observers(db.getObservable<Obs>(kid))
+{
+
 }
 
 }

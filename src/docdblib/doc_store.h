@@ -4,6 +4,7 @@
  *  Created on: 26. 12. 2020
  *      Author: ondra
  */
+#include <docdblib/json_map.h>
 #include <condition_variable>
 
 #include "incremental_store.h"
@@ -30,19 +31,16 @@ struct DocStore_Config {
 
 };
 
-class DocStoreViewBase {
+
+class DocStoreView {
 public:
 
-	///Inicialize document store
-	/**
-	 * @param db the database object
-	 * @param name name of the document store
-	 * @param cfg document store configuration
-	 */
-	DocStoreViewBase(const IncrementalStoreView& incview, const std::string_view &name);
+	using DocID=json::Value;
 
-	///Allows change incremental store view (for different snapshot);
-	DocStoreViewBase(const DocStoreViewBase &src, const IncrementalStoreView& incview);
+	DocStoreView(DB db, const std::string_view &name);
+
+	///allows to change snapshot
+	DocStoreView(const DocStoreView &source, DB snapshot);
 
 	class Iterator;
 	class ChangesIterator;
@@ -56,8 +54,7 @@ public:
 	 * @note if document doesn't exists, it is generated empty result with deleted flag and
 	 * zero revision history, which can be used to indicate, that document doesn't exist
 	 */
-	DocumentRepl replicate_get(const std::string_view &docId) const;
-
+	DocumentRepl replicate_get(const DocID &docId) const;
 	///Retrieve document ready for the modify
 	/**
 	 *
@@ -65,7 +62,7 @@ public:
 	 * @return document. If document is deleted and has field "rev" equal to zero, it probably
 	 * doesn't exist
 	 */
-	Document get(const std::string_view &docId) const;
+	Document get(const DocID &docId) const;
 
 	///Receives document latest revision
 	/**
@@ -74,7 +71,18 @@ public:
 	 * @note works even if document is deleted. Function is much faster, then receiving whole
 	 * document and retrieve the latest revision id
 	 */
-	DocRevision getRevision(const std::string_view &docId) const;
+	DocRevision getRevision(const DocID &docId) const;
+
+	///Retrieves document header
+	/**
+	 * Header contains minimal set of informations. It is array, where the first field is sequence ID and second field is top revision
+	 * @param docId
+	 * @param isdel
+	 * @return
+	 */
+	json::Value getDocHeader(const DocID &docId, bool &isdel) const;
+
+
 
 	enum Status {
 		///document doesn't exists
@@ -92,7 +100,7 @@ public:
 	 *
 	 * @note function is faster than receive whole document and explore its state.
 	 */
-	Status getStatus(const std::string_view &docId) const;
+	Status getStatus(const DocID &docId) const;
 
 	///Scans whole store
 	/**
@@ -116,17 +124,7 @@ public:
 	 * @param include_upper_bound set true to include upper bound of the range
 	 * @return iterator - only live documents are included (not deleted)
 	 */
-	Iterator range(const std::string_view &from, const std::string_view &to, bool include_upper_bound = false) const;
-
-	///Scans range of documents
-	/**
-	 * @param from from document
-	 * @param to to document
-	 * @param exclude_begin exclude first document if equals to "from"
-	 * @param exclude_end exclude last document if equals to "to"
-	 * @return iterator - only live documents are included (not deleted)
-	 */
-	Iterator range_ex(const std::string_view &from, const std::string_view &to, bool exclude_begin = false, bool exclude_end = false) const;
+	Iterator range(const DocID &from, const DocID &to, bool include_upper_bound = false) const;
 
 	///Scans for prefix
 	/**
@@ -135,7 +133,7 @@ public:
 	 * @param backward iterate backward
 	 * @return iterator - only live documents are included (not deleted)
 	 */
-	Iterator prefix(const std::string_view &prefix, bool backward = false) const;
+	Iterator prefix(const DocID &prefix, bool backward = false) const;
 
 	///Scans all deleted documents
 	/**
@@ -148,7 +146,7 @@ public:
 	 * @param prefix prefix
 	 * @return iterator - only deleted documents are included
 	 */
-	Iterator scanDeleted(const std::string_view &prefix) const;
+	Iterator scanDeleted(const DocID &prefix) const;
 
 	///Scans changes from given sequence number
 	/**
@@ -162,48 +160,34 @@ public:
 
 	DB getDB() const {return incview.getDB();}
 
-	Key createKey(const json::Value &docId, bool deleted) const;
 
-
-protected:
-	struct DocumentHeaderData{
-		char seqIdDel[8];
-		char revList[][8];
-		SeqID getSeqID() const;
-		bool isDeleted() const;
-		DocRevision getRev(unsigned int idx) const;
-
-		static const DocumentHeaderData *map(const std::string_view &buffer, unsigned int &revCount);
-	};
-
-	const DocumentHeaderData* findDoc(const DB &snapshot,
-						const json::Value &docId, unsigned int &revCount) const;
-
-	const DocumentHeaderData* findDoc(const json::Value &docId, unsigned int &revCount) const;
-
-
-	static json::Value parseRevisions(const DocumentHeaderData *hdr, unsigned int revCount);
-
+	DocStoreView getSnapshot() const;
 
 protected:
 	//keyspace id, graveyard key space
-	const IncrementalStoreView& incview;
-	KeySpaceID kid, gkid;
+	IncrementalStore incview;
+	JsonMapBase active;
+	JsonMapBase erased;
 
+	using Obs = Observable<Batch &, const Document &>;
+	Obs &observable;
 
-	static const int index_docId = 0;
-	static const int index_timestamp = 1;
-	static const int index_content = 2;
+	static const int indexID = 0;
+	static const int indexDeleted = 1;
+	static const int indexTimestamp = 2;
+	static const int indexRevisions = 3;
+	static const int indexContent = 4;
+
 };
 
-class DocStoreViewBase::Iterator: public ::docdb::Iterator {
+class DocStoreView::Iterator: public JsonMapView::Iterator {
 public:
-	using Super = ::docdb::Iterator;
+	using Super = JsonMapView::Iterator;
 	Iterator(const IncrementalStoreView& incview, Super &&src);
 
 	///Retrieve current document id
 	/**@return current document id. Returned string_view is valid until next() is called */
-	std::string_view id() const;
+	json::Value id() const;
 	///Retrieve document data (content of document)
 	/**
 	 * @return document content (user data)
@@ -239,16 +223,25 @@ public:
 	 */
 	DocumentRepl replicate_get() const;
 
+	bool next();
+	bool peek();
+
 protected:
 	IncrementalStoreView incview;
+	mutable json::Value cache;
+	mutable json::Value hdr;
+	const json::Value &getDocContent() const;
+	const json::Value &getDocHdr() const;
+
+
 };
 
 
-class DocStoreViewBase::ChangesIterator: public IncrementalStoreView::Iterator {
+class DocStoreView::ChangesIterator: public IncrementalStoreView::Iterator {
 public:
 	using Super = IncrementalStoreView::Iterator;
 
-	ChangesIterator(const DocStoreViewBase &docStore, Super &&iter);
+	using IncrementalStoreView::Iterator::Iterator;
 
 	///Retrieve current document id
 	/**
@@ -256,7 +249,7 @@ public:
 	 *
 	 * @note if you need more attributes, it is much faster to use get()
 	 */
-	std::string id() const;
+	DocID id() const;
 	///Retrieve content of document (user data)
 	/**
 	 * @return content of the document
@@ -271,11 +264,6 @@ public:
 	 * @note function actually calls get(), retrieves deleted flag and throws rest of the object
 	 */
 	bool deleted() const;
-	///Retrieve sequence ID from the incremental store
-	/**
-	 * @return sequence id
-	 */
-	SeqID seqId() const;
 	///Retrieve document revision
 	/**
 	 * @return document revision
@@ -288,28 +276,15 @@ public:
 	DocumentRepl replicate_get() const;
 
 
-	json::Value doc() const = delete;
+	bool next();
+	bool peek();
+
 protected:
-	DocStoreViewBase docStore;
+	mutable json::Value cache;
+	const json::Value getData() const;
 
 };
 
-///Read only view for document store
-/**
- * The view can only read documents, not write. You can supply database object or snapshot.
- */
-class DocStoreView: public DocStoreViewBase {
-public:
-	using Super = DocStoreViewBase;
-	///Initialize document store view
-	/**
-	 *
-	 * @param db database object or snapshot.
-	 * @param name name of the document store
-	 * @param cfg configuration
-	 */
-	DocStoreView(DB &db, const std::string_view &name);
-};
 
 
 ///Document store - ideal to store documents
@@ -321,9 +296,9 @@ public:
  * You can read history if updates, and replicate content of store to a different store (which
  * can be carried through various media, such a network).
  */
-class DocStore: public DocStoreViewBase {
+class DocStore: public DocStoreView {
 public:
-	using Super = DocStoreViewBase;
+	using Super = DocStoreView;
 
 	///Inicialize document store
 	/**
@@ -394,48 +369,7 @@ public:
 	 */
 	bool purge(const std::string_view &id, const DocRevision &rev);
 
-	///Listen for changes
-	/** Called from separated thread listens for changes. The function returns when
-	 * change is detected or timeout ellapsed whichever comes first
-	 *
-	 * @param id last seen sequence id. For the first time, use seqID returned by last item received by iterator
-	 * created by function scanChanges(). Subsequent calls should use value returned by previous call
-	 * @param period period to wait
-	 * @return Function returns last sequence ID. This value should be above the first argument if
-	 * there is a change. It returns same sequence id, when time ellapsed. It returns 0, when
-	 * no waiting is longer possible - because the object is being destroyed. In this case, the
-	 * caller must not call any function of this object.
-	 *
-	 * @note because function cancelListen can be used anytime, the function can return earlier then
-	 * specified timeout. In this case returned value will be equal to specified sequenced ID
-	 */
-	template<typename _Rep, typename _Period>
-	SeqID listenFor(SeqID id, const std::chrono::duration<_Rep, _Period> &period);
-
-	///Listen for changes
-	/** Called from separated thread listens for changes. The function returns when
-	 * change is detected or timeout ellapsed whichever comes first
-	 *
-	 * @param id last seen sequence id.  For the first time, use seqID returned by last item received by iterator
-	 * created by function scanChanges(). Subsequent calls should use value returned by previous call
-	 * @param __atime absolute time of timeout
-	 * @return Function returns last sequence ID. This value should be above the first argument if
-	 * there is a change. It returns same sequence id, when time ellapsed. It returns 0, when
-	 * no waiting is longer possible - because the object is being destroyed. In this case, the
-	 * caller must not call any function of this object.
-	 *
-	 * @note because function cancelListen can be used anytime, the function can return earlier then
-	 * specified timeout. In this case returned value will be equal to specified sequenced ID
-	 *
-	 */
-	template<typename _Clock, typename _Duration>
-	SeqID listenUntil(SeqID id, const std::chrono::time_point<_Clock, _Duration>& __atime);
-
-	///cancels all pending listens
-	void cancelListen();
-
-
-	SeqID getSeq() const {return incstore.getSeq();}
+	SeqID getSeq() const {return incview.getSeq();}
 
 	struct AggregatorAdapter {
 		using IteratorType = Iterator;
@@ -444,8 +378,8 @@ public:
 		static DB getDB(const SourceType &src) {return src.getDB();}
 		template<typename Fn>
 		static auto observe(SourceType &src, Fn &&fn) {
-			return src.addObserver([fn = std::forward<Fn>(fn)](Batch &b, const std::string_view &str){
-				return fn(b, std::initializer_list<std::string_view>({str}));
+			return src.addObserver([fn = std::forward<Fn>(fn)](Batch &b, const Document &doc){
+				return fn(b, std::initializer_list<json::Value>({doc.id}));
 			});
 		}
 		static void stopObserving(SourceType &src, std::size_t h) {
@@ -456,13 +390,13 @@ public:
 		}
 
 		static IteratorType find(const SourceType &src, const json::Value &key) {
-			return src.range(key.getString(), key.getString(), true);
+			return src.range(key, key, true);
 		}
 		static IteratorType prefix(const SourceType &src, const json::Value &key) {
-			return src.prefix(key.getString());
+			return src.prefix(key);
 		}
 		static IteratorType range(const SourceType &src, const json::Value &fromKey, const json::Value &toKey, bool include_upper_bound ) {
-			return src.range(fromKey.getString(), toKey.getString(), include_upper_bound);
+			return src.range(fromKey, toKey, include_upper_bound);
 		}
 
 	};
@@ -479,23 +413,11 @@ public:
 	}
 
 protected:
-	IncrementalStore incstore;
 	unsigned int revHist;
 	std::string wrbuff;
-	Observable<Batch &, const std::string_view &> observable;
 
 
 };
-
-template<typename _Rep, typename _Period>
-inline SeqID DocStore::listenFor(SeqID id,const std::chrono::duration<_Rep, _Period> &period) {
-	return incstore.listenFor(id, period);
-}
-
-template<typename _Clock, typename _Duration>
-inline SeqID DocStore::listenUntil(SeqID id,const std::chrono::time_point<_Clock, _Duration> &__atime) {
-	return incstore.listenUntil(id, __atime);
-}
 
 
 

@@ -129,7 +129,7 @@ protected:
 
 	class MapKeySvc: public IMapKey {
 	public:
-		MapKeySvc(Batch &b,Key &&key, Observable<Batch &, json::Value> &obs):b(b),obs(obs),key(std::move(key)) {}
+		MapKeySvc(Batch &b,Key &&key, JsonMap::Obs &obs):b(b),obs(obs),key(std::move(key)) {}
 
 		virtual void find(const json::Value &resultKey, const json::Value &srchKey, const json::Value &value = json::undefined) override {
 			invalidateKey(resultKey, srchFind, srchKey, value);
@@ -144,7 +144,7 @@ protected:
 
 	protected:
 		Batch &b;
-		Observable<Batch &, json::Value> &obs;
+		JsonMap::Obs &obs;
 		Key key;
 
 		void invalidateKey(const json::Value &key, char op, json::Value args, json::Value custom);
@@ -194,7 +194,7 @@ inline void AggregatorView<Adapter>::MapKeySvc::invalidateKey(
 	this->key.append(key);
 	b.Put(this->key, buffer);
 	this->key.clear();
-	obs.broadcast(b, key);
+	obs.broadcast(b, key, custom);
 }
 
 
