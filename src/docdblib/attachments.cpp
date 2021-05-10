@@ -233,7 +233,7 @@ Attachments::Upload::~Upload() {
 	while (!stored_segments.empty()) {
 		SegID q = stored_segments.front();
 		stored_segments.pop();
-		batch.Delete(owner.jmap.createKey(q));
+		batch.erase(owner.jmap.createKey(q));
 	}
 	owner.jmap.getDB().commitBatch(batch);
 	owner.unlockGC();
@@ -273,7 +273,7 @@ void Attachments::Upload::writeRaw(std::string_view data) {
 	hashfn.update(data);
 	SegID seg = owner.allocSegment();
 	Batch wr;
-	wr.Put(owner.jmap.createKey(seg), leveldb::Slice(data.data(), data.length()));
+	wr.put(owner.jmap.createKey(seg), data);
 	metadata.segments.push(seg);
 	stored_segments.push(seg);
 	owner.jmap.getDB().commitBatch(wr);
@@ -295,7 +295,7 @@ json::String Attachments::Upload::close() {
 		Metadata old_metadata;
 		old_metadata.parse(oldmdj);
 		while (!old_metadata.segments.empty()) {
-			batch.Delete(owner.jmap.createKey(old_metadata.segments.front()));
+			batch.erase(owner.jmap.createKey(old_metadata.segments.front()));
 			old_metadata.segments.pop();
 		}
 	}
@@ -453,7 +453,7 @@ void AttachmentView::Metadata::eraseSegments(const JsonMapBase &jmap, Batch &b) 
 	while (!segments.empty()) {
 		SegID s = segments.front();
 		segments.pop();
-		b.Delete(jmap.createKey(s));
+		b.erase(jmap.createKey(s));
 	}
 }
 

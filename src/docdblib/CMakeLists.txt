@@ -6,6 +6,7 @@ add_library (docdblib
 	iterator.cpp
 	keyspace.cpp
 	db.cpp
+	batch.cpp
 	incremental_store.cpp
 	doc_store.cpp
 	doc_store_index.cpp

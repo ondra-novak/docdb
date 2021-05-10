@@ -14,7 +14,7 @@ namespace docdb {
 void JsonMapBase::set(Batch &b, const json::Value &key, const json::Value &value) {
 	auto &buff = DB::getBuffer();
 	json2string(value, buff);
-	b.Put(createKey(key), buff);
+	b.put(createKey(key), buff);
 }
 
 void JsonMap::set(const json::Value &key, const json::Value &value) {
@@ -24,7 +24,7 @@ void JsonMap::set(const json::Value &key, const json::Value &value) {
 }
 
 void JsonMapBase::erase(Batch &b, const json::Value &key) {
-	b.Delete(createKey(key));
+	b.erase(createKey(key));
 }
 
 void JsonMap::erase(const json::Value &key) {

@@ -9,6 +9,7 @@
 #define SRC_DOCDB_SRC_DOCDBLIB_CALLBACK_H_
 #include <algorithm>
 #include <exception>
+#include <memory>
 
 using std::__exception_ptr::exception_ptr;
 

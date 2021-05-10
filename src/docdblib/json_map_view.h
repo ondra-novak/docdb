@@ -206,7 +206,7 @@ public:
 			k.append(key);
 			JsonMapView::createValue(value, valbuf);
 			valbuf.clear();
-			Put(k,valbuf);
+			put(k,valbuf);
 			k.clear();
 			valbuf.clear();
 			keys.push_back(key);
@@ -328,7 +328,7 @@ inline typename UpdatableMap<Derived>::Iterator UpdatableMap<Derived>::scan(json
 template<typename Derived>
 inline void UpdatableMap<Derived>::erase(Batch &batch, const json::Value &key) {
 	auto k = createKey(key);
-	batch.Delete(k);
+	batch.erase(k);
 }
 
 template<typename Derived>

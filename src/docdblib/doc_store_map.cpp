@@ -52,7 +52,7 @@ void DocStoreMap::update() {
 		for (auto iter = source->scanChanges(lastSeqID);iter.next();){
 			indexDoc(b, iter.get());
 			lastSeqID = iter.seqId();
-			if (b.ApproximateSize()>65536) db.commitBatch(b);
+			if (b.isLarge()) db.commitBatch(b);
 		}
 		db.keyspace_putMetadata(b,kid, {revision, lastSeqID});
 		db.commitBatch(b);

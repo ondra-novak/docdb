@@ -42,6 +42,7 @@ public:
 	virtual PAbstractObservable getObservable(KeySpaceID kid,  ObservableFactory factory) override;
 	virtual bool keyspaceLock(KeySpaceID kid, bool unlock) override;
 
+
 protected:
 
 	class Logger;
@@ -226,9 +227,8 @@ static leveldb::WriteOptions getWriteOptions(bool sync) {
 
 void DBCoreImpl::commitBatch(Batch &b) {
 	auto opt = getWriteOptions(sync_writes);
-	db->Write(opt, &b);
+	db->Write(opt, b.getBatchObject());
 	b.commited();
-	b.Clear();
 }
 
 void DBCoreImpl::compact() {
@@ -319,7 +319,7 @@ void DB::keyspace_putMetadata(Batch &b, KeySpaceID id,
 		const json::Value &data) {
 	std::string val;
 	json2string(data, val);
-	b.Put(getKey(id), val);
+	b.put(getKey(id), val);
 }
 
 json::Value DB::keyspace_getMetadata(KeySpaceID id) const {
@@ -372,10 +372,10 @@ KeySpaceID DBCoreImpl::allocKeyspace(ClassID classId, const std::string_view &na
 	Batch b;
 	val.clear();
 	Key k2=getKey(n);
-	b.Put(k2, val);
+	b.put(k2, val);
 	val.clear();
 	val.push_back(n);
-	b.Put(k, val);
+	b.put(k, val);
 	commitBatch(b);
 	return n;
 }
@@ -430,8 +430,8 @@ thread_local std::string buffer;
 void DB::clearKeyspace(KeySpaceID id) {
 	Batch b;
 	for (auto iter = createIterator({Key(id), Key(id+1), false, true}); iter.next();) {
-		b.Delete(iter.key());
-		if (b.ApproximateSize() > 64000) commitBatch(b);
+		b.erase(iter.key());
+		if (b.isLarge()) commitBatch(b);
 	}
 	commitBatch(b);
 

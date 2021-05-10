@@ -13,6 +13,9 @@
 namespace docdb {
 
 
+Key::Key() {
+	keydata.push_back(0);
+}
 
 Key::Key(KeySpaceID keySpaceId, std::size_t reserve) {
 	keydata.reserve(keyspaceid_size+reserve);

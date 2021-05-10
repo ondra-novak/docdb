@@ -48,7 +48,7 @@ SeqID IncrementalStore::put(Batch &b, json::Value object) {
 	SeqID id = ++lastSeqId;
 	std::string &buff = db.getBuffer();
 	json2string(object, buff);
-	b.Put(createKey(id), buff);
+	b.put(createKey(id), buff);
 	observers->broadcast(b, id, object);
 	return id;
 }
@@ -68,7 +68,7 @@ void IncrementalStore::erase(SeqID id) {
 }
 
 void IncrementalStore::erase(::docdb::Batch &b, SeqID id) {
-	b.Delete(createKey(id));
+	b.erase(createKey(id));
 }
 
 IncrementalStore::Iterator IncrementalStoreView::scanFrom(SeqID from) const{

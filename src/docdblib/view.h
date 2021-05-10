@@ -506,12 +506,12 @@ inline void UpdatableView<Derived>::erase(Batch &batch, const json::Value &docId
 			k.clear();
 			k.append(iter.key());
 			k.append(dock);
-			batch.Delete(k);
+			batch.erase(k);
 		}
 		k.clear();
 		k.push_back(0);
 		k.append(dock);
-		batch.Delete(k);
+		batch.erase(k);
 	}
 }
 

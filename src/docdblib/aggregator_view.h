@@ -65,6 +65,7 @@ public:
 	protected:
 		AggregatorView &owner;
 		json::Value valueCache;
+		Batch b;
 		bool prepareValue();
 	};
 
@@ -124,7 +125,7 @@ protected:
 
 	template<typename Cont>
 	void onKeyChange(Batch &b, const Cont &keys);
-	json::Value runAggregator(const KeyView &key, const std::string_view &value);
+	json::Value runAggregator(Batch &b, const KeyView &key, const std::string_view &value);
 	json::Value runAggrFn(SrcIterator &&iter, const json::Value &custom);
 
 	class MapKeySvc: public IMapKey {
@@ -187,12 +188,12 @@ inline void AggregatorView<Adapter>::onKeyChange(Batch &b, const Cont &cont) {
 template<typename Adapter>
 inline void AggregatorView<Adapter>::MapKeySvc::invalidateKey(
 		const json::Value &key, char op, json::Value args, json::Value custom) {
-	auto &buffer = DB::getBuffer();
+	auto &buffer = b.getTmpBuffer();
 	buffer.push_back(op);
 	createValue(args, buffer);
 	createValue(custom, buffer);
 	this->key.append(key);
-	b.Put(this->key, buffer);
+	b.put(this->key, buffer);
 	this->key.clear();
 	obs->broadcast(b, key, custom);
 }
@@ -246,7 +247,7 @@ inline bool AggregatorView<Adapter>::Iterator::prepareValue() {
 	auto val = ::docdb::Iterator::value();
 	if (val.empty()) return false;
 	if (val[0]<0) {
-		valueCache = owner.runAggregator(this->global_key(), val);
+		valueCache = owner.runAggregator(b, this->global_key(), val);
 	} else {
 		valueCache = JsonMapView::Iterator::value();
 	}
@@ -254,8 +255,7 @@ inline bool AggregatorView<Adapter>::Iterator::prepareValue() {
 }
 
 template<typename Adapter>
-inline json::Value AggregatorView<Adapter>::runAggregator(const KeyView &key, const std::string_view &value) {
-	Batch b;
+inline json::Value AggregatorView<Adapter>::runAggregator(Batch &b, const KeyView &key, const std::string_view &value) {
 	std::string_view pval(value);
 	char cmd = pval[0];pval = pval.substr(1);
 	json::Value args = parseValue(std::move(pval));
@@ -267,11 +267,11 @@ inline json::Value AggregatorView<Adapter>::runAggregator(const KeyView &key, co
 		case srchRange: res =runAggrFn(Adapter::range(src, args[0], args[1], args[2].getBool()), custom);break;
 	}
 	if (res.defined()) {
-		auto &buff = DB::getBuffer();
+		auto &buff = b.getTmpBuffer();
 		createValue(res, buff);
-		b.Put(key, buff);
+		b.put(key, buff);
 	} else {
-		b.Delete(key);
+		b.erase(key);
 	}
 	db.commitBatch(b);
 	return res;

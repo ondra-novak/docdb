@@ -10,6 +10,7 @@
 
 namespace docdb {
 
+std::size_t Batch::largeBatch = 1*1024*1024;
 
 }
 

@@ -330,12 +330,12 @@ void DocStore::writeHeader(Batch &b, const Value &docId, bool replace,
 		if (wasdel) {
 			k.transfer(erased.getKID());
 			if (!isdel) {
-				b.Delete(k);
+				b.erase(k);
 				k.transfer(active.getKID());
 			}
 		} else {
 			if (isdel) {
-				b.Delete(k);
+				b.erase(k);
 				k.transfer(erased.getKID());
 			}
 		}
@@ -347,7 +347,7 @@ void DocStore::writeHeader(Batch &b, const Value &docId, bool replace,
 	std::string &buff = DB::getBuffer();
 	rev.unshift(seq);
 	JsonMapView::createValue(rev, buff);
-	b.Put(k, buff);
+	b.put(k, buff);
 }
 
 bool DocStore::replicate_put(Batch &b, const DocumentRepl &doc) {

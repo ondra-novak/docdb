@@ -83,6 +83,8 @@ class Key: public KeyViewT<std::string> {
 public:
 
 	using KeyViewT<std::string>::KeyViewT;
+
+	Key();
 	///Create key in given keyspace
 	Key(KeySpaceID keySpaceId, const std::string_view &key);
 	///Create key in given keyspace

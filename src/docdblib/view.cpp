@@ -252,7 +252,7 @@ void IndexBatch::emit(const json::Value &k, const json::Value &v) {
 	//create value (serialize to buffer)
 	json2string(v, buffer);
 	//store key-value pair to batch
-	Put(key, buffer);
+	put(key, buffer);
 	//clear key buffer
 	key.clear();
 	//clear value buffer
@@ -281,7 +281,7 @@ void IndexBatch::commit() {
 		//append dockey
 		key.append(dockey);
 		//delete it
-		Delete(key);
+		erase(key);
 		//broadcast deletion of the key
 		observable->broadcast(*this, k, json::undefined, docId);
 	}
@@ -294,7 +294,7 @@ void IndexBatch::commit() {
 			key.clear();
 			key.push_back(0);
 			key.append(dockey);
-			Delete(key);
+			erase(key);
 		}
 	} else {
 		//new keys generated
@@ -302,7 +302,7 @@ void IndexBatch::commit() {
 		key.push_back(0);
 		key.append(dockey);
 		//record new keys
-		Put(key, new_keys);
+		put(key, new_keys);
 	}
 }
 
