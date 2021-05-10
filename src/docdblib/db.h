@@ -39,7 +39,6 @@ enum SnapshotMode {
 
 class DBCore;
 using PDBCore = ondra_shared::RefCntPtr<DBCore>;
-using CommitObservable = Observable<Batch &>;
 
 
 ///Abstract interface defines minimal set of function defined at core level
@@ -111,7 +110,6 @@ public:
 
 	virtual PAbstractObservable getObservable(KeySpaceID kid, ObservableFactory factory) = 0;
 
-	virtual CommitObservable &getCommitObservable() = 0;
 
 	///Lock or unlock keyspace for exclusive use
 	virtual bool keyspaceLock(KeySpaceID kid, bool lock) = 0;
@@ -252,14 +250,6 @@ public:
 		return r;
 	}
 
-	///Retrieves observable object which is triggered after each commit
-	/**
-	 * @return observable object. Everytime is batch commited, observers
-	 * are called with this batch.
-	 *
-	 * The reference is valid as long as the DB object is held.
-	 */
-	CommitObservable &getCommitObservable();
 
 	///Lock or unlock keyspace for exclusive use
 	/**

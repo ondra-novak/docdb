@@ -16,6 +16,18 @@ namespace docdb {
 
 namespace replication {
 
+
+struct GotRequest {
+	///
+	json::Value table;
+	json::Value id;
+	json::Value rev;
+};
+
+
+#if 0
+
+
 //do_you_have->yes/no->replicate->ok/conflict/attachments->send_attachment->ok/error->commit_attachment->ok/conflict
 
 
@@ -151,7 +163,7 @@ public:
 };
 
 
-
+#endif
 
 }
 

@@ -337,11 +337,60 @@ public:
 	 */
 	DocStore(const DB &db, const std::string &name, const DocStore_Config &cfg);
 
+	class Batch: public GenericBatch {
+	public:
+		Batch(DocStore &dst);
+		~Batch();
+	protected:
+		DocStore &owner;
+	};
+
 
 	virtual ~DocStore();
 
+	///Replicate to batch
+	/**
+	 * Replication allows to update document which has been modified in
+	 * different database. The only condition is to have updated revision list
+	 * and the current revision must be included in revision list of the
+	 * new revision, otherwise conflict is reported.
+	 *
+	 * If the document was previously deleted, it is allowed to replace this
+	 * document by different revision history.
+	 *
+	 * @param b opened batch
+	 * @param doc document retrieved by replicate_get
+	 * @retval true success
+	 * @retval false conflict
+	 *
+	 * @note you have to commit the batch to finalize write
+	 *
+	 * @note function itself is MT safe unless the multiple threads updates
+	 * the same document. You need to use apropriate synchronization to
+	 * handle this situation
+	 *
+	 */
 	bool replicate_put(Batch &b, const DocumentRepl &doc);
+
+
+
+	///Put to the batch
 	bool put(Batch &b, const Document &doc);
+
+	///Purge the document
+	/**
+	 * Purge delete document to reclaim the space
+	 *
+	 * @param b batch
+	 * @param docId document to purge
+	 * @retval true purged
+	 * @retval false document is not deleted
+	 *
+	 * @note Purge operation cannot be replicated, change isn't propagated to the index as well.
+	 *
+	 * @tip Use timestamp to find old deleted documents that are safe to purge
+	 */
+	bool purge(Batch &b, const json::Value &docId);
 
 	///Replicate document to this storage
 	/**
@@ -349,6 +398,8 @@ public:
 	 * this document
 	 * @retval true successfully replicated
 	 * @retval false failed, conflict
+	 *
+	 * @note function is MT safe. Internal lock is acquired during the write
 	 */
 	bool replicate_put(const DocumentRepl &doc);
 
@@ -360,6 +411,10 @@ public:
 	 * the function fails indicating conflict
 	 * @retval true successfully put or updated
 	 * @retval false conflict
+	 *
+	 * @note function is MT safe. Internal lock is acquired during the write
+	 *
+	 *
 	 */
 	bool put(const Document &doc);
 
@@ -373,34 +428,16 @@ public:
 	 * @retval true success
 	 * @retval false conflict
 	 */
-	bool erase(const std::string_view &id, const DocRevision &rev);
+	bool erase(const json::Value &id, const DocRevision &rev);
 
 	///Purges document from the database
-	/** Purge perform actual delete, reclaiming all occupied space. However because
-	 * the operation cannot be replicated, it is recommended to purge documents, that
-	 * has been delete before a long time, when there is zero possibility, that its
-	 * deleted status was not replicated somewhere.
-	 *
-	 * @note Support of replication is necesery to update indexes and views. When document
-	 * is purged, there is no way to propagate this action to all indexes. You can only
-	 * purge documents manually.
-	 *
+	/**
 	 * @param id document to purge
 	 * @retval true success
 	 * @retval false document doesn't exist
 	 */
-	bool purge(const std::string_view &id);
+	bool purge(const json::Value &id);
 
-
-	///Purges document
-	/**
-	 * Function works same way asi purge/1, only checks for revision
-	 * @param id document id
-	 * @param rev revision
-	 * @retval true purged
-	 * @retval false document doesn't exist on specified revision
-	 */
-	bool purge(const std::string_view &id, const DocRevision &rev);
 
 	SeqID getSeq() const {return istore.getSeq();}
 
@@ -411,7 +448,7 @@ public:
 		static DB getDB(const SourceType &src) {return src.getDB();}
 		template<typename Fn>
 		static auto observe(SourceType &src, Fn &&fn) {
-			return src.addObserver([fn = std::forward<Fn>(fn)](Batch &b, const DocumentBase &doc){
+			return src.addObserver([fn = std::forward<Fn>(fn)](GenericBatch &b, const DocumentBase &doc){
 				return fn(b, std::initializer_list<json::Value>({doc.id}));
 			});
 		}
@@ -436,9 +473,11 @@ public:
 
 	static Timestamp defaultTimestampFn();
 
+
 protected:
 	unsigned int revHist;
 	std::string wrbuff;
+	std::mutex lock;
 	Timestamp (*timestampFn)();
 	void writeHeader(Batch &b, const json::Value &docId, bool replace,
 			bool wasdel, bool isdel, SeqID seq, json::Value rev);

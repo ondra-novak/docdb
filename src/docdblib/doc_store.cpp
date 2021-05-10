@@ -92,7 +92,7 @@ DocumentRepl DocStoreView::replicate_get(const DocID &docId) const {
 		docdata[indexContent],
 		docdata[indexTimestamp].getUIntLong(),
 		isdel,
-		dochdr[hdrRevisions]
+		dochdr.slice(hdrRevisions)
 	};
 }
 
@@ -114,20 +114,20 @@ Document DocStoreView::get(const DocID &docId) const {
 		docdata[indexContent],
 		docdata[indexTimestamp].getUIntLong(),
 		isdel,
-		dochdr[hdrRevisions][0].getUIntLong()
+		dochdr[hdrRevisions].getUIntLong()
 	};
 }
 
 DocRevision DocStoreView::getRevision(const DocID &docId) const {
 	bool isdel;
 	auto dochdr = getDocHeader(docId, isdel);
-	return dochdr[hdrRevisions][0].getUIntLong();
+	return dochdr[hdrRevisions].getUIntLong();
 }
 
 json::Value DocStoreView::getRevisions(const DocID &docId) const {
 	bool isdel;
 	auto dochdr = getDocHeader(docId, isdel);
-	return dochdr[hdrRevisions];
+	return dochdr.slice(hdrRevisions);
 }
 
 DocStoreView::Status DocStoreView::getStatus(const DocID &docId) const {
@@ -221,9 +221,10 @@ DocRevision DocStoreView::Iterator::revision() const {
 }
 
 Document DocStoreView::Iterator::get() const {
-	json::Value d = getDocContent();
+	auto h = getDocHdr();
+	auto d = getDocContent();
 	return {
-		id(),d[indexContent],d[indexTimestamp].getUIntLong(),d[indexDeleted].getBool(), revision()
+		d[indexID],d[indexContent],d[indexTimestamp].getUIntLong(),d[indexDeleted].getBool(), h[hdrRevisions].getUIntLong()
 	};
 }
 
@@ -231,7 +232,7 @@ DocumentRepl DocStoreView::Iterator::replicate_get() const {
 	auto h = getDocHdr();
 	auto d = getDocContent();
 	return {
-		id(),d[indexContent],d[indexTimestamp].getUIntLong(),d[indexDeleted].getBool(), h[hdrRevisions]
+		d[indexID],d[indexContent],d[indexTimestamp].getUIntLong(),d[indexDeleted].getBool(), h.slice(hdrRevisions)
 	};
 }
 
@@ -344,7 +345,8 @@ void DocStore::writeHeader(Batch &b, const Value &docId, bool replace,
 		}
 	}
 	std::string &buff = DB::getBuffer();
-	JsonMapView::createValue( { seq, rev }, buff);
+	rev.unshift(seq);
+	JsonMapView::createValue(rev, buff);
 	b.Put(k, buff);
 }
 
@@ -353,8 +355,8 @@ bool DocStore::replicate_put(Batch &b, const DocumentRepl &doc) {
 	bool wasdel;
 	Value hdr = getDocHeader(doc.id, wasdel);
 	if (hdr.defined()) {
-		SeqID seq = hdr[0].getUIntLong();
-		Value rev = hdr[1];
+		SeqID seq = hdr[hdrSeq].getUIntLong();
+		Value rev = hdr[hdrRevisions];
 		auto pos = doc.revisions.indexOf(rev);
 		if (pos == Value::npos && !wasdel) return false; //conflict
 		if (pos == 0) return true; //already stored
@@ -382,7 +384,7 @@ bool DocStore::put(Batch &b, const Document &doc) {
 	Value revs(json::array);
 	if (hdr.defined()) {
 		SeqID seq = hdr[hdrSeq].getUIntLong();
-		revs = hdr[hdrRevisions];
+		revs = hdr.slice(hdrRevisions);
 		if (doc.rev != 0 || !wasdel) {
 			DocRevision prevRev = revs[0].getUIntLong();
 			if (doc.rev != prevRev) return false; //conflict;
@@ -400,7 +402,7 @@ bool DocStore::put(Batch &b, const Document &doc) {
 	SeqID seq = istore.put(b, {
 			doc.id,
 			doc.deleted,
-			doc.timestamp,
+			timestampFn(),
 			doc.content
 	});
 
@@ -408,6 +410,54 @@ bool DocStore::put(Batch &b, const Document &doc) {
 	observable->broadcast(b, doc);
 	return true;
 }
+
+bool DocStore::replicate_put(const DocumentRepl &doc) {
+	Batch b(*this);
+	if (!replicate_put(b, doc)) return false;
+	getDB().commitBatch(b);
+	return true;
+}
+
+bool DocStore::put(const Document &doc) {
+	Batch b(*this);
+	if (!put(b, doc)) return false;
+	getDB().commitBatch(b);
+	return true;
+}
+
+bool DocStore::erase(const json::Value &id, const DocRevision &rev) {
+	return put({
+		id, nullptr, 0, true, rev
+	});
+}
+
+bool DocStore::purge(Batch &b, const json::Value &id) {
+	Value hdr = erased.lookup(id);
+	if (hdr.defined()) {
+		SeqID id = hdr[0].getUIntLong();
+		istore.erase(b, id);
+		return true;
+	} else {
+		return false;
+	}
+}
+
+bool DocStore::purge(const json::Value &id) {
+	std::lock_guard _(lock);
+	Batch b(*this);
+	if (!purge(b, id)) return false;
+	getDB().commitBatch(b);
+	return true;
+}
+
+DocStore::Batch::Batch(DocStore &dst):owner(dst) {
+	owner.lock.lock();
+}
+
+DocStore::Batch::~Batch() {
+	owner.lock.unlock();
+}
+
 
 } /* namespace docdb */
 
