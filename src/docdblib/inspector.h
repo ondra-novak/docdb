@@ -11,6 +11,7 @@
 
 #include "db.h"
 
+#include <optional>
 namespace docdb {
 
 

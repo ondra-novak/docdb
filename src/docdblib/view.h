@@ -12,6 +12,7 @@
 #include "keyspace.h"
 #include "observable.h"
 
+#include <optional>
 namespace docdb {
 
 class View {
