@@ -1,0 +1,1 @@
+#define GIT_PROJECT_VERSION ""

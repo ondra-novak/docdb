@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.2) 
 
 set(docdb_sources 
-    link.cpp
+    key.cpp
+    database.cpp
+    snapshot.cpp
+    storage.cpp
 )
 
 
