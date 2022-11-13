@@ -5,6 +5,7 @@ set(docdb_sources
     database.cpp
     snapshot.cpp
     storage.cpp
+    link.cpp
 )
 
 

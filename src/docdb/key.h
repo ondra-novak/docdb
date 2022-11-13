@@ -2,10 +2,12 @@
 #ifndef SRC_DOCDB_KEY_H_
 #define SRC_DOCDB_KEY_H_
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <string_view>
 
 #include <leveldb/slice.h>
+#include <typeinfo>
 
 
 namespace docdb {
@@ -14,6 +16,7 @@ using KeyspaceID = std::uint8_t;
 
 
 namespace keycontent {
+
 
 using iterator = const char *; 
 
@@ -24,7 +27,6 @@ std::uint64_t read_uint64(iterator &iter);
 void read_string(std::string &out, iterator &iter);
 
 }
-
 template<typename Container>
 class Key_Base {
 public:
@@ -85,9 +87,21 @@ public:
     operator leveldb::Slice() const {
         return leveldb::Slice(_k.data(), _k.size());
     }
+    
+    ///extract fields from the key if the key is structured
+    /**
+     * @param args list of variables, must be in correct type. Use nullptr
+     * to skip certain field
+     */
+    template<typename ... Args> void extract(Args ... args);
+
+    
+
 
 protected:
     Container _k;
+    
+    
 };
 
 
@@ -122,12 +136,17 @@ public:
     operator KeyView() const {
         return view();
     }
+
+    ///Set key content as structured key
+    template<typename ... Args> void set(Args ... args);
     
+
 };
 
 
 template<typename Container>
 inline KeyspaceID Key_Base<Container>::keyspace() const {
+    
     return static_cast<KeyspaceID>(_k[0]);
 }
 
@@ -174,6 +193,15 @@ inline bool Key_Base<Container>::operator >(const Key_Base &other) const {
 template<typename Container>
 inline bool Key_Base<Container>::operator <(const Key_Base &other) const {
     return _k < other._k;
+}
+
+template<typename Container>
+template<typename ... Args>
+inline void Key_Base<Container>::extract(Args ... args) {    
+}
+
+template<typename ... Args>
+inline void Key::set(Args ... args) {
 }
 
 
