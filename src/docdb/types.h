@@ -39,7 +39,7 @@ template<typename Iter, typename T> Iter load_bigendian(BinHelper<T> &hlp, Iter 
 
 
 template<typename UInt> struct UIntHelper { 
-template<typename Iter, typename T> static Iter extract(Iter beg, Iter end, T t) {
+template<typename Iter, typename T> static Iter extract(Iter beg, Iter end, T&& t) {
     if (std::distance(beg, end) < sizeof(UInt)) throw std::bad_cast();
     auto iter = beg+sizeof(UInt);
     if constexpr(std::is_same_v<T, IsNull &>) {
@@ -51,16 +51,16 @@ template<typename Iter, typename T> static Iter extract(Iter beg, Iter end, T t)
         beg = load_bigendian(hlp, beg);
         t = hlp.val;
         return beg;
-    } else if constexpr(std::is_assignable_v<UInt, T>) {
+    } else if constexpr(std::is_assignable_v<T , std::string>) {
         UInt v;
-        auto res = extract_number_double(beg, end, v);
-        t = v;
-        return res;
-    } else if constexpr(std::is_assignable_v<std::string, T>) {
-        UInt v;
-        auto res = extract_number_double(beg, end, v);
+        auto res = extract(beg, end, v);
         t = std::to_string(v);
         return res;        
+    } else if constexpr(std::is_assignable_v<T , UInt>) {
+        UInt v;
+        auto res = extract<Iter, UInt &>(beg, end, v);
+        t = v;
+        return res;
     } else {
         throw std::bad_cast();
     }
@@ -111,7 +111,7 @@ public:
     }
     
     template<typename Iter, typename T> 
-    static Iter extract(Iter beg, Iter end, T t) {
+    static Iter extract(Iter beg, Iter end, T&& t) {
         if constexpr(std::is_same_v<T, IsNull &>) {            
             t = IsNull(false);
             return skip(beg, end);
@@ -119,9 +119,10 @@ public:
         else if constexpr(std::is_null_pointer_v<T>) {
             return skip(beg,end);
         }
-        else if constexpr(std::is_base_of_v<std::string, T>) {
-            SizeType sz;
-            beg = UIntHelper<SizeType>::extract(beg, end, sz);
+        else if constexpr(std::is_base_of_v<std::string, std::remove_reference_t<T> >) {
+            SizeType sz;            
+            beg = UIntHelper<SizeType>::template extract<Iter,SizeType &>(beg, end, sz);
+            t.clear();
             t.reserve(sz);
             for (SizeType i = 0; i < sz; i++) {
                 if (beg == end) break;
@@ -130,7 +131,7 @@ public:
             }
             return beg;
         }
-        else if constexpr(std::is_assignable_v<std::string, T>) {
+        else if constexpr(std::is_assignable_v<T, std::string>) {
             std::string s;
             auto res = extract(beg, end, s);
             t = s;
@@ -143,6 +144,7 @@ public:
     template<typename Iter>
     static Iter build(Iter where, const std::string &blob) {
         SizeType sz = static_cast<SizeType>(std::min<std::string::size_type>(SizeType(-1),blob.size()));
+        where = UIntHelper<SizeType>::build(where, sz);
         for (SizeType i = 0; i < sz; i++) {
             *where = blob[i];
             ++where;
@@ -186,18 +188,18 @@ using HugeBlob = BlobT<std::uint64_t, FieldType::huge_blob>;
 
 namespace structured {
 
-template<typename T> void extract_bool(T t, bool val) {
+template<typename T> void extract_bool(T&& t, bool val) {
     if constexpr(std::is_same_v<T, IsNull &>) t = IsNull(false);
     else if constexpr(std::is_null_pointer_v<T>) return; 
-    else if constexpr(std::is_assignable_v<bool, T>) t = val; 
-    else if constexpr(std::is_assignable_v<std::string, T>) t = val?std::string("true"):std::string("false"); 
+    else if constexpr(std::is_assignable_v<T,std::string>) t = val?std::string("true"):std::string("false"); 
+    else if constexpr(std::is_assignable_v<T,bool>) t = val; 
     else throw std::bad_cast();
 }
 
-template<typename T> void extract_null(T t) {
+template<typename T> void extract_null(T&& t) {
     if constexpr(std::is_same_v<T, IsNull &>) t = IsNull(true);
     else if constexpr(std::is_null_pointer_v<T>) return; 
-    else if constexpr(std::is_assignable_v<std::string, T>) t = "null"; 
+    else if constexpr(std::is_assignable_v< T,std::string>) t = "null"; 
     else throw std::bad_cast();
 }
 
@@ -209,7 +211,7 @@ template<typename Iter> Iter skip_stringz(Iter beg, Iter end) {
     }
     return beg;
 }
-template<typename Iter, typename T> Iter extract_stringz(Iter beg, Iter end, T t) {
+template<typename Iter, typename T> Iter extract_stringz(Iter beg, Iter end, T&& t) {
     if constexpr(std::is_same_v<T, IsNull &>) {
         t = IsNull(false); return skip_stringz(beg, end);
     } else if constexpr(std::is_null_pointer_v<T>) { 
@@ -223,7 +225,7 @@ template<typename Iter, typename T> Iter extract_stringz(Iter beg, Iter end, T t
             t.push_back(c);
         }
         return beg;
-    } else if constexpr(std::is_assignable_v<std::string,T>) {
+    } else if constexpr(std::is_assignable_v<T,std::string>) {
         std::string s;
         auto res = extract_stringz(beg, end, s);
         t = s;
@@ -256,7 +258,7 @@ template<typename Iter> Iter build_stringz(Iter where, const std::string_view s)
 }
 
 template<typename Real> struct NumberHelper { 
-template<typename Iter, typename T> static Iter extract(Iter beg, Iter end, T t) {
+template<typename Iter, typename T> static Iter extract(Iter beg, Iter end, T &&t) {
     if (std::distance(beg, end) < sizeof(Real)) throw std::bad_cast();
     auto iter = beg+sizeof(Real);
     if constexpr(std::is_same_v<T, IsNull &>) {
@@ -268,16 +270,16 @@ template<typename Iter, typename T> static Iter extract(Iter beg, Iter end, T t)
         beg = load_bigendian(hlp, beg);
         t = -hlp.val;
         return beg;
-    } else if constexpr(std::is_assignable_v<Real, T>) {
+    } else if constexpr(std::is_assignable_v< T,std::string>) {
         Real v;
-        auto res = extract_number_double(beg, end, v);
-        t = v;
-        return res;
-    } else if constexpr(std::is_assignable_v<std::string, T>) {
-        Real v;
-        auto res = extract_number_double(beg, end, v);
+        auto res = extract(beg, end, v);
         t = std::to_string(v);
         return res;        
+    } else if constexpr(std::is_assignable_v<T,Real>) {
+        Real v;
+        auto res = extract<Iter, Real &>(beg, end, v);
+        t = v;
+        return res;
     } else {
         throw std::bad_cast();
     }
@@ -295,9 +297,14 @@ template<typename Iter> static Iter build(Iter where, Real t) {
 };
 
 
+template<typename Iter>
+Iter extract(Iter beg, Iter end) {
+    return beg;
+}
+
 
 template<typename Iter, typename T, typename ... Args>
-Iter extract(Iter beg, Iter end, T var, Args ... args) {
+Iter extract(Iter beg, Iter end, T &&var, Args ... args) {
     if (beg == end) throw std::bad_cast();
     FieldType f = static_cast<FieldType>(*beg);
     ++beg;
@@ -319,113 +326,142 @@ Iter extract(Iter beg, Iter end, T var, Args ... args) {
         case FieldType::stringz: iter=extract_stringz(beg, end, var);break;
         default: throw std::bad_cast();
     }
-    return extract_structured(iter, end, std::forward<Args>(args)...);
+    return extract(iter, end, std::forward<Args>(args)...);
 }
 
-template<typename Iter, typename T>
-Iter extract(Iter beg, Iter end) {
-    return beg;
+template<typename T> class undefined;
+
+template<typename Iter>
+Iter build(Iter where) {
+    return where;
 }
 
 template<typename Iter, typename T, typename ... Args>
 Iter build(Iter where, T &&var, Args &&... args) {
-    if constexpr(std::is_null_pointer_v<T>) {
+    using Type = std::remove_reference_t<T>;
+    if constexpr(std::is_null_pointer_v<Type>) {
         *where = static_cast<std::uint8_t>(FieldType::null);
         ++where;
     } 
-    else if constexpr(std::is_same_v<T, bool>) {
+    else if constexpr(std::is_same_v<Type, bool>) {
         *where = static_cast<std::uint8_t>(var?FieldType::bool_true:FieldType::bool_false);
         ++where;
     }
-    else if constexpr(std::is_same_v<T, int>) {
+    else if constexpr(std::is_same_v<Type, int>) {
         *where = static_cast<std::uint8_t>(FieldType::number_double);
         ++where;
-        where = NumberHelper<double>::build(where, std::forward<T>(var));
+        where = NumberHelper<double>::build(where, std::forward<Type>(var));
     }
-    else if constexpr(std::is_same_v<T, long>) {
+    else if constexpr(std::is_same_v<Type, long>) {
         *where = static_cast<std::uint8_t>(FieldType::number_double);
         ++where;
-        where = NumberHelper<double>::build(where, std::forward<T>(var));
+        where = NumberHelper<double>::build(where, std::forward<Type>(var));
     }
-    else if constexpr(std::is_same_v<T, long long>) {
+    else if constexpr(std::is_same_v<Type, long long>) {
         *where = static_cast<std::uint8_t>(FieldType::number_double);
         ++where;
-        where = NumberHelper<double>::build(where, std::forward<T>(var));
+        where = NumberHelper<double>::build(where, std::forward<Type>(var));
     }
-    else if constexpr(std::is_same_v<T, short>) {
+    else if constexpr(std::is_same_v<Type, short>) {
         *where = static_cast<std::uint8_t>(FieldType::number_double);
         ++where;
-        where = NumberHelper<double>::build(where, std::forward<T>(var));
+        where = NumberHelper<double>::build(where, std::forward<Type>(var));
     }
-    else if constexpr(std::is_same_v<T, std::uint8_t>) {
+    else if constexpr(std::is_same_v<Type, std::uint8_t>) {
         *where = static_cast<std::uint8_t>(FieldType::number_uint8);
         ++where;
         where = UIntHelper<std::uint8_t>::build(where, var);
     }
-    else if constexpr(std::is_same_v<T, std::uint16_t>) {
+    else if constexpr(std::is_same_v<Type, std::uint16_t>) {
         *where = static_cast<std::uint8_t>(FieldType::number_uint16);
         ++where;
-        where = UIntHelper<std::uint16_t>::build(where, std::forward<T>(var));
+        where = UIntHelper<std::uint16_t>::build(where, std::forward<Type>(var));
     }
-    else if constexpr(std::is_same_v<T, std::uint32_t>) {
+    else if constexpr(std::is_same_v<Type, std::uint32_t>) {
         *where = static_cast<std::uint8_t>(FieldType::number_uint32);
         ++where;
-        where = UIntHelper<std::uint32_t>::build(where, std::forward<T>(var));
+        where = UIntHelper<std::uint32_t>::build(where, std::forward<Type>(var));
     }
-    else if constexpr(std::is_same_v<T, std::uint64_t>) {
+    else if constexpr(std::is_same_v<Type, std::uint64_t>) {
         *where = static_cast<std::uint8_t>(FieldType::number_uint64);
         ++where;
-        where = UIntHelper<std::uint64_t>::build(where, std::forward<T>(var));
+        where = UIntHelper<std::uint64_t>::build(where, std::forward<Type>(var));
     }
-    else if constexpr(std::is_same_v<T, const char *>) {
-        *where = static_cast<std::uint8_t>(FieldType::stringz);
-        ++where;
-        where = build_stringz(where, std::forward<T>(var));
-    }
-    else if constexpr(std::is_same_v<T, double>) {
-        *where = static_cast<std::uint8_t>(FieldType::number_double);
-        ++where;
-        where = NumberHelper<double>::build(where, std::forward<T>(var));
-    }
-    else if constexpr(std::is_same_v<T, float>) {
-        *where = static_cast<std::uint8_t>(FieldType::number_float);
-        ++where;
-        where = NumberHelper<float>::build(where, std::forward<T>(var));
-    }
-    else if constexpr(std::is_base_of_v<std::string, T>) {
-        *where = static_cast<std::uint8_t>(FieldType::stringz);
-        ++where;
-        where = build_stringz(where, std::forward<T>(var));
-    }
-    else if constexpr(std::is_base_of_v<std::string_view, T>) {
-        *where = static_cast<std::uint8_t>(FieldType::stringz);
-        ++where;
-        where = build_stringz(where, std::forward<T>(var));
-    }
-    else if constexpr(std::is_base_of_v<SmallBlob, T>) {
+    else if constexpr(std::is_base_of_v<SmallBlob, Type>) {
         *where = static_cast<std::uint8_t>(FieldType::small_blob);
         ++where;
-        where = SmallBlob::build(where, std::forward<T>(var));
+        where = SmallBlob::build(where, std::forward<Type>(var));
     }
-    else if constexpr(std::is_base_of_v<Blob, T>) {
+    else if constexpr(std::is_base_of_v<Blob, Type>) {
         *where = static_cast<std::uint8_t>(FieldType::blob);
         ++where;
-        where = Blob::build(where, std::forward<T>(var));
+        where = Blob::build(where, std::forward<Type>(var));
     }
-    else if constexpr(std::is_base_of_v<LargeBlob, T>) {
+    else if constexpr(std::is_base_of_v<LargeBlob, Type>) {
         *where = static_cast<std::uint8_t>(FieldType::large_blob);
         ++where;
-        where = LargeBlob::build(where, std::forward<T>(var));
+        where = LargeBlob::build(where, std::forward<Type>(var));
     }
-    else if constexpr(std::is_base_of_v<HugeBlob, T>) {
+    else if constexpr(std::is_base_of_v<HugeBlob, Type>) {
         *where = static_cast<std::uint8_t>(FieldType::huge_blob);
         ++where;
-        where = HugeBlob::build(where, std::forward<T>(var));
+        where = HugeBlob::build(where, std::forward<Type>(var));
+    } 
+    else if constexpr(std::is_convertible_v<Type, const char *>) {
+        *where = static_cast<std::uint8_t>(FieldType::stringz);
+        ++where;
+        where = build_stringz(where, std::forward<Type>(var));
     }
+    else if constexpr(std::is_same_v<Type, double>) {
+        *where = static_cast<std::uint8_t>(FieldType::number_double);
+        ++where;
+        where = NumberHelper<double>::build(where, std::forward<Type>(var));
+    }
+    else if constexpr(std::is_same_v<Type, float>) {
+        *where = static_cast<std::uint8_t>(FieldType::number_float);
+        ++where;
+        where = NumberHelper<float>::build(where, std::forward<Type>(var));
+    }
+    else if constexpr(std::is_base_of_v<std::string, Type>) {
+        *where = static_cast<std::uint8_t>(FieldType::stringz);
+        ++where;
+        where = build_stringz(where, std::forward<Type>(var));
+    }
+    else if constexpr(std::is_base_of_v<std::string_view, Type>) {
+        *where = static_cast<std::uint8_t>(FieldType::stringz);
+        ++where;
+        where = build_stringz(where, std::forward<Type>(var));
+    }
+    else {
+        throw undefined<Type>::undefined();        
+    }
+    return build(where, std::forward<Args>(args)...);
     
     
 }
+template<typename ... Args>
+void build_string_append(std::string &s, Args && ... args)  {
+    build(std::back_inserter(s), std::forward<Args>(args)...);    
+}
 
+template<typename ... Args>
+void build_string(std::string &s, Args && ... args)  {
+    s.clear();
+    build_string_append(s, std::forward<Args>(args)...);
+}
+
+
+
+template<typename Fn>
+void to_strings(const std::string_view &content, Fn &&fn) {
+    auto beg = content.begin();
+    auto end = content.end();
+    std::string s;
+    while (beg != end) {        
+        beg = extract(beg, end, s);
+        fn(s);
+    }
+}
 
 }
 
