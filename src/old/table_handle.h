@@ -9,6 +9,7 @@
 #define SRC_DOCDB_TABLE_HANDLE_H_
 #include "key.h"
 
+#include "value.h"
 #include <leveldb/db.h>
 #include <leveldb/write_batch.h>
 #include <memory>
@@ -21,8 +22,8 @@ public:
     Batch (const Batch &) = default;
     Batch &operator=(const Batch &) = delete;
     
-    void put(const KeyView &k, const std::string_view &v) {
-        _ref.Put(k, leveldb::Slice(v.data(), v.size()));        
+    void put(const KeyView &k, const ValueView &v) {
+        _ref.Put(k, v);        
     }
     void erase(const KeyView &k) {
         _ref.Delete(k);        

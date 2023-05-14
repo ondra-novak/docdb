@@ -75,10 +75,11 @@ public:
     public:
         using IteratorRaw::IteratorRaw;
         
-        IdType id() const {
+        IdType id() const {            
             auto k = IteratorRaw::key();
-            auto iter = k.begin();
-            return k.template read<IdType>(iter);
+            IdType id;
+            k.extract_untagged(id);
+            return id;
         }
         
     };
@@ -122,9 +123,7 @@ inline Storage<IdType>::Storage(PTableHandle th)
 {
     Iterator iter(_th->read_access().iterate(),Key(_ks+1), Key(_ks),false,false);
     if (iter.next()) {
-        KeyView k(iter.key());
-        auto kit = k.begin();
-        _nextid = k.read<IdType>(kit);        
+        _nextid = iter.id();
     } 
 }
 
@@ -132,8 +131,8 @@ template<typename IdType>
 inline IdType Storage<IdType>::store(Batch tx, const std::string_view &data) {
     Key k(_ks);
     IdType index = ++_nextid; 
-    k.add(index);
-    tx.put(k, data);
+    k.set_untagged(index);
+    tx.put(k, ValueView(data));
     _th->update(tx, k, &data, nullptr);        
     return index;
 }
@@ -153,7 +152,7 @@ inline IdType Storage<IdType>::store(const std::string_view &data) {
 template<typename IdType>
 inline bool Storage<IdType>::get(IdType id, std::string &data) const {
     Key k(_ks);
-    k.add(id);
+    k.set_untagged(id);
     return _th->read_access().find(k, data);
 }
 
@@ -163,8 +162,8 @@ inline typename Storage<IdType>::Iterator Storage<IdType>::scan(
     
     Key kfrom(_ks);
     Key kto(_ks);
-    kfrom.add(from);
-    kto.add(to);
+    kfrom.set_untagged(from);
+    kto.set_untagged(to);
     Iterator iter(_th->read_access().iterate(), kfrom, kto, include_begin, include_end);
     return iter;
 }
@@ -174,7 +173,7 @@ inline typename Storage<IdType>::Iterator Storage<IdType>::scan_from(
         IdType from, bool backward, bool include_begin) const {
     Key kfrom(_ks);
     Key kto(backward?_ks:_ks+1);
-    kfrom.add(from);
+    kfrom.set_untagged(from);
     Iterator iter(_th->read_access().iterate(), kfrom, kto, include_begin, false);
     return iter;
 }
@@ -182,13 +181,13 @@ inline typename Storage<IdType>::Iterator Storage<IdType>::scan_from(
 template<typename IdType>
 inline void Storage<IdType>::erase(IdType id) {
     WriteTx _(*this);
-    return erase(_,id);       
+    erase(_,id);       
 }
 
 template<typename IdType>
 inline void Storage<IdType>::erase(Batch tx, IdType id) {
     Key k(_ks);
-    k.add(id);
+    k.set_untagged(id);
     tx.erase(k);
     _th->update(tx, k, nullptr, nullptr);
 }

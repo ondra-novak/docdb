@@ -110,9 +110,9 @@ public:
     KeyView key() const {
         return KeyView(_iter->key());
     }
-    std::string_view value() const {
+    ValueView value() const {
         leveldb::Slice v = _iter->value();
-        return std::string_view(v.data(), v.size());
+        return ValueView(v.data(), v.size());
     }
     
 

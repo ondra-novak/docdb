@@ -48,6 +48,9 @@ public:
     Table(const Table &other) = delete;
     Table &operator=(const Table &other) = delete;
     
+    void observe(UpdateObserver obs) {
+        _th->observe(std::move(obs));
+    }
   
 protected:
     
