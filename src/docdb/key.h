@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <leveldb/slice.h>
+#include <concepts>
 
 namespace docdb {
 
@@ -32,30 +33,20 @@ protected:
     std::locale _loc;
 };
 
+class RemainingData: public std::string_view {
+public:
+    using std::string_view::string_view;
+    RemainingData(const std::string_view &other):std::string_view(other) {}
+};
+
 using LocalizedString = LocalizedBasicString<char>;
 using LocalizedWString = LocalizedBasicString<wchar_t>;
 
-
-class Key: public std::string {
+class Value: public std::string {
 public:
 
-    Key(KeyspaceID id) {
-        add(id);
-    }
+    using std::string::string;
 
-    template<typename ... Args >
-    Key(KeyspaceID id, const Args & ...  args)
-    {
-        add(id, args...);
-    }
-
-    template<typename ... Args>
-    void add(KeyspaceID id, const Args & ... args) {
-        for (int i = 0; i < sizeof(KeyspaceID); i++) {
-            this->push_back(static_cast<char>(id & 0xFF) >> ((sizeof(KeyspaceID) - i)*8));
-        }
-        add(args...);
-    }
 
     template<typename ... Args>
     void add(bool b, const Args & ... args) {
@@ -67,6 +58,15 @@ public:
     void add(double v, const Args & ... args) {
         BinHelper<double> hlp{-v};
         for (char c: hlp.bin) this->push_back(c);
+        add(args...);
+    }
+
+    template<std::unsigned_integral UInt, typename ... Args>
+    void add(UInt v, const Args & ... args) {
+        for (int i = 0; i < 8; i++) {
+            int shift = 8*(8-i);
+            this->push_back(static_cast<char>((v >> shift) & 0xFF));
+        }
         add(args...);
     }
 
@@ -86,7 +86,73 @@ public:
         add(args...);
     }
 
+    void add(const RemainingData &data) {
+        append(data);
+    }
+
     void add() {};
+
+    template<typename ... Args>
+    static int deserialize(const std::string_view &s, bool &b,  Args &... args) {
+        if (s.empty()) return 0;
+        b = s[0] != '0';
+        return 1 + deserialize(s.substr(1), args...);
+    }
+
+    template<typename ... Args>
+    static int deserialize(const std::string_view &s, double &v,  Args &... args) {
+        BinHelper<double> hlp{-v};
+        if (s.size() < sizeof(hlp)) return 0;
+        for (int i = 0; i < sizeof(hlp); i++) hlp.bin[i] = s[i];
+        v = -hlp.val;
+        return 1 + deserialize(s.substr(8), args...);
+    }
+
+    template<std::unsigned_integral UInt, typename ... Args>
+    static int deserialize(const std::string_view &s, UInt &v,  Args &... args) {
+        if (s.size() < sizeof(v)) return 0;
+        v = 0;
+        for (int i = 0; i < sizeof(v); i++) v = (v << 8) | static_cast<unsigned char>(s[i]);
+        return 1 + deserialize(s.substr(8), args...);
+    }
+
+    template<typename ... Args>
+    static int deserialize(const std::string_view &s, std::string_view &v,  Args &... args) {
+        auto pos = s.find('\0');
+        if (pos == s.npos) {
+            v = s;
+            return !v.empty();
+        } else {
+            return 1+deserialize(s.substr(pos+1), args...);
+        }
+    }
+    template<typename ... Args>
+    static int deserialize(const std::string_view &s, RemainingData &v) {
+        v = RemainingData(s.data(), s.size());
+        return 1;
+    }
+
+    static int deserialize(const std::string_view &s) {
+        return 0;
+    }
+
+
+};
+
+
+class Key: public Value {
+public:
+
+    Key(KeyspaceID id) {
+        add(id);
+    }
+
+    template<typename ... Args >
+    Key(KeyspaceID id, const Args & ...  args)
+    {
+        add(id, args...);
+    }
+
 
     ///Consider current key as prefix. Calculates key for prefix end
     /**
@@ -113,9 +179,15 @@ public:
         return out;
     }
 
+    static KeyspaceID get_kid(const std::string_view &key) {
+        KeyspaceID kid;
+        deserialize(key, kid);
+        return kid;
+    }
+
+
+
    operator const leveldb::Slice() const {return {this->data(), this->size()};}
-
-
 };
 
 

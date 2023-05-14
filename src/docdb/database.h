@@ -3,6 +3,7 @@
 #define SRC_DOCDB_DATABASE_H_
 
 #include "iterator.h"
+#include "key.h"
 
 #include <memory>
 #include <leveldb/db.h>
@@ -22,6 +23,7 @@ class Database;
 
 using PDatabase = std::shared_ptr<Database>;
 using PSnapshot = std::shared_ptr<const leveldb::Snapshot>;
+using Batch = leveldb::WriteBatch;
 
 
 ///Database base
@@ -103,6 +105,8 @@ public:
 
     std::uint64_t get_index_size(std::string_view key1, std::string_view key2);
 
+    ///Commits the batch and clear the batch
+    void commit_batch(Batch &batch);
 
 
 protected:
@@ -115,6 +119,7 @@ protected:
     std::stack<KeyspaceID> _free_ids;
     KeyspaceID _min_free_id = 0;
     mutable std::shared_mutex _mx;
+
 };
 
 class DatabaseError: public std::exception {
@@ -126,8 +131,6 @@ public:
 protected:
     leveldb::Status _st;
     std::string _msg;
-
-
 
 };
 

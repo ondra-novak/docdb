@@ -5,6 +5,7 @@
 #include "leveldb_adapters.h"
 
 #include <leveldb/db.h>
+#include <leveldb/write_batch.h>
 #include <mutex>
 namespace docdb {
 
@@ -169,6 +170,11 @@ std::uint64_t Database::get_index_size(std::string_view key1,
     std::uint64_t r[1];
     _dbinst->GetApproximateSizes(ranges, 1, r);
     return r[0];
+}
+
+void Database::commit_batch(Batch &batch) {
+    _dbinst->Write(_write_opts, &batch);
+    batch.Clear();
 }
 
 }

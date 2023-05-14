@@ -64,6 +64,10 @@ public:
         return out;
     }
 
+    bool lookup(const Key &key, std::string &value) const {
+        return _db->get(key, value, _snap);
+    }
+
     ///Create iterator to scan whole view
     /**
      * @param dir you can specify default direction
@@ -87,7 +91,7 @@ public:
      * @param dir direction
      * @return iterator
      */
-    Iterator scan_from(const Key &key, Direction dir = Direction::normal) const {
+    Iterator scan(const Key &key, Direction dir = Direction::normal) const {
         if (isForward(changeDirection(_dir, dir))) {
             return scan(key, this->key().prefix_end(), LastRecord::excluded);
         } else {
@@ -120,7 +124,7 @@ public:
      * @param dir allows to change direction
      * @return iterator
      */
-    Iterator scan_prefix(const Key &pfx, Direction dir  = Direction::normal) {
+    Iterator scan_prefix(const Key &pfx, Direction dir  = Direction::normal) const{
         if (isForward(changeDirection(_dir, dir))) {
             return scan(pfx, pfx.prefix_end());
         } else {
@@ -150,7 +154,9 @@ public:
         return get_index_size(this->key(), this->key().prefix_end());
     }
 
+    PDatabase get_db() const {return _db;}
 
+    KeyspaceID get_kid() const {return _kid;}
 
 
 protected:
