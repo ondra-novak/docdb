@@ -9,7 +9,6 @@ Storage::DocID Storage::WriteBatch::put_doc(const std::string_view &doc, DocID r
     _buffer.clear();
     _buffer.add(replace_id, RemainingData(doc));
     Put(_storage->key(id), to_slice(doc));
-    if (replace_id) Delete(_storage->key(replace_id));
     return id;
 }
 
