@@ -3,7 +3,7 @@
 #define SRC_DOCDB_DATABASE_H_
 
 #include "iterator.h"
-#include "key.h"
+#include "keyvalue.h"
 
 #include <memory>
 #include <leveldb/db.h>

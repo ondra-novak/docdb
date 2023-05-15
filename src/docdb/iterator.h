@@ -214,38 +214,36 @@ public:
     bool next() {
         if (!_iter->Valid()) return false;
         do {
-            if (!_first_move) {
-                clear_state();
-                switch(_direction) {
-                    default:
-                    case Direction::forward:
-                    case Direction::normal:
-                        _iter->Next();
-                        if (!_iter->Valid()) return false;
-                        switch (_last_record){
-                            case LastRecord::included:
-                                if (to_string(_iter->key()) > _range_end) return false;
-                                break;
-                            default:
-                                if (to_string(_iter->key()) >= _range_end) return false;
-                                break;
-                        };
-                        break;
-                    case Direction::backward:
-                    case Direction::reversed:
-                        _iter->Prev();
-                        if (!_iter->Valid()) return false;
-                        switch (_last_record){
-                            case LastRecord::included:
-                                if (to_string(_iter->key()) < _range_end) return false;
-                                break;
-                            default:
-                                if (to_string(_iter->key()) <= _range_end) return false;
-                                break;
-                        };
-                        break;
-                };
-            }
+            clear_state();
+            switch(_direction) {
+                default:
+                case Direction::forward:
+                case Direction::normal:
+                    if (!_first_move) _iter->Next();
+                    if (!_iter->Valid()) return false;
+                    switch (_last_record){
+                        case LastRecord::included:
+                            if (to_string(_iter->key()) > _range_end) return false;
+                            break;
+                        default:
+                            if (to_string(_iter->key()) >= _range_end) return false;
+                            break;
+                    };
+                    break;
+                case Direction::backward:
+                case Direction::reversed:
+                    if (!_first_move) _iter->Prev();
+                    if (!_iter->Valid()) return false;
+                    switch (_last_record){
+                        case LastRecord::included:
+                            if (to_string(_iter->key()) < _range_end) return false;
+                            break;
+                        default:
+                            if (to_string(_iter->key()) <= _range_end) return false;
+                            break;
+                    };
+                    break;
+            };
             _first_move = false;
             if (!_filter || _filter(this)) return true;
         } while (true);

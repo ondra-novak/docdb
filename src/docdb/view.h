@@ -3,7 +3,7 @@
 #define SRC_DOCDB_VIEW_H_
 #include "database.h"
 
-#include "key.h"
+#include "keyvalue.h"
 
 #include "iterator.h"
 namespace docdb {
@@ -11,7 +11,8 @@ namespace docdb {
 
 
 
-class View {
+template<typename Derived>
+class ViewBase {
 public:
 
     ///Construct the view
@@ -21,8 +22,8 @@ public:
      * @param dir default direction to iterate this view (default is forward)
      * @param snap reference to snapshot (optional)
      */
-    View(PDatabase db, std::string_view name, Direction dir = Direction::forward, PSnapshot snap = {})
-        :_db(std::move(db)),_kid(_db->open_table(name)), _dir(dir), _snap(std::move(snap)) {}
+    ViewBase(PDatabase db, std::string_view name, Direction dir = Direction::forward, PSnapshot snap = {})
+        :_db(std::move(db)),_snap(std::move(snap)),_kid(_db->open_table(name)), _dir(dir) {}
 
     ///Construct the view
     /**
@@ -31,25 +32,22 @@ public:
      * @param dir default direction to iterate this view (default is forward)
      * @param snap reference to snapshot (optional)
      */
-    View(PDatabase db, KeyspaceID kid, Direction dir = Direction::forward, PSnapshot snap = {})
-        :_db(std::move(db)),_kid(kid), _dir(dir), _snap(std::move(snap)) {}
+    ViewBase(PDatabase db, KeyspaceID kid, Direction dir = Direction::forward, PSnapshot snap = {})
+        :_db(std::move(db)), _snap(std::move(snap)),_kid(kid), _dir(dir) {}
 
     ///Retrieve snapshot of this view
     /**
      * @return copy of view as snapshot
      */
-    View get_snapshot() const {
+    auto get_snapshot() const {
         if (_snap) return *this;
-        else return View(_db, _kid, _dir, _db->make_snapshot());
+        else return static_cast<const Derived *>(this)->create_snapshot(_db, _kid, _dir, _db->make_snapshot());
     }
 
     ///Retrieve key instance (to be filled with search data);
     template<typename ... Args>
     Key key(const Args & ... args) const {
-        if (_subindex.has_value())
-            return Key(_kid, *_subindex, args...);
-        else
-            return Key(_kid, args...);
+        return static_cast<const Derived *>(this)->create_key(args...);
     }
 
     ///Lookup for a key
@@ -73,13 +71,13 @@ public:
      * @param dir you can specify default direction
      * @return iterator
      */
-    Iterator scan(Direction dir = Direction::normal) const {
+    auto scan(Direction dir = Direction::normal) const {
         Key from(key());
         Key to(from.prefix_end());
         if (isForward(changeDirection(_dir, dir))) {
             return scan(from, to, LastRecord::excluded);
         } else {
-            Iterator r = scan(to,from, LastRecord::included);
+            auto r = scan(to,from, LastRecord::included);
             if (r.is_key(to)) r.next();
             return r;
         }
@@ -91,7 +89,7 @@ public:
      * @param dir direction
      * @return iterator
      */
-    Iterator scan(const Key &key, Direction dir = Direction::normal) const {
+    auto scan(const Key &key, Direction dir = Direction::normal) const {
         if (isForward(changeDirection(_dir, dir))) {
             return scan(key, this->key().prefix_end(), LastRecord::excluded);
         } else {
@@ -108,13 +106,13 @@ public:
      *  'to' key
      * @return iterator
      */
-    Iterator scan(const Key &from, const Key &to,  LastRecord last_record = LastRecord::excluded) const {
+    auto scan(const Key &from, const Key &to,  LastRecord last_record = LastRecord::excluded) const {
         auto iter = _db->make_iterator(false, _snap);
         iter->Seek(from);
         if (from <= to) {
-            return Iterator(std::move(iter), to, Direction::forward, last_record);
+            return static_cast<const Derived *>(this)->create_iterator(std::move(iter), to, Direction::forward, last_record);
         } else {
-            return Iterator(std::move(iter), to, Direction::backward, last_record);
+            return static_cast<const Derived *>(this)->create_iterator(std::move(iter), to, Direction::backward, last_record);
         }
     }
 
@@ -124,7 +122,7 @@ public:
      * @param dir allows to change direction
      * @return iterator
      */
-    Iterator scan_prefix(const Key &pfx, Direction dir  = Direction::normal) const{
+    auto scan_prefix(const Key &pfx, Direction dir  = Direction::normal) const{
         if (isForward(changeDirection(_dir, dir))) {
             return scan(pfx, pfx.prefix_end());
         } else {
@@ -164,9 +162,28 @@ protected:
     PSnapshot _snap;
     KeyspaceID _kid;
     Direction _dir;
-    std::optional<KeyspaceID> _subindex;
+
+    static auto create_iterator(std::unique_ptr<leveldb::Iterator> &&iter,
+            const std::string_view &endkey,
+            Direction dir,
+            LastRecord last_record)  {
+        return Iterator(std::move(iter), endkey, Direction::forward, last_record);
+    }
+
+    template<typename ... Args>
+    Key create_key(const Args & ... args) const {
+        return Key(_kid, args...);
+    }
+
 };
 
+
+class View: public ViewBase<View> {
+public:
+    using ViewBase<View>::ViewBase;
+    friend class ViewBase<View>;
+
+};
 
 }
 

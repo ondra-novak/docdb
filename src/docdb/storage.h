@@ -16,6 +16,75 @@
 namespace docdb {
 
 
+class StorageView: public ViewBase<StorageView> {
+
+    static auto create_iterator(std::unique_ptr<leveldb::Iterator> &&iter,
+             const std::string_view &endkey,
+             Direction dir,
+             LastRecord last_record) {
+         return Iterator(std::move(iter), endkey, Direction::forward, last_record);
+     }
+
+
+public:
+    using ViewBase<StorageView>::ViewBase;
+    friend class ViewBase<StorageView>;
+
+    using DocID = std::uint64_t;
+
+    using _Iterator = Iterator;
+    class Iterator: public _Iterator {
+    public:
+        using _Iterator::_Iterator;
+
+        DocID get_docid() const;
+        DocID get_prev_docid() const;
+        std::string_view get_doc() const;
+    };
+
+    ///Calculate key
+    /**
+     * @param id document id
+     * @return a key which can be used to lookup and search
+     */
+    Key key(DocID id) const {
+        return ViewBase<StorageView>::key(id);
+    }
+
+    struct DocData {
+        DocID old_rev;
+        std::string_view doc_data;
+    };
+
+    struct DocDataBuffer: DocData {
+        std::string buffer;
+    };
+
+    bool get(DocID docid, DocDataBuffer &doc) const {
+        if (!lookup(key(docid), doc.buffer)) return false;
+        RemainingData content;
+        Value::parse(doc.buffer, doc.old_rev, content);
+        doc.doc_data = content;
+        return true;
+    }
+
+    static DocData extract_document(const std::string_view &value) {
+        RemainingData dd;
+        DocID id;
+        Value::parse(value, id, dd);
+        return {id, dd};
+    }
+
+    auto scan(DocID fromId, Direction dir = Direction::forward) {
+        return ViewBase<StorageView>::scan(key(fromId), dir);
+    }
+    using ViewBase<StorageView>::scan;
+
+protected:
+
+
+};
+
 ///Unordered storage for documents
 /**
  * The document is an arbitrary string. This object can store any count of documents,
@@ -27,21 +96,11 @@ namespace docdb {
  *
  *
  */
-class Storage: public View {
+class Storage: public StorageView {
 public:
 
-    using View::View;
+    using StorageView::StorageView;
 
-    using DocID = std::uint64_t;
-
-    ///Calculate key
-    /**
-     * @param id document id
-     * @return a key which can be used to lookup and search
-     */
-    Key key(DocID id) const {
-        return View::key(id);
-    }
 
     using _Batch = Batch;
     using NotifyCallback = std::function<void(DocID)>;
@@ -49,13 +108,13 @@ public:
 
 
     ///This object allows to write multiple documents
-    class WriteBatch: public Batch {
+    class WriteBatch {
     public:
         WriteBatch(Storage &storage)
             :_storage(&storage) {
             _storage->_mx.lock();
             if (!_storage->_next_id) {
-                _storage->find_revision_id();
+                _storage->_next_id = _storage->find_revision_id();
             }
             _alloc_ids = _storage->_next_id;
         }
@@ -66,7 +125,7 @@ public:
         WriteBatch &operator=(const WriteBatch &) = delete;
 
         WriteBatch(WriteBatch &&x)
-            : Batch(std::move(x))
+            :_batch(std::move(x._batch))
             ,_storage(x._storage)
             ,_alloc_ids(x._alloc_ids){
                 x._storage = nullptr;
@@ -74,12 +133,15 @@ public:
         WriteBatch &operator=(WriteBatch &&x) {
             if (this != &x) {
                 if (_storage) _storage->_mx.unlock();
-                Batch::operator =(std::move(x));
+                _batch = (std::move(x._batch));
                 _storage = x._storage;
                 x._storage = nullptr;
                 _alloc_ids = x._alloc_ids;
             }
             return *this;
+        }
+        auto size() {
+            return _batch.ApproximateSize();
         }
 
         ///Put document to the storage
@@ -94,6 +156,7 @@ public:
          */
         DocID put_doc(const std::string_view &doc, DocID replace_id = 0);
 
+        ///Commit the batch to the database
         void commit() {
             _storage->_db->commit_batch(*this);
             _storage->_next_id = _alloc_ids;
@@ -102,8 +165,9 @@ public:
             }
         }
 
+        ///rollback the batch
         void rollback() {
-            Clear();
+            _batch.Clear();
             _alloc_ids = _storage->_next_id;
         }
 
@@ -111,13 +175,17 @@ public:
         ~WriteBatch() {
             if (_storage) _storage->_mx.unlock();
         }
+
+        operator Batch &() {return _batch;}
     protected:
+        Batch _batch;
         Storage *_storage = nullptr;
         DocID _alloc_ids = 0;
         Value _buffer;
 
 
     };
+
 
     ///Write multiple documents (including documents to other tables)
     /**
@@ -131,7 +199,7 @@ public:
         return WriteBatch(*this);
     }
 
-    DocID put(const std::string_view &doc);
+    DocID put(const std::string_view &doc, DocID replaced_id = 0);
 
     ///Erase document
     /**
@@ -182,24 +250,26 @@ public:
     static DocID key2docid(std::string_view key) {
         KeyspaceID kid;
         DocID docId = 0;
-        Value::deserialize(key, kid, docId);
+        Value::parse(key, kid, docId);
         return docId;
     }
 
-    struct DocData {
-        DocID old_rev;
-        std::string_view doc;
-    };
 
-    DocData extract_document(const std::string_view &value) {
-        RemainingData dd;
-        DocID id;
-        Value::deserialize(value, id, dd);
-        return {id, dd};
-    }
-
+    ///Compact the storage removing old revisions
+    /**
+     * When document is replaced, it is always stored as new record. Old version
+     * (old revision) of the document is still stored and can be accessed under
+     * its original ID. New revision receives new ID but it also tracks ID of
+     * document it replaces.
+     *
+     * This function removes all documents referenced as replaced, so documents
+     * referenced as old revision will no longer available
+     */
+    void compact();
 
 protected:
+
+
 
     DocID _next_id = 0;
     mutable std::mutex _mx;

@@ -1,4 +1,4 @@
-#include "key.h"
+#include "keyvalue.h"
 #include "database.h"
 #include "view.h"
 
@@ -10,7 +10,9 @@
 namespace docdb {
 
 Database::Database(leveldb::DB *dbinst)
-        :_dbinst(dbinst) {}
+        :_dbinst(dbinst) {
+    scan_tables();
+}
 
 std::optional<KeyspaceID> Database::find_table(std::string_view v) const {
     std::shared_lock lk(_mx);
@@ -26,7 +28,7 @@ KeyspaceID Database::open_table(std::string_view v)  {
         KeyspaceID id;
         if (_free_ids.empty()) {
            if (_min_free_id == system_table) throw std::runtime_error("No free keyspace available");
-           id = ++_min_free_id;
+           id = _min_free_id++;
         } else {
             id = _free_ids.top();;
             _free_ids.pop();
@@ -35,6 +37,7 @@ KeyspaceID Database::open_table(std::string_view v)  {
         leveldb::WriteOptions wr;
         wr.sync = true;
         if (!_dbinst->Put(wr, k, to_slice(v)).ok()) throw std::runtime_error("Failed to write table record");
+        _table_map.emplace(std::string(v), id);
         return id;
     } else {
         return iter->second;
@@ -65,6 +68,7 @@ void Database::delete_table(std::string_view v) {
     leveldb::WriteOptions wr;
     wr.sync = true;
     _dbinst->Delete(wr, k);
+    _table_map.erase(iter);
     lk.unlock();
     clear_table(id);
 
@@ -99,9 +103,8 @@ void Database::scan_tables() {
         auto k = iter->key();
         if (k.size() >= sizeof(KeyspaceID)*2) {
             KeyspaceID id = 0;
-            for (std::size_t i = sizeof(KeyspaceID); i < k.size(); ++i) {
-                id = id << 8 | static_cast<std::uint8_t>(k[i]);
-            }
+            KeyspaceID tmp = 0;
+            Value::parse(to_string(k), tmp, id);
             auto vv = iter->value();
             name.clear();
             name.append(vv.data(), vv.size());
@@ -113,7 +116,7 @@ void Database::scan_tables() {
             _table_map.emplace(std::move(name), std::move(id));
             _min_free_id = id+1;
         }
-
+        iter->Next();
     }
 }
 
@@ -173,7 +176,10 @@ std::uint64_t Database::get_index_size(std::string_view key1,
 }
 
 void Database::commit_batch(Batch &batch) {
-    _dbinst->Write(_write_opts, &batch);
+    auto st =_dbinst->Write(_write_opts, &batch);
+    if (!st.ok()) {
+        throw DatabaseError(st);
+    }
     batch.Clear();
 }
 

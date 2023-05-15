@@ -7,7 +7,7 @@
 
 #ifndef SRC_DOCDB_INDEX_H_
 #define SRC_DOCDB_INDEX_H_
-#include "key.h"
+#include "keyvalue.h"
 
 #include "view.h"
 #include <string_view>
