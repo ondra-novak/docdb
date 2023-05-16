@@ -77,8 +77,8 @@ public:
 
 
     Iterator scan(Direction dir = Direction::forward) {
-        Key from(_kid);
-        Key to(_kid+1);
+        RawKey from(_kid);
+        RawKey to(_kid+1);
         if (isForward(dir))  {
             return scan_internal(from, to, LastRecord::excluded);
         } else {
@@ -89,8 +89,8 @@ public:
     }
 
     Iterator scan_from(DocID docId, Direction dir = Direction::forward) {
-        return scan_internal(Key(_kid,docId),
-                             isForward(dir)?Key(_kid+1):Key(_kid),
+        return scan_internal(RawKey(_kid,docId),
+                             isForward(dir)?RawKey(_kid+1):RawKey(_kid),
                              isForward(dir)?LastRecord::excluded:LastRecord::included);
     }
 
@@ -101,7 +101,7 @@ public:
      * @return DocData, if found, otherwise no value
      */
     std::optional<DocData> get(DocID docId, std::string &buffer) {
-        if (!_db->get(Key(_kid,docId), buffer)) return {};
+        if (!_db->get(RawKey(_kid,docId), buffer)) return {};
         DocID id;
         RemainingData docdata;
         Value::parse(buffer, id, docdata);
@@ -109,7 +109,7 @@ public:
     }
 
     Iterator scan(DocID from, DocID to, LastRecord last_record = LastRecord::excluded) {
-        return scan_internal(Key(_kid,from), Key(_kid,to) , last_record);
+        return scan_internal(RawKey(_kid,from), RawKey(_kid,to) , last_record);
     }
 
 

@@ -8,12 +8,12 @@ Storage::DocID Storage::WriteBatch::put_doc(const std::string_view &doc, DocID r
     auto id = _alloc_ids++;
     _buffer.clear();
     _buffer.add(replace_id, RemainingData(doc));
-    _batch.Put(Key(_storage->_kid,id), to_slice(_buffer));
+    _batch.Put(RawKey(_storage->_kid,id), to_slice(_buffer));
     return id;
 }
 
 void Storage::erase(Batch &b, DocID id) {
-    b.Delete(Key(_kid,id));
+    b.Delete(RawKey(_kid,id));
 }
 
 Storage::DocID Storage::put(const std::string_view &doc, DocID replaced_id) {
@@ -35,7 +35,7 @@ void Storage::compact() {
     Iterator iter = scan();
     while (iter.next()) {
         DocID p = iter.doc().old_rev;
-        if (p) b.Delete(Key(_kid,p));
+        if (p) b.Delete(RawKey(_kid,p));
     }
     _db->commit_batch(b);
 }

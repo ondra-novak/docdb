@@ -33,7 +33,7 @@ KeyspaceID Database::open_table(std::string_view v)  {
             id = _free_ids.top();;
             _free_ids.pop();
         }
-        Key k(system_table, id);
+        RawKey k(system_table, id);
         leveldb::WriteOptions wr;
         wr.sync = true;
         if (!_dbinst->Put(wr, k, to_slice(v)).ok()) throw std::runtime_error("Failed to write table record");
@@ -46,8 +46,8 @@ KeyspaceID Database::open_table(std::string_view v)  {
 
 void Database::clear_table(KeyspaceID id) {
     std::unique_ptr<leveldb::Iterator> iter2(_dbinst->NewIterator({}));
-    iter2->Seek(Key(id));
-    Key endKey(id+1);
+    iter2->Seek(RawKey(id));
+    RawKey endKey(id+1);
     while (iter2->Valid()) {
         auto k = iter2->key();
         if (to_string(k) < endKey) {
@@ -64,7 +64,7 @@ void Database::delete_table(std::string_view v) {
     if (iter == _table_map.end()) return ;
     KeyspaceID id = iter->second;
     _free_ids.push(id);
-    Key k(system_table, id);
+    RawKey k(system_table, id);
     leveldb::WriteOptions wr;
     wr.sync = true;
     _dbinst->Delete(wr, k);
@@ -75,7 +75,7 @@ void Database::delete_table(std::string_view v) {
 }
 
 std::optional<std::string> Database::name_from_id(KeyspaceID id) const {
-    Key k(system_table, id);
+    RawKey k(system_table, id);
     std::string out;
     if (_dbinst->Get({}, k, &out).ok()) {
         return out;
@@ -95,7 +95,7 @@ void Database::scan_tables() {
     _table_map.clear();
     std::string name;
     std::unique_ptr<leveldb::Iterator> iter(_dbinst->NewIterator({}));
-    iter->Seek(Key(system_table));
+    iter->Seek(RawKey(system_table));
     _min_free_id = 0;
     _free_ids = {};
 

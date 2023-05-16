@@ -6,5 +6,6 @@ add_library (docdb
             database.cpp
             storage.cpp
             index.cpp
+            kvtable.cpp
             ) 
 

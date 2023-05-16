@@ -141,12 +141,15 @@ public:
 
 };
 
-
-class Key: public Value {
+///contains key in raw form including keyspaceID
+/**
+ * This key is used to adress data in underlying database engine
+ */
+class RawKey: public Value {
 public:
 
     template<typename ... Args >
-    Key(KeyspaceID id, const Args & ...  args)
+    RawKey(KeyspaceID id, const Args & ...  args)
     {
         add(id, args...);
     }
@@ -164,8 +167,8 @@ public:
      *
      * @return
      */
-    Key prefix_end() const {
-        Key out = *this;
+    RawKey prefix_end() const {
+        RawKey out = *this;
         while (!out.empty()) {
             auto c = static_cast<unsigned char>(out.back());
             out.pop_back();
@@ -221,8 +224,19 @@ protected:
 template<typename X>
 TempAppend(X &) -> TempAppend<X>;
 
+
+
+///Key object used at public interface.
+/**
+ * This object is created by user containing a key, where keyspace id is
+ * just reserved, and must be changed by change_kid method.
+ */
+class Key: public RawKey {
+public:
+    template<typename ... Args>
+    Key(const Args & ... args):RawKey(0, args...) {}
+};
+
 }
-
-
 
 #endif /* SRC_DOCDB_KEY_H_ */

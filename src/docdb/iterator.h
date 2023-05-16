@@ -329,6 +329,7 @@ protected:
 
 };
 
+using GenIterator = Iterator;
 
 }
 

@@ -10,7 +10,7 @@ EmitFn::EmitFn(Batch &b, KeySet &ks, KeyspaceID kid, Storage::DocID docId, bool 
         :_b(b),_ks(ks),_kid(kid),_docid(docId),_del(del) {}
 
 
-void EmitFn::operator ()(IndexKey &key, Value &value) const {
+void EmitFn::operator ()(Key &key, Value &value) const {
     key.change_kid(_kid);
     key.add(_docid);
     if (_del) {
@@ -36,7 +36,7 @@ Index::Instance::Instance(KeyspaceID kid, Storage &source,
 
 void Index::Instance::init() {
     std::string v;
-    if (!_db->get(Key(_kid), v)) {
+    if (!_db->get(RawKey(_kid), v)) {
         _start_id = 1;
     } else {
         DocID lastId;
@@ -92,7 +92,7 @@ void Index::Instance::update(const PSnapshot &snap) {
         _db->commit_batch(b);
         _start_id = id+1;
     }
-    b.Put(Key(_kid), Value(_start_id, _revision));
+    b.Put(RawKey(_kid), Value(_start_id, _revision));
     _db->commit_batch(b);
 
 }

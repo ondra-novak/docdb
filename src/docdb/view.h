@@ -44,7 +44,7 @@ public:
 
     ///Retrieve key instance (to be filled with search data);
     template<typename ... Args>
-    Key key(const Args & ... args) const {
+    RawKey key(const Args & ... args) const {
         return static_cast<const Derived *>(this)->create_key(args...);
     }
 
@@ -53,14 +53,14 @@ public:
      * @param key key to lookup
      * @return value found. If the key doesn't exists, result is no-value state
      */
-    std::optional<std::string_view> lookup(const Key &key) const {
+    std::optional<std::string_view> lookup(const RawKey &key) const {
         std::optional<std::string> out;
         out.emplace();
         if (!_db->get(key, *out, _snap)) out.reset();
         return out;
     }
 
-    bool lookup(const Key &key, std::string &value) const {
+    bool lookup(const RawKey &key, std::string &value) const {
         return _db->get(key, value, _snap);
     }
 
@@ -70,8 +70,8 @@ public:
      * @return iterator
      */
     auto scan(Direction dir = Direction::normal) const {
-        Key from(key());
-        Key to(from.prefix_end());
+        RawKey from(key());
+        RawKey to(from.prefix_end());
         if (isForward(changeDirection(_dir, dir))) {
             return scan(from, to, LastRecord::excluded);
         } else {
@@ -87,7 +87,7 @@ public:
      * @param dir direction
      * @return iterator
      */
-    auto scan(const Key &key, Direction dir = Direction::normal) const {
+    auto scan(const RawKey &key, Direction dir = Direction::normal) const {
         if (isForward(changeDirection(_dir, dir))) {
             return scan(key, this->key().prefix_end(), LastRecord::excluded);
         } else {
@@ -104,7 +104,7 @@ public:
      *  'to' key
      * @return iterator
      */
-    auto scan(const Key &from, const Key &to,  LastRecord last_record = LastRecord::excluded) const {
+    auto scan(const RawKey &from, const RawKey &to,  LastRecord last_record = LastRecord::excluded) const {
         auto iter = _db->make_iterator(false, _snap);
         iter->Seek(from);
         if (from <= to) {
@@ -120,7 +120,7 @@ public:
      * @param dir allows to change direction
      * @return iterator
      */
-    auto scan_prefix(const Key &pfx, Direction dir  = Direction::normal) const{
+    auto scan_prefix(const RawKey &pfx, Direction dir  = Direction::normal) const{
         if (isForward(changeDirection(_dir, dir))) {
             return scan(pfx, pfx.prefix_end());
         } else {
@@ -136,14 +136,14 @@ public:
      * You can use this number to compare multiple indexes to order index processing
      * from smallest to largest index
      */
-    auto get_index_size(const Key &from, const Key &to) const {
+    auto get_index_size(const RawKey &from, const RawKey &to) const {
         if (from >= to) return _db->get_index_size(to, from);
         return _db->get_index_size(from, to);
     }
-    auto get_index_size(const Key &key, Direction dir = Direction::normal) const {
+    auto get_index_size(const RawKey &key, Direction dir = Direction::normal) const {
         return get_index_size(key, isForward(changeDirection(_dir, dir))?this->key().prefix_end():this->key());
     }
-    auto get_index_size(const Key &key) const {
+    auto get_index_size(const RawKey &key) const {
         return get_index_size(key, key.prefix_end());
     }
     auto get_index_size() const {
@@ -169,8 +169,8 @@ protected:
     }
 
     template<typename ... Args>
-    Key create_key(const Args & ... args) const {
-        return Key(_kid, args...);
+    RawKey create_key(const Args & ... args) const {
+        return RawKey(_kid, args...);
     }
 
 };

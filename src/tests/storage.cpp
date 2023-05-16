@@ -82,7 +82,7 @@ void test1() {
 
 }
 
-void test_key(docdb::Key k) {
+void test_key(docdb::RawKey k) {
 
 }
 

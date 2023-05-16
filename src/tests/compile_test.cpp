@@ -7,13 +7,13 @@
 #include <cstdlib>
 
 
-void test(docdb::Key &&, docdb::Value &&) {}
-void test(docdb::Key &, docdb::Value &&) {}
-void test(docdb::Key &&, docdb::Value &) {}
-void test(docdb::Key &, docdb::Value &) {}
+void test(docdb::RawKey &&, docdb::Value &&) {}
+void test(docdb::RawKey &, docdb::Value &&) {}
+void test(docdb::RawKey &&, docdb::Value &) {}
+void test(docdb::RawKey &, docdb::Value &) {}
 
 int main(int , char **) {
-    docdb::Key k(0);
+    docdb::RawKey k(0);
     docdb::Value v;
     test({1,2,3},{"a","b"});
     test({1,2,3},v);

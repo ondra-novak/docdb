@@ -25,11 +25,6 @@ class EmitFn;
 using Indexer = std::function<void(std::string_view, const EmitFn &)>;
 
 
-class IndexKey: public Key {
-public:
-    template<typename ... Args>
-    IndexKey(const Args & ... args):Key(0, args...) {}
-};
 
 
 
@@ -72,7 +67,7 @@ public:
      * you need to avoid adding terminating zero after last string, this can be done using
      * casting the last string to StringPrefix
      */
-    Iterator find(IndexKey &&key) {return find(key);}
+    Iterator find(Key &&key) {return find(key);}
     ///Find a key
     /**
      * @param key specifies key to find
@@ -82,9 +77,9 @@ public:
      * you need to avoid adding terminating zero after last string, this can be done using
      * casting the last string to StringPrefix
      */
-    Iterator find(IndexKey &key) {
+    Iterator find(Key &key) {
         key.change_kid(_kid);
-        Key endk = key.prefix_end();
+        RawKey endk = key.prefix_end();
         if (isForward(_dir)) {
             return _db->init_iterator<Iterator>(false, _snap, key, false, endk, Direction::forward, LastRecord::excluded);
         } else {
@@ -103,7 +98,7 @@ public:
      * @param dir direction to process
      * @return iterator
      */
-    Iterator scan_from(IndexKey &&key, Direction dir = Direction::normal) {return scan_from(key, dir);}
+    Iterator scan_from(Key &&key, Direction dir = Direction::normal) {return scan_from(key, dir);}
     ///Scan index from given key in direction
     /**
      * @param key key to start. The key can also contain document id to specify
@@ -111,15 +106,15 @@ public:
      * @param dir direction to process
      * @return iterator
      */
-    Iterator scan_from(IndexKey &key, Direction dir = Direction::normal) {
+    Iterator scan_from(Key &key, Direction dir = Direction::normal) {
         key.change_kid(_kid);
         if (isForward(changeDirection(_dir, dir))) {
-            Key endk(_kid+1);
+            RawKey endk(_kid+1);
             return _db->init_iterator<Iterator>(false, _snap, key, false, endk, Direction::forward, LastRecord::excluded);
         } else {
             TempAppend _(key);
             key.add(last_doc);
-            Key endk(_kid);
+            RawKey endk(_kid);
             return _db->init_iterator<Iterator>(false, _snap, key, false, endk, Direction::backward, LastRecord::excluded);
         }
     }
@@ -132,7 +127,7 @@ public:
      * @param last_record whether to include 'to' key into the range.
      * @return iterator
      */
-    Iterator scan_range(IndexKey &&from, IndexKey &&to, LastRecord last_record = LastRecord::excluded) {
+    Iterator scan_range(Key &&from, Key &&to, LastRecord last_record = LastRecord::excluded) {
         return scan_range(from, to, last_record);
     }
     ///Scan given range
@@ -142,7 +137,7 @@ public:
      * @param last_record whether to include 'to' key into the range.
      * @return iterator
      */
-    Iterator scan_range(IndexKey &from, IndexKey &&to, LastRecord last_record = LastRecord::excluded) {
+    Iterator scan_range(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) {
         return scan_range(from, to, last_record);
     }
     ///Scan given range
@@ -152,7 +147,7 @@ public:
      * @param last_record whether to include 'to' key into the range.
      * @return iterator
      */
-    Iterator scan_range(IndexKey &&from, IndexKey &to, LastRecord last_record = LastRecord::excluded) {
+    Iterator scan_range(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) {
         return scan_range(from, to, last_record);
     }
     ///Scan given range
@@ -162,7 +157,9 @@ public:
      * @param last_record whether to include 'to' key into the range.
      * @return iterator
      */
-    Iterator scan_range(IndexKey &from, IndexKey &to, LastRecord last_record = LastRecord::excluded) {
+    Iterator scan_range(Key &from, Key &to, LastRecord last_record = LastRecord::excluded) {
+        from.change_kid(_kid);
+        to.change_kid(_kid);
         if (from <= to) {
             TempAppend _gt(to);
             if (last_record == LastRecord::included) to.add(last_doc);
@@ -251,10 +248,10 @@ public:
 
     EmitFn(Batch &b, KeySet &ks, KeyspaceID kid, Storage::DocID docId, bool del);
 
-    void operator()(IndexKey &key, Value &value) const;
-    void operator()(IndexKey &&key, Value &value) const {operator()(key,value);}
-    void operator()(IndexKey &key, Value &&value) const {operator()(key,value);}
-    void operator()(IndexKey &&key, Value &&value) const {operator()(key,value);}
+    void operator()(Key &key, Value &value) const;
+    void operator()(Key &&key, Value &value) const {operator()(key,value);}
+    void operator()(Key &key, Value &&value) const {operator()(key,value);}
+    void operator()(Key &&key, Value &&value) const {operator()(key,value);}
 protected:
     Batch &_b;
     KeySet &_ks;
