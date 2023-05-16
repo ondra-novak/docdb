@@ -16,72 +16,132 @@
 namespace docdb {
 
 
-class StorageView: public ViewBase<StorageView> {
-
-    static auto create_iterator(std::unique_ptr<leveldb::Iterator> &&iter,
-             const std::string_view &endkey,
-             Direction dir,
-             LastRecord last_record) {
-         return Iterator(std::move(iter), endkey, Direction::forward, last_record);
-     }
-
-
+class StorageView {
 public:
-    using ViewBase<StorageView>::ViewBase;
-    friend class ViewBase<StorageView>;
+
+    StorageView(PDatabase db, std::string_view name, PSnapshot snap = {})
+        :_db(std::move(db)),_snap(std::move(snap)),_kid(_db->open_table(name)) {}
+
+    ///Construct the view
+    /**
+     * @param db reference to database
+     * @param kid keyspace id
+     * @param dir default direction to iterate this view (default is forward)
+     * @param snap reference to snapshot (optional)
+     */
+    StorageView(PDatabase db, KeyspaceID kid, PSnapshot snap = {})
+        :_db(std::move(db)), _snap(std::move(snap)),_kid(kid) {}
+
+
+
+    StorageView make_snapshot() const {
+        if (_snap != nullptr) return *this;
+        return StorageView(_db, _kid, _db->make_snapshot());
+    }
+
+    StorageView open_snapshot(const PSnapshot &snap) const {
+        return StorageView(_db, _kid, snap);
+    }
+
 
     using DocID = std::uint64_t;
-
-    using _Iterator = Iterator;
-    class Iterator: public _Iterator {
-    public:
-        using _Iterator::_Iterator;
-
-        DocID get_docid() const;
-        DocID get_prev_docid() const;
-        std::string_view get_doc() const;
-    };
-
-    ///Calculate key
-    /**
-     * @param id document id
-     * @return a key which can be used to lookup and search
-     */
-    Key key(DocID id) const {
-        return ViewBase<StorageView>::key(id);
-    }
 
     struct DocData {
         DocID old_rev;
         std::string_view doc_data;
     };
 
-    struct DocDataBuffer: DocData {
-        std::string buffer;
+    using RawIterator = Iterator;
+    class Iterator: public RawIterator {
+    public:
+        using RawIterator::RawIterator;
+
+        ///Retrieve document id
+        DocID id() const {
+            KeyspaceID kid;
+            DocID id;
+            Value::parse(key(), kid, id);
+            return id;
+        }
+
+        ///Retrieve document and previous id
+        DocData doc() const {
+            std::string_view s = value();
+            DocID prevId;
+            RemainingData remain;
+            Value::parse(s, prevId, remain);
+            return {prevId, remain};
+        }
+
     };
 
-    bool get(DocID docid, DocDataBuffer &doc) const {
-        if (!lookup(key(docid), doc.buffer)) return false;
-        RemainingData content;
-        Value::parse(doc.buffer, doc.old_rev, content);
-        doc.doc_data = content;
-        return true;
+
+    Iterator scan(Direction dir = Direction::forward) {
+        Key from(_kid);
+        Key to(_kid+1);
+        if (isForward(dir))  {
+            return scan_internal(from, to, LastRecord::excluded);
+        } else {
+            auto iter = scan_internal(to, from, LastRecord::included);
+            iter.next();
+            return iter;
+        }
     }
 
-    static DocData extract_document(const std::string_view &value) {
-        RemainingData dd;
+    Iterator scan_from(DocID docId, Direction dir = Direction::forward) {
+        return scan_internal(Key(_kid,docId),
+                             isForward(dir)?Key(_kid+1):Key(_kid),
+                             isForward(dir)?LastRecord::excluded:LastRecord::included);
+    }
+
+    ///Get document data for given document id
+    /**
+     * @param docId document id to retrieve
+     * @param buffer temporary buffer to store the data.
+     * @return DocData, if found, otherwise no value
+     */
+    std::optional<DocData> get(DocID docId, std::string &buffer) {
+        if (!_db->get(Key(_kid,docId), buffer)) return {};
         DocID id;
-        Value::parse(value, id, dd);
-        return {id, dd};
+        RemainingData docdata;
+        Value::parse(buffer, id, docdata);
+        return DocData{id, docdata};
     }
 
-    auto scan(DocID fromId, Direction dir = Direction::forward) {
-        return ViewBase<StorageView>::scan(key(fromId), dir);
+    Iterator scan(DocID from, DocID to, LastRecord last_record = LastRecord::excluded) {
+        return scan_internal(Key(_kid,from), Key(_kid,to) , last_record);
     }
-    using ViewBase<StorageView>::scan;
+
+
+    DocID find_revision_id() {
+        Iterator iter = scan(Direction::backward);
+        if (iter.next()) {
+            return iter.id()+1;
+        } else {
+            return 1;
+        }
+    }
+
+    PDatabase get_db() const {return _db;}
+    PSnapshot get_snapshot() const {return _snap;}
+    KeyspaceID get_kid() const {return _kid;}
+
 
 protected:
+    PDatabase _db;
+    PSnapshot _snap;
+    KeyspaceID _kid;
 
+
+    Iterator scan_internal(std::string_view from, std::string_view to, LastRecord last_record) {
+        auto iter = _db->make_iterator(false, _snap);
+        iter->Seek(to_slice(from));
+        if (from <= to) {
+            return Iterator(std::move(iter), to, Direction::forward, last_record);
+        } else {
+            return Iterator(std::move(iter), to, Direction::backward, last_record);
+        }
+    }
 
 };
 
@@ -99,12 +159,13 @@ protected:
 class Storage: public StorageView {
 public:
 
-    using StorageView::StorageView;
+    Storage(PDatabase db, std::string_view name):StorageView(db, name)
+        ,_next_id(StorageView::find_revision_id()) {}
+    Storage(PDatabase db, KeyspaceID kid):StorageView(db, kid)
+        ,_next_id(StorageView::find_revision_id()) {}
 
 
-    using _Batch = Batch;
-    using NotifyCallback = std::function<void(DocID)>;
-    using NotifyVector = std::vector<NotifyCallback>;
+    using UpdateObserver = std::function<bool(const PSnapshot &)>;
 
 
     ///This object allows to write multiple documents
@@ -113,9 +174,6 @@ public:
         WriteBatch(Storage &storage)
             :_storage(&storage) {
             _storage->_mx.lock();
-            if (!_storage->_next_id) {
-                _storage->_next_id = _storage->find_revision_id();
-            }
             _alloc_ids = _storage->_next_id;
         }
 
@@ -160,9 +218,7 @@ public:
         void commit() {
             _storage->_db->commit_batch(*this);
             _storage->_next_id = _alloc_ids;
-            if (!_storage->_notify.empty()) {
-                _storage->notify();
-            }
+            _storage->notify();
         }
 
         ///rollback the batch
@@ -225,35 +281,12 @@ public:
     ///Retrieve revision id (which is recent document ID + 1)
     DocID get_rev() const {
         std::lock_guard _(_mx);
-        return _next_id-1;
-    }
-
-    ///Register callback function which is called when new data are inserted
-    /**
-     * @param id of next document (recent document ID +1)
-     * @param fn function which is called when new document(s) are written
-     * @return function returns value > id when documents are available. In this
-     * case, the function is not registered and called. If the returned value is equal
-     * or less than id, the function was registered and will be called
-     */
-    template<typename Fn>
-    DocID register_callback(DocID id, Fn &&fn) {
-        std::lock_guard _(_mx);
-        if (id >= _next_id) {
-            _notify.push_back(std::forward<Fn>(fn));
-        }
         return _next_id;
     }
 
+    void register_observer(UpdateObserver &&cb);
 
-    ///converts key retrieved by iterator to document ID
-    static DocID key2docid(std::string_view key) {
-        KeyspaceID kid;
-        DocID docId = 0;
-        Value::parse(key, kid, docId);
-        return docId;
-    }
-
+    void register_observer(UpdateObserver &&cb, DocID id);
 
     ///Compact the storage removing old revisions
     /**
@@ -273,23 +306,10 @@ protected:
 
     DocID _next_id = 0;
     mutable std::mutex _mx;
-    NotifyVector _notify;
-    NotifyVector _reserved_notify;
+    std::vector<UpdateObserver> _cblist;
 
-    void notify() noexcept {
-        auto id = _next_id-1;
-        auto ntf = std::move(_reserved_notify);
-        std::swap(ntf, _notify);
-        _mx.unlock();
-        for (auto &f: ntf) {
-            f(id);
-        }
-        ntf.clear();
-        _mx.lock();
-        std::swap(ntf, _reserved_notify);
-    }
+    void notify() noexcept;
 
-    DocID find_revision_id();
 
 };
 

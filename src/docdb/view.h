@@ -9,8 +9,6 @@
 namespace docdb {
 
 
-
-
 template<typename Derived>
 class ViewBase {
 public:

@@ -145,10 +145,6 @@ public:
 class Key: public Value {
 public:
 
-    Key(KeyspaceID id) {
-        add(id);
-    }
-
     template<typename ... Args >
     Key(KeyspaceID id, const Args & ...  args)
     {
@@ -187,12 +183,43 @@ public:
         return kid;
     }
 
+    void change_kid(KeyspaceID kid) {
+        if constexpr(sizeof(kid) == 1) {
+            (*this)[0] = kid;
+        } else {
+            for (int i = 0; i < sizeof(kid);i++) {
+                (*this)[i] = static_cast<char>(kid >> (8*(sizeof(kid)-1-i)));
+            }
+        }
+    }
+
+    void clear() {
+        resize(sizeof(KeyspaceID));
+    }
 
 
    operator const leveldb::Slice() const {return {this->data(), this->size()};}
 };
 
+///Use StringPrefix for a key to search by prefix
+/**
+ * Key k(_kid, StringPrefix("abc"));
+ * generates a key which is able to search for all prefixes of "abc"
+ */
+using StringPrefix = RemainingData;
 
+template<typename X>
+class TempAppend {
+public:
+    TempAppend(X &str):_str(str),_len(_str.size()) {}
+    ~TempAppend() {_str.resize(_len);}
+protected:
+    X &_str;
+    std::size_t _len;
+};
+
+template<typename X>
+TempAppend(X &) -> TempAppend<X>;
 
 }
 

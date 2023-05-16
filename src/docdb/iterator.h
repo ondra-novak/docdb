@@ -9,6 +9,7 @@
 #define SRC_DOCDB_ITERATOR_H_
 #include "leveldb_adapters.h"
 
+#include "keyvalue.h"
 #include <leveldb/iterator.h>
 #include <memory>
 #include <utility>
@@ -140,8 +141,14 @@ public:
     bool is_key(const std::string_view &key) const {
         return _iter->Valid() && to_string(_iter->key()) == key;
     }
-    std::string_view key() const {
+    ///Retrieve key in raw form
+    std::string_view raw_key() const {
         return _iter->Valid()?to_string(_iter->key()):std::string_view();
+    }
+
+    ///Retrieve key, strip keyspace id (so you can directly parse the key)
+    std::string_view key() const {
+        return _iter->Valid()?to_string(_iter->key()).substr(sizeof(KeyspaceID)):std::string_view();
     }
 
     std::string_view value() const {
