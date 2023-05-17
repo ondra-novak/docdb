@@ -112,6 +112,24 @@ public:
         }
     }
 
+    template<typename Iter, typename ... Args >
+    Iter init_iterator(
+            const PSnapshot &snap,
+            const std::string_view &start_pt,
+            FirstRecord first_record,
+            Args && ... args) {
+
+        auto x = make_iterator(false, snap);
+        x->Seek(to_slice(start_pt));
+        if (first_record == FirstRecord::excluded && x->Valid() && to_string(x->key()) == start_pt) {
+            Iter iter(std::move(x), std::forward<Args>(args)...);
+            iter.next();
+            return iter;
+        } else {
+            return Iter(std::move(x), std::forward<Args>(args)...);
+        }
+    }
+
 
 
     std::unique_ptr<leveldb::Iterator>  make_iterator(bool cache = false);

@@ -38,6 +38,9 @@ enum class LastRecord {
     excluded
 };
 
+using FirstRecord =  LastRecord;
+
+
 static constexpr Direction changeDirection(Direction initial, Direction change) {
     switch (initial) {
         case Direction::forward: switch (change) {

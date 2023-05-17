@@ -2,6 +2,7 @@
 #ifndef SRC_DOCDB_KVTABLE_H_
 #define SRC_DOCDB_KVTABLE_H_
 #include "database.h"
+#include <leveldb/write_batch.h>
 
 
 namespace docdb {
@@ -81,11 +82,11 @@ public:
     class WriteBatch {
     public:
         WriteBatch(KeyValueTable &owner);
-        ~WriteBatch(KeyValueTable &owner);
+        ~WriteBatch();
 
         void commit();
         void rollback();
-        void put(Key &key, const Value &&value);
+        void put(Key &&key, const Value &&value);
         void put(Key &&key, const std::string_view &value);
         void put(Key &key, const Value &&value);
         void put(Key &key, const std::string_view &value);
