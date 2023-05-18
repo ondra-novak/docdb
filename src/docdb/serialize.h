@@ -74,9 +74,11 @@ template<typename ... Args> struct TupleInspect {
 };
 
 template<typename Base>
-class BasicRowView: public Base  {
+class BasicRowBasicView: public Base  {
 public:
     using Base::Base;
+    BasicRowBasicView(const Base &x):Base(x) {}
+    BasicRowBasicView(Base &&x):Base(std::move(x)) {}
 
     ///Retrieve values
     /***
@@ -186,6 +188,8 @@ public:
 };
 
 
+using BasicRowView = BasicRowBasicView<std::string_view>;
+
 ///A row serialized from basic types
 /**
  * Allows to construct and read multi-value row from basic types. It
@@ -196,10 +200,15 @@ public:
  * must not contain zero character. You can define own serialization
  * by declaring specialization of CustomSerializer
  */
-class BasicRow: public BasicRowView<std::string> {
+class BasicRow: public BasicRowBasicView<std::string> {
 public:
 
-    using BasicRowView<std::string>::BasicRowView;
+    using BasicRowBasicView<std::string>::BasicRowBasicView;
+
+    ///Convert BasicRow na BasicRowView
+    operator BasicRowView() const {
+        return BasicRowView(data(), size());
+    }
 
     ///Construct content of basic row from various variables
     /**
@@ -284,7 +293,7 @@ public:
 
 ///Defines document type, which is stored as BasicRow;
 struct BasicRowDocument {
-    using Type = BasicRowView<std::string_view>;
+    using Type = BasicRowBasicView<std::string_view>;
     template<typename Iter>
     static void to_binary(const Type &src, Iter insert) {
         std::copy(src.begin(), src.end(), insert);

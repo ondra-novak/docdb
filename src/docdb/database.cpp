@@ -1,6 +1,6 @@
 #include "keyvalue.h"
 #include "database.h"
-#include "view.h"
+
 
 #include "leveldb_adapters.h"
 

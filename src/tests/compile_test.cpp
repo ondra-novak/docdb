@@ -9,6 +9,10 @@ template class docdb::DocumentStorage<docdb::StringDocument>;
 static_assert(docdb::DocumentStorageType<docdb::DocumentStorage<docdb::StringDocument> >);
 template class docdb::DocumentStorage<docdb::BasicRowDocument>;
 static_assert(docdb::DocumentStorageType<docdb::DocumentStorage<docdb::BasicRowDocument> >);
+template class docdb::DocumentIndexView<docdb::BasicRowDocument, docdb::DocumentStorage<docdb::BasicRowDocument> >;
+
+static docdb::DocumentStorage<docdb::BasicRowDocument> storage(nullptr, 1);
+static docdb::DocumentIndex<docdb::BasicRowDocument, docdb::DocumentStorage<docdb::BasicRowDocument> > test_index(storage, 2, 0, [](auto &emit, const auto &doc){});
 
 #include <iostream>
 #include <cstdlib>

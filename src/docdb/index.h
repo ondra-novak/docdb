@@ -8,7 +8,6 @@
 #ifndef SRC_DOCDB_INDEX_H_
 #define SRC_DOCDB_INDEX_H_
 #include "keyvalue.h"
-#include "view.h"
 #include "concepts.h"
 #include <string_view>
 #include "storage.h"

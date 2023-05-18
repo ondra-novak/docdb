@@ -7,7 +7,10 @@
 
 #ifndef SRC_DOCDB_STORAGE_H_
 #define SRC_DOCDB_STORAGE_H_
-#include "view.h"
+
+#include "iterator.h"
+#include "database.h"
+
 
 #include <leveldb/write_batch.h>
 #include <functional>

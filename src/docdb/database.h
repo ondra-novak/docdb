@@ -173,6 +173,30 @@ protected:
 
 };
 
+///Base class for views
+class ViewBase {
+public:
+
+    ViewBase(const PDatabase &db, std::string_view name, Direction dir = Direction::forward, const PSnapshot &snap = {})
+        :_db(db),_snap(snap),_kid(_db->open_table(name)), _dir(dir) {}
+    ViewBase(const PDatabase &db, KeyspaceID kid, Direction dir = Direction::forward, const PSnapshot &snap = {})
+        :_db(db), _snap(snap),_kid(kid), _dir(dir) {}
+
+    ///Get database
+    const PDatabase& get_db() const {return _db;}
+    ///Get Keyspace id
+    KeyspaceID get_kid() const {return _kid;}
+    ///Get current snapshot
+    const PSnapshot& get_snapshot() const {return _snap;}
+
+    Direction get_default_direction() const {return _dir;}
+protected:
+    PDatabase _db;
+    PSnapshot _snap;
+    KeyspaceID _kid;
+    Direction _dir;
+};
+
 
 }
 

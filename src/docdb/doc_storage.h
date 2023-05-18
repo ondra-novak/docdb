@@ -2,6 +2,7 @@
 #ifndef SRC_DOCDB_DOC_STORAGE_H_
 #define SRC_DOCDB_DOC_STORAGE_H_
 #include "database.h"
+#include "observer.h"
 
 #include <memory>
 #include <queue>
@@ -13,23 +14,14 @@ namespace docdb {
  * @tparam _DocDef Document type definition (and traits)
  */
 template<DocumentDef _DocDef>
-class DocumentStorageView {
+class DocumentStorageView: public ViewBase {
 public:
 
-    DocumentStorageView(const PDatabase &db, std::string_view name, const PSnapshot &snap = {})
-        :_db(db)
-        ,_snap(snap)
-        ,_kid(db->open_table(name))
-        {}
-    DocumentStorageView(const PDatabase &db, KeyspaceID kid, const PSnapshot &snap = {})
-        :_db(db)
-        ,_snap(snap)
-        ,_kid(kid)
-        {}
+    using ViewBase::ViewBase;
 
     DocumentStorageView make_snapshot() const {
         if (_snap != nullptr) return *this;
-        return DocumentStorageView(_db, _kid, _db->make_snapshot());
+        return DocumentStorageView(_db, _kid, _dir, _db->make_snapshot());
     }
 
     ///Get database
@@ -57,10 +49,13 @@ public:
         bool exists;
         ///document has been deleted (previous document contans latests version)
         bool deleted;
+        ///document is available and can be parsed (!exists && !deleted)
+        bool available;
         ///Parse binary data and returns parsed document
         DocType doc() const {
             return _DocDef::from_binary(bin_data.data(), bin_data.data()+bin_data.size());
         }
+
     protected:
         DocInfo(const PDatabase &db, const PSnapshot &snap, const std::string_view &key, DocID id)
             :id(id),prev_id(0),deleted(false) {
@@ -68,6 +63,7 @@ public:
             auto [docid, remain] = BasicRow::extract<DocID, RemainingData>(bin_data);
             prev_id = docid;
             deleted = remain.empty();
+            available = !exists && !deleted;
         }
 
         friend class DocumentStorageView;
@@ -91,7 +87,7 @@ public:
 
         ///Retrieve document id
         DocID id() const {
-            auto [kid,id] = BasicRow::extract<KeyspaceID, DocID>(key());
+            auto [dummy,id] = BasicRow::extract<KeyspaceID, DocID>(key());
             return id;
         }
 
@@ -123,8 +119,8 @@ public:
     };
 
     ///Scan whole storage
-    Iterator scan(Direction dir=Direction::forward) const {
-        if (isForward(dir)) {
+    Iterator scan(Direction dir=Direction::normal) const {
+        if (isForward(changeDirection(_dir, dir))) {
             return _db->init_iterator<Iterator>(_snap,
                     RawKey(_kid), FirstRecord::included,
                     RawKey(_kid+1), Direction::forward,
@@ -138,8 +134,8 @@ public:
     }
 
     ///Scan from given document for given direction
-    Iterator scan_from(DocID start_pt, Direction dir = Direction::forward) const {
-        if (isForward(dir)) {
+    Iterator scan_from(DocID start_pt, Direction dir = Direction::normal) const {
+        if (isForward(changeDirection(_dir, dir))) {
             return _db->init_iterator<Iterator>(_snap,
                     RawKey(_kid, start_pt), FirstRecord::included,
                     RawKey(_kid+1), Direction::forward,
@@ -168,11 +164,6 @@ public:
         else return 0;
     }
 
-protected:
-
-    PDatabase _db;
-    PSnapshot _snap;
-    KeyspaceID _kid;
 };
 
 
@@ -242,11 +233,15 @@ public:
         ///new document
         /** This pointer can be nullptr, when the update just deleted the document */
         const DocType *new_doc;
+        ///old id of old document (or zero)
+        DocID old_old_doc_id;
         ///id of old document (or zero)
         DocID old_doc_id;
         ///id of new document
         DocID new_doc_id;
     };
+
+
 
     ///The observer receives batch and update structure
     /** The obserer can update anything in the database by writting to the batch
@@ -257,21 +252,22 @@ public:
      * @exception any sobserver can throw an exception, which automatically rollbacks
      * the whole update
      */
-    using UpdateObserver = std::function<void(Batch &, const Update &)>;
+    using UpdateObserver = Observer<bool(Batch &, const Update &)>;
 
 
     ///Register new observer
     /**
-     * To achieve maximum performance, this function IS NOT MT SAFE. Additionaly
-     * it is also forbidden to write documents and register new observers (as the
-     * put, erase and register_observer are NOT MT SAFE) - because modification
-     * in observer's container is not protected by a mutex
-     *
      * @param observer new observer to register (index)
+     *
+     * @note to unregister observer, the observer must return false when it is called
      */
-    void register_observer(UpdateObserver &&observer);
+    void register_observer(UpdateObserver observer) {
+        _observers.register_observer(std::move(observer));
+    }
 
 protected:
+
+
 
     DocID _next_id;
     std::mutex _mx;
@@ -283,10 +279,13 @@ protected:
         bool _commit = false;
         bool _rollback = false;
     };
+
+
     using PBatch = std::unique_ptr<PendingBatch>;
 
+
     std::queue<PBatch> _pending, _dropped;
-    std::vector<UpdateObserver> _observers;
+    ObserverList<UpdateObserver> _observers;
 
     PendingBatch *new_batch() {
         std::lock_guard _(_mx);
@@ -326,27 +325,23 @@ protected:
         }
     }
 
-    void update_observers(Batch &b, const Update &up) {
-        for (auto &c: _observers) {
-            c(b,up);
-        }
-    }
 
     void update_observers(Batch &b, DocID id, const DocType *doc, DocID prev_id) {
         if (prev_id) {
             DocInfo d = this->get(prev_id);
             if (d.exists && !d.deleted) {
                 DocType old_doc = d.doc();
-                update_observers(b, Update{
+                _observers.call(b, Update{
                     &old_doc,
                     doc,
+                    d.prev_id,
                     prev_id,
                     id
                 });
                 return;
             }
         }
-        update_observers(b, Update{nullptr, doc, prev_id, id});
+        _observers.call(b, Update{nullptr, doc, 0, prev_id, id});
     }
 
 
