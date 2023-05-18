@@ -10,9 +10,9 @@ EmitFn::EmitFn(Batch &b, KeySet &ks, KeyspaceID kid, Storage::DocID docId, bool 
         :_b(b),_ks(ks),_kid(kid),_docid(docId),_del(del) {}
 
 
-void EmitFn::operator ()(Key &key, Value &value) const {
+void EmitFn::operator ()(Key &key, Row &value) const {
     key.change_kid(_kid);
-    key.add(_docid);
+    key.append(_docid);
     if (_del) {
         _b.Delete(key);
     } else {
@@ -20,8 +20,8 @@ void EmitFn::operator ()(Key &key, Value &value) const {
     }
     std::string_view tmp =key;
     std::string_view key_value = tmp.substr(sizeof(KeyspaceID), tmp.length()-sizeof(KeyspaceID)-sizeof(_docid));
-    _ks.add(static_cast<std::uint32_t>(key_value.length()));
-    _ks.add(RemainingData(key_value));
+    _ks.append(static_cast<std::uint32_t>(key_value.length()));
+    _ks.append(RemainingData(key_value));
 }
 
 Index::Instance::Instance(KeyspaceID kid, Storage &source,
@@ -39,9 +39,7 @@ void Index::Instance::init() {
     if (!_db->get(RawKey(_kid), v)) {
         _start_id = 1;
     } else {
-        DocID lastId;
-        std::size_t rev;
-        Value::parse(v, lastId, rev);
+        auto [lastId, rev] = BasicRow::extract<DocID, std::size_t>(v);
         if (rev == _revision) _start_id = lastId;
         else {
             _start_id = 1;
@@ -76,9 +74,7 @@ void Index::Instance::update(const PSnapshot &snap) {
             modified_keys.clear();
             std::string_view tmp = ks;
             while (!tmp.empty()) {
-                std::uint32_t d;
-                RemainingData rm;
-                Value::parse(tmp, d, rm);
+                auto [d, rm] = BasicRow::extract<std::uint32_t, RemainingData>(tmp);
                 modified_keys.push_back(rm.substr(0,d));
                 tmp = rm.substr(d);
             }
@@ -92,7 +88,7 @@ void Index::Instance::update(const PSnapshot &snap) {
         _db->commit_batch(b);
         _start_id = id+1;
     }
-    b.Put(RawKey(_kid), Value(_start_id, _revision));
+    b.Put(RawKey(_kid), BasicRow(_start_id, _revision));
     _db->commit_batch(b);
 
 }

@@ -36,10 +36,14 @@ concept FromBinaryConvertible = requires(ReadIteratorConcept b, ReadIteratorConc
     { T::from_binary(b, e) } -> std::same_as<typename T::Type>;
 };
 
-
 template<typename T>
 concept DocumentDef = ToBinaryConvertible<T> && FromBinaryConvertible<T>;
 
+template <typename T>
+concept IsTuple = requires {
+  typename std::tuple_size<T>::type;
+  typename std::tuple_element<0, T>::type;
+};
 
 }
 

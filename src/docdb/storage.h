@@ -58,18 +58,14 @@ public:
 
         ///Retrieve document id
         DocID id() const {
-            KeyspaceID kid;
-            DocID id;
-            Value::parse(key(), kid, id);
+            auto [kid, id] = BasicRow::extract<KeyspaceID, DocID>(key());
             return id;
         }
 
         ///Retrieve document and previous id
         DocData doc() const {
             std::string_view s = value();
-            DocID prevId;
-            RemainingData remain;
-            Value::parse(s, prevId, remain);
+            auto [prevId, remain] = BasicRow::extract<DocID, RemainingData>(s);
             return {prevId, remain};
         }
 
@@ -102,9 +98,7 @@ public:
      */
     std::optional<DocData> get(DocID docId, std::string &buffer) {
         if (!_db->get(RawKey(_kid,docId), buffer)) return {};
-        DocID id;
-        RemainingData docdata;
-        Value::parse(buffer, id, docdata);
+        auto [id, docdata] = BasicRow::extract<DocID, RemainingData>(buffer);
         return DocData{id, docdata};
     }
 
@@ -237,7 +231,7 @@ public:
         Batch _batch;
         Storage *_storage = nullptr;
         DocID _alloc_ids = 0;
-        Value _buffer;
+        BasicRow _buffer;
 
 
     };

@@ -113,7 +113,7 @@ public:
             return _db->init_iterator<Iterator>(false, _snap, key, false, endk, Direction::forward, LastRecord::excluded);
         } else {
             TempAppend _(key);
-            key.add(last_doc);
+            key.append(last_doc);
             RawKey endk(_kid);
             return _db->init_iterator<Iterator>(false, _snap, key, false, endk, Direction::backward, LastRecord::excluded);
         }
@@ -162,13 +162,13 @@ public:
         to.change_kid(_kid);
         if (from <= to) {
             TempAppend _gt(to);
-            if (last_record == LastRecord::included) to.add(last_doc);
+            if (last_record == LastRecord::included) to.append(last_doc);
             return  _db->init_iterator<Iterator>(false, _snap, from, false, to, Direction::forward, LastRecord::excluded);
         } else {
             TempAppend _gt(to);
             TempAppend _gf(from);
-            if (last_record == LastRecord::excluded) to.add(last_doc);
-            from.add(last_doc);
+            if (last_record == LastRecord::excluded) to.append(last_doc);
+            from.append(last_doc);
             return _db->init_iterator<Iterator>(false, _snap, from, false, to, Direction::backward, LastRecord::excluded);
         }
     }
@@ -244,14 +244,15 @@ protected:
 
 class EmitFn {
 public:
-    using KeySet = Value;
+    using Row = BasicRow;
+    using KeySet = BasicRow;
 
     EmitFn(Batch &b, KeySet &ks, KeyspaceID kid, Storage::DocID docId, bool del);
 
-    void operator()(Key &key, Value &value) const;
-    void operator()(Key &&key, Value &value) const {operator()(key,value);}
-    void operator()(Key &key, Value &&value) const {operator()(key,value);}
-    void operator()(Key &&key, Value &&value) const {operator()(key,value);}
+    void operator()(Key &key, Row &value) const;
+    void operator()(Key &&key, Row &value) const {operator()(key,value);}
+    void operator()(Key &key, Row &&value) const {operator()(key,value);}
+    void operator()(Key &&key, Row &&value) const {operator()(key,value);}
 protected:
     Batch &_b;
     KeySet &_ks;

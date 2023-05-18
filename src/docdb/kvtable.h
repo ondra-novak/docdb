@@ -86,9 +86,9 @@ public:
 
         void commit();
         void rollback();
-        void put(Key &&key, const Value &&value);
+        void put(Key &&key, const BasicRow &&value);
         void put(Key &&key, const std::string_view &value);
-        void put(Key &key, const Value &&value);
+        void put(Key &key, const BasicRow &&value);
         void put(Key &key, const std::string_view &value);
         void erase(Key &&key);
         void erase(Key &key);

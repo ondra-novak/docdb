@@ -7,7 +7,7 @@ namespace docdb {
 Storage::DocID Storage::WriteBatch::put_doc(const std::string_view &doc, DocID replace_id) {
     auto id = _alloc_ids++;
     _buffer.clear();
-    _buffer.add(replace_id, RemainingData(doc));
+    _buffer.append(replace_id, RemainingData(doc));
     _batch.Put(RawKey(_storage->_kid,id), to_slice(_buffer));
     return id;
 }

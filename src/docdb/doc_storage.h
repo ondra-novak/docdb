@@ -65,8 +65,9 @@ public:
         DocInfo(const PDatabase &db, const PSnapshot &snap, const std::string_view &key, DocID id)
             :id(id),prev_id(0),deleted(false) {
             exists = db->get(key, bin_data, snap);
-            Value::parse(bin_data, prev_id);
-            deleted = bin_data.size() <= sizeof(DocID);
+            auto [docid, remain] = BasicRow::extract<DocID, RemainingData>(bin_data);
+            prev_id = docid;
+            deleted = remain.empty();
         }
 
         friend class DocumentStorageView;
@@ -90,9 +91,7 @@ public:
 
         ///Retrieve document id
         DocID id() const {
-            KeyspaceID kid;
-            DocID id;
-            Value::parse(key(), kid, id);
+            auto [kid,id] = BasicRow::extract<KeyspaceID, DocID>(key());
             return id;
         }
 
@@ -103,8 +102,7 @@ public:
 
         ///retrieve id of replaced document
         DocID prev_id() const {
-            DocID id;
-            Value::parse(value(),id);
+            auto [id] = BasicRow::extract<DocID>(value());
             return id;
         }
 
@@ -200,7 +198,7 @@ public:
         PendingBatch *batch = new_batch();
         DocID id = batch->_id;
         try {
-            batch->_buffer.add(prev_id);
+            batch->_buffer.append(prev_id);
             _DocDef::to_binary(doc, std::back_inserter(batch->_buffer));
             update_observers(batch->_b, id, &doc, prev_id);
             batch->_commit = true;
@@ -224,7 +222,7 @@ public:
         PendingBatch *batch = new_batch();
         DocID id = batch->_id;
         try {
-            batch->_buffer.add(del_id);
+            batch->_buffer.append(del_id);
             update_observers(batch->_b, id, nullptr, del_id);
             batch->_commit = true;
             finalize_batch();
@@ -243,7 +241,7 @@ public:
         const DocType *old_doc;
         ///new document
         /** This pointer can be nullptr, when the update just deleted the document */
-        const DocType *old_new;
+        const DocType *new_doc;
         ///id of old document (or zero)
         DocID old_doc_id;
         ///id of new document
@@ -281,7 +279,7 @@ protected:
     struct PendingBatch {
         Batch _b;
         DocID _id = 0;
-        Value _buffer;
+        BasicRow _buffer;
         bool _commit = false;
         bool _rollback = false;
     };

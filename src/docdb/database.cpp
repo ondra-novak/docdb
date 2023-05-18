@@ -102,9 +102,7 @@ void Database::scan_tables() {
     while (iter->Valid()) {
         auto k = iter->key();
         if (k.size() >= sizeof(KeyspaceID)*2) {
-            KeyspaceID id = 0;
-            KeyspaceID tmp = 0;
-            Value::parse(to_string(k), tmp, id);
+            auto [tmp, id] = BasicRow::extract<KeyspaceID,KeyspaceID>(to_string(k));
             auto vv = iter->value();
             name.clear();
             name.append(vv.data(), vv.size());
