@@ -1,9 +1,14 @@
+#include <docdb/buffer.h>
 #include <docdb/database.h>
-#include <docdb/storage.h>
 #include <docdb/concepts.h>
 #include <docdb/serialize.h>
 #include <docdb/doc_storage.h>
 #include <docdb/doc_index.h>
+#include <docdb/map.h>
+#include <docdb/doc_index_unique.h>
+
+template class docdb::Buffer<char, 50>;
+
 
 template class docdb::DocumentStorage<docdb::StringDocument>;
 static_assert(docdb::DocumentStorageType<docdb::DocumentStorage<docdb::StringDocument> >);

@@ -81,7 +81,16 @@ static constexpr bool isForward(Direction dir) {
 
 
 class Iterator {
+
+    enum class DirAndState {
+        next_first,
+        next,
+        previous_first,
+        previous
+    };
+
 public:
+
 
     ///Transform function
     /**
@@ -101,44 +110,42 @@ public:
     using Filter = std::function<bool(const Iterator *)>;
 
 
-    ///Construct the iterator
-    /**
-     * @param iter underlying iterator instance
-     * @param range_end end of the range
-     * @param direction direction
-     * @param last_record whether to include last record
-     */
-    Iterator(std::unique_ptr<leveldb::Iterator> &&iter,
-            const std::string_view &range_end,
-            Direction direction = Direction::forward,
-            LastRecord last_record = LastRecord::excluded)
-        :_iter(std::move(iter))
-        ,_range_end(range_end)
-        ,_direction(direction)
-        ,_last_record(last_record) {
-    }
+    struct Config {
+        std::string_view range_start;
+        std::string_view range_end;
+        FirstRecord first_record;
+        LastRecord last_record;
+        ValueTransform transform;
+        Filter filter;
+    };
 
-    ///Construct the iterator
-    /**
-     * @param iter underlying iterator instance
-     * @param range_end end of the range
-     * @param transform transform function (can be nullptr)
-     * @param filter filter function (can be nullptr)
-     * @param direction direction
-     * @param last_record whether to include last record
-     */
-    Iterator(std::unique_ptr<leveldb::Iterator> &&iter,
-            const std::string_view &range_end,
-            ValueTransform &&transform,
-            Filter &&filter,
-            Direction direction = Direction::forward,
-            LastRecord last_record = LastRecord::excluded)
-    :_iter(std::move(iter))
-    ,_range_end(range_end)
-    ,_direction(direction)
-    ,_last_record(last_record)
-    ,_transform(std::move(transform))
-    ,_filter(std::move(filter)) {
+    Iterator(std::unique_ptr<leveldb::Iterator> &&iter, Config &&config)
+        : Iterator(std::move(iter), config) {}
+    Iterator(std::unique_ptr<leveldb::Iterator> &&iter, Config &config)
+        :_iter(std::move(iter))
+        ,_range_end(config.range_end)
+        ,_direction(config.range_start > config.range_end?DirAndState::previous_first:DirAndState::next_first)
+        ,_last_record(config.last_record)
+        ,_transform(std::move(config.transform))
+        ,_filter(std::move(config.filter)) {
+
+        _iter->Seek(to_slice(config.range_start));
+
+        switch (_direction) {
+            case DirAndState::next_first:
+                if (config.first_record == FirstRecord::excluded && is_key(config.range_start)) {
+                    _direction = DirAndState::next;
+                }
+                break;
+            case DirAndState::previous_first:
+                if (config.first_record == FirstRecord::excluded || !is_key(config.range_start)) {
+                    _direction = DirAndState::previous;
+                }
+                break;
+            default:
+                throw;
+        }
+
     }
 
     bool is_key(const std::string_view &key) const {
@@ -188,7 +195,6 @@ public:
     ///Set transform
     Filter set_filter(Filter &&fn) {
         fn.swap(_filter);
-        _first_move = true;
         return fn;
     }
 
@@ -227,9 +233,10 @@ public:
             clear_state();
             switch(_direction) {
                 default:
-                case Direction::forward:
-                case Direction::normal:
-                    if (!_first_move) _iter->Next();
+                case DirAndState::next: _iter->Next();
+                                        [[fallthrough]];
+                case DirAndState::next_first:
+                    _direction = DirAndState::next;
                     if (!_iter->Valid()) return false;
                     switch (_last_record){
                         case LastRecord::included:
@@ -240,9 +247,10 @@ public:
                             break;
                     };
                     break;
-                case Direction::backward:
-                case Direction::reversed:
-                    if (!_first_move) _iter->Prev();
+                case DirAndState::previous: _iter->Prev();
+                                         [[fallthrough]];
+                case DirAndState::previous_first:
+                    _direction = DirAndState::previous;
                     if (!_iter->Valid()) return false;
                     switch (_last_record){
                         case LastRecord::included:
@@ -254,7 +262,6 @@ public:
                     };
                     break;
             };
-            _first_move = false;
             if (!_filter || _filter(this)) return true;
         } while (true);
     }
@@ -270,18 +277,19 @@ public:
             clear_state();
             switch(_direction) {
                 default:
-                case Direction::normal:
-                case Direction::forward:
+                case DirAndState::next:
+                case DirAndState::next_first:
+                    _direction = DirAndState::next;
                     _iter->Prev();
                     if (!_iter->Valid()) return false;
                     break;
-                case Direction::reversed:
-                case Direction::backward:
+                case DirAndState::previous:
+                case DirAndState::previous_first:
+                    _direction = DirAndState::previous;
                     _iter->Next();
                     if (!_iter->Valid()) return false;
                     break;
             };
-            _first_move = false;
             if (!_filter || _filter(this)) return true;
         } while (true);
 
@@ -298,15 +306,16 @@ protected:
         keep_original
     };
 
+
+
     std::unique_ptr<leveldb::Iterator> _iter;
     std::string _range_end;
-    Direction _direction;
+    DirAndState _direction;
     LastRecord _last_record;
     ValueTransform _transform;
     Filter _filter;
     mutable std::string _value_buff;
     mutable ValueTransformState _trn_state = not_transformed_yet;
-    bool _first_move = true;
 
     void clear_state() {
         _trn_state = not_transformed_yet;

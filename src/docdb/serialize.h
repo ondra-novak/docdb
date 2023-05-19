@@ -4,6 +4,7 @@
 
 #include "concepts.h"
 
+#include "buffer.h"
 #include <locale>
 #include <string_view>
 #include <tuple>
@@ -72,6 +73,9 @@ public:
 template<typename ... Args> struct TupleInspect {
 
 };
+
+using BasicRowBuffer = Buffer<char, 32>;
+
 
 template<typename Base>
 class BasicRowBasicView: public Base  {
@@ -190,6 +194,7 @@ public:
 
 using BasicRowView = BasicRowBasicView<std::string_view>;
 
+
 ///A row serialized from basic types
 /**
  * Allows to construct and read multi-value row from basic types. It
@@ -200,10 +205,10 @@ using BasicRowView = BasicRowBasicView<std::string_view>;
  * must not contain zero character. You can define own serialization
  * by declaring specialization of CustomSerializer
  */
-class BasicRow: public BasicRowBasicView<std::string> {
+class BasicRow: public BasicRowBasicView<BasicRowBuffer > {
 public:
 
-    using BasicRowBasicView<std::string>::BasicRowBasicView;
+    using BasicRowBasicView<BasicRowBuffer>::BasicRowBasicView;
 
     ///Convert BasicRow na BasicRowView
     operator BasicRowView() const {

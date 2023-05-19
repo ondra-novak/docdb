@@ -1,24 +1,23 @@
 #include "check.h"
 #include "memdb.h"
 
-#include "../docdb/storage.h"
+#include "../docdb/doc_storage.h"
 
 void test1() {
 
     auto ramdisk = newRamdisk();
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
+    using Storage = docdb::DocumentStorage<docdb::BasicRowDocument>;
     {
-        docdb::Storage storage(db, "test_storage");
+        Storage storage(db, "test_storage");
 
-        docdb::Storage::DocID d1,d2,d3,d4;
+        Storage::DocID d1,d2,d3,d4;
         {
-            auto batch = storage.bulk_put();
-            d1 = batch.put_doc("hello");
-            d2 = batch.put_doc("world");
-            d3 = batch.put_doc("bar");
-            d4 = batch.put_doc("foo");
-            batch.commit();
+            d1 = storage.put("hello");
+            d2 = storage.put("world");
+            d3 = storage.put("bar");
+            d4 = storage.put("foo");
         }
         CHECK_EQUAL(d1,1);
         CHECK_EQUAL(d2,2);
@@ -27,29 +26,29 @@ void test1() {
 
         std::string buffer;
 
-        auto d = storage.get(d2, buffer);
+        auto d = storage.get(d2);
         CHECK(d.has_value());
-        CHECK_EQUAL(d->doc_data,"world");
-        d = storage.get(d4, buffer);
+        CHECK_EQUAL(d.doc(),"world");
+        d = storage.get(d4);
         CHECK(d.has_value());
-        CHECK_EQUAL(d->doc_data,"foo");
-        d =storage.get(d3, buffer);
+        CHECK_EQUAL(d.doc(),"foo");
+        d =storage.get(d3);
         CHECK(d.has_value());
-        CHECK_EQUAL(d->doc_data,"bar");
+        CHECK_EQUAL(d.doc(),"bar");
 
         auto d3_new = storage.put("baz", d3);
-        d = storage.get(d3_new, buffer);
+        d = storage.get(d3_new);
         CHECK(d.has_value());
-        CHECK_EQUAL(d->doc_data,"baz");
-        CHECK_EQUAL(d->old_rev,d3);
+        CHECK_EQUAL(d.doc(),"baz");
+        CHECK_EQUAL(d.prev_id,d3);
 
         storage.compact();
-        d = storage.get(d3, buffer);
+        d = storage.get(d3);
         CHECK(!d.has_value());
 
         struct Res {
-            docdb::Storage::DocID id;
-            docdb::Storage::DocID prevId;
+            Storage::DocID id;
+            Storage::DocID prevId;
             std::string_view text;
         };
 
@@ -61,20 +60,21 @@ void test1() {
         };
 
         {
-            docdb::Storage::Iterator iter = storage.scan_from(d1);
+            Storage::Iterator iter = storage.scan_from(d1);
             const Res *pt = res;
             while (iter.next()) {
-                auto [prev_id, data] = iter.doc();
+                auto doc = iter.doc();
                 auto id = iter.id();
+                auto prev_id = iter.prev_id();
                 CHECK_EQUAL(id, pt->id);
                 CHECK_EQUAL(prev_id, pt->prevId);
-                CHECK_EQUAL(data, pt->text);
+                CHECK_EQUAL(doc, pt->text);
                 pt++;
             }
         }
     }
     {
-        docdb::Storage storage(db, "test_storage");
+        Storage storage(db, "test_storage");
         CHECK_EQUAL(storage.get_rev(), 6);
     }
 

@@ -4,6 +4,7 @@
 
 #include "iterator.h"
 #include "keyvalue.h"
+#include "batch.h"
 
 #include <memory>
 #include <leveldb/db.h>
@@ -24,7 +25,7 @@ class Database;
 
 using PDatabase = std::shared_ptr<Database>;
 using PSnapshot = std::shared_ptr<const leveldb::Snapshot>;
-using Batch = leveldb::WriteBatch;
+
 
 
 ///Database base
@@ -94,41 +95,6 @@ public:
      */
     std::unique_ptr<leveldb::Iterator>  make_iterator(bool cache, const PSnapshot &snap);
 
-    template<typename Iter, typename ... Args >
-    Iter init_iterator(bool cache,
-            const PSnapshot &snap,
-            const std::string_view &start_pt,
-            bool exclude_first,
-            Args && ... args) {
-
-        auto x = make_iterator(cache, snap);
-        x->Seek(to_slice(start_pt));
-        if (exclude_first && x->Valid() && to_string(x->key()) == start_pt) {
-            Iter iter(std::move(x), std::forward<Args>(args)...);
-            iter.next();
-            return iter;
-        } else {
-            return Iter(std::move(x), std::forward<Args>(args)...);
-        }
-    }
-
-    template<typename Iter, typename ... Args >
-    Iter init_iterator(
-            const PSnapshot &snap,
-            const std::string_view &start_pt,
-            FirstRecord first_record,
-            Args && ... args) {
-
-        auto x = make_iterator(false, snap);
-        x->Seek(to_slice(start_pt));
-        if (first_record == FirstRecord::excluded && x->Valid() && to_string(x->key()) == start_pt) {
-            Iter iter(std::move(x), std::forward<Args>(args)...);
-            iter.next();
-            return iter;
-        } else {
-            return Iter(std::move(x), std::forward<Args>(args)...);
-        }
-    }
 
 
 

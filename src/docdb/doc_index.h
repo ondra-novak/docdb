@@ -4,6 +4,7 @@
 
 #include "database.h"
 #include "serialize.h"
+#include "map.h"
 
 #include "doc_storage_concept.h"
 
@@ -32,6 +33,18 @@ public:
         ValueType value() const {
             return _ValueDef::from_binary(_bin_data.data(), _bin_data.data()+_bin_data.size());
         }
+        ///Converts to document
+        operator ValueType() const {return value();}
+
+        ///Returns true if document is available
+        operator bool() const {return available;}
+
+        ///Returns true if document is available
+        bool operator==(std::nullptr_t) const {return available;}
+
+        ///Returns true if document exists (but can be deleted)
+        bool has_value() const {return exists;}
+
     protected:
         std::string_view _key;
         std::string _bin_data;
@@ -92,13 +105,10 @@ public:
 
     class Iterator: public GenIterator {
     public:
-        Iterator(std::unique_ptr<leveldb::Iterator> &&iter,
-            _DocStorage &storage,
-            const std::string_view &range_end,
-            Direction direction,
-            LastRecord last_record)
-            :GenIterator(std::move(iter), range_end, direction, last_record)
-            ,_storage(storage) {}
+        Iterator(_DocStorage &stor,
+                std::unique_ptr<leveldb::Iterator> &&iter,
+                GenIterator::Config &&cfg)
+        :GenIterator(std::move(iter), cfg),_storage(stor) {}
 
         BasicRowView key() const {
             return BasicRowView(GenIterator::key());
@@ -111,17 +121,21 @@ public:
             std::string_view data = GenIterator::value();
             return _ValueDef::from_binary(data.begin(), data.end());
         }
+
+        ///Retrieve associated document's id
+        DocID id() const {
+            std::string_view key = raw_key();
+            BasicRowView x = key.substr(key.length()-sizeof(DocID));
+            auto [id] = x.get<DocID>();
+            return id;
+        }
         ///retrieve associated document
         /**
          * @return returns DocInfo, which is defined on DocumentStorageView<>::DocInfo
          * @note You need always check available flag before you retrieve the document itself
          */
         DocInfo doc() const {
-            std::string_view key = raw_key();
-            const char *from = key.data()+key.size()-sizeof(DocID);
-            const char *to = from+key.size();
-            DocID docId = BasicRowView::deserialize_item<DocID>(from,to);
-            return _storage[docId];
+            return _storage[id()];
         }
 
     protected:
@@ -141,20 +155,21 @@ public:
      * @return Iterator - as the index allows multiple values for single key, you can retrieve multiple results
      */
     Iterator lookup(Key &key) const {
-        key.change_kid(_kid);
-        if (isForward(_dir)) {
-            return _db->init_iterator<Iterator>(_snap, key, FirstRecord::included, _storage, key.prefix_end(), Direction::forward, LastRecord::excluded);
-        } else {
-            return _db->init_iterator<Iterator>(_snap, key.prefix_end(), FirstRecord::excluded, _storage, key, Direction::backward, LastRecord::included);
-        }
+        return scan_prefix(key, Direction::normal);
     }
 
 
-    Iterator scan(Direction dir = Direction::normal) {
+    Iterator scan(Direction dir = Direction::normal)const  {
         if (isForward(_dir)) {
-            return _db->init_iterator<Iterator>(_snap, RawKey(_kid), FirstRecord::included, _storage, RawKey(_kid+1), Direction::forward, LastRecord::excluded);
+            return Iterator(_storage,_db->make_iterator(false,_snap),{
+                    RawKey(_kid),RawKey(_kid+1),
+                    FirstRecord::included, LastRecord::excluded
+            });
         } else {
-            return _db->init_iterator<Iterator>(_snap, RawKey(_kid+1), FirstRecord::excluded, _storage, RawKey(_kid), Direction::backward, LastRecord::included);
+            return Iterator(_storage,_db->make_iterator(false,_snap),{
+                    RawKey(_kid+1),RawKey(_kid),
+                    FirstRecord::excluded, LastRecord::included
+            });
         }
     }
 
@@ -162,41 +177,60 @@ public:
     Iterator scan_from(Key &key, Direction dir = Direction::normal) {
         key.change_kid(_kid);
         if (isForward(_dir)) {
-            return _db->init_iterator<Iterator>(_snap, key, FirstRecord::included, _storage, RawKey(_kid+1), Direction::forward, LastRecord::excluded);
+            return Iterator(_storage,_db->make_iterator(false,_snap),{
+                    key,RawKey(_kid+1),
+                    FirstRecord::included, LastRecord::excluded
+            });
         } else {
             TempAppend k1(key);
             key.append<DocID>(-1);
-            return _db->init_iterator<Iterator>(_snap, key, FirstRecord::included, _storage, RawKey(_kid), Direction::backward, LastRecord::included);
+            return Iterator(_storage,_db->make_iterator(false,_snap),{
+                    key,RawKey(_kid),
+                    FirstRecord::included, LastRecord::excluded
+            });
         }
     }
-    Iterator scan_prefix(Key &&key, Direction dir = Direction::normal) {return scan_prefix(key,dir);}
-    Iterator scan_prefix(Key &key, Direction dir = Direction::normal) {
+    Iterator scan_prefix(Key &&key, Direction dir = Direction::normal) const {return scan_prefix(key,dir);}
+    Iterator scan_prefix(Key &key, Direction dir = Direction::normal) const {
         key.change_kid(_kid);
         RawKey end = key.prefix_end();
         if (isForward(_dir)) {
-            return _db->init_iterator<Iterator>(_snap, key, FirstRecord::included, _storage, end, Direction::forward, LastRecord::excluded);
+            return Iterator(_storage,_db->make_iterator(false,_snap),{
+                    key,key.prefix_end(),
+                    FirstRecord::included, LastRecord::excluded
+            });
         } else {
-            return _db->init_iterator<Iterator>(_snap, end, FirstRecord::excluded, _storage, key, Direction::backward, LastRecord::included);
+            return Iterator(_storage,_db->make_iterator(false,_snap),{
+                    key.prefix_end(),key,
+                    FirstRecord::excluded, LastRecord::included
+            });
         }
 
     }
 
-    Iterator scan_range(Key &&from, Key &&to, LastRecord last_record = LastRecord::excluded) {return scan_range(from, to, last_record);}
-    Iterator scan_range(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) {return scan_range(from, to, last_record);}
-    Iterator scan_range(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) {return scan_range(from, to, last_record);}
-    Iterator scan_range(Key &from, Key &to, LastRecord last_record = LastRecord::excluded) {
+    Iterator scan_range(Key &&from, Key &&to, LastRecord last_record = LastRecord::excluded)const  {return scan_range(from, to, last_record);}
+    Iterator scan_range(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) const {return scan_range(from, to, last_record);}
+    Iterator scan_range(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) const {return scan_range(from, to, last_record);}
+    Iterator scan_range(Key &from, Key &to, LastRecord last_record = LastRecord::excluded)const  {
         from.change_kid(_kid);
         to.change_kid(_kid);
         if (from <= to) {
             TempAppend t1(to);
             if (last_record == LastRecord::included) to.append<DocID>(-1);
-            return _db->init_iterator<Iterator>(_snap, from, FirstRecord::included, _storage, to, Direction::forward, LastRecord::excluded);
+            return Iterator(_storage,_db->make_iterator(false,_snap),{
+                    from,to,
+                    FirstRecord::included, LastRecord::excluded
+            });
+
         } else {
             TempAppend t1(from);
             TempAppend t2(to);
             from.append<DocID>(-1);
             if (last_record == LastRecord::excluded) to.append<DocID>(-1);
-            return _db->init_iterator<Iterator>(_snap, from, FirstRecord::included, _storage, to, Direction::backward, LastRecord::included);
+            return Iterator(_storage,_db->make_iterator(false,_snap),{
+                    from,to,
+                    FirstRecord::included, LastRecord::excluded
+            });
         }
     }
 
@@ -221,12 +255,10 @@ public:
     public:
         Emit(ObserverList<UpdateObserver> &observers,
             Batch &batch,
-            std::string &buffer,
             DocID cur_doc,
             KeyspaceID kid,bool deleting)
             :_observers(observers)
             ,_batch(batch)
-            ,_buffer(buffer)
             ,_cur_doc(cur_doc)
             ,_kid(kid),_deleting(deleting) {}
 
@@ -242,16 +274,15 @@ public:
             if (_deleting) {
                 _batch.Delete(k);
             } else {
-                _ValueDef::to_binary(v, std::back_inserter(_buffer));
-                _batch.Put(k, {_buffer.data(), _buffer.size()});
-                _buffer.clear();
+                auto &buffer = _batch.get_buffer();
+                _ValueDef::to_binary(v, std::back_inserter(buffer));
+                _batch.Put(k, buffer);
             }
             _observers.call(_batch, BasicRowView(ks));
         }
 
         ObserverList<UpdateObserver> &_observers;
         Batch &_batch;
-        std::string &_buffer;
         DocID _cur_doc;
         KeyspaceID _kid;
         bool _deleting;
@@ -358,23 +389,22 @@ protected:
         }
 
         virtual void update(Batch &b, const Update &update){
-            std::string buffer;
             if constexpr(std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>) {
                 if (update.old_doc) {
-                    Emit emt(_observers, b, buffer, update.old_doc_id, _kid, true);
+                    Emit emt(_observers, b, update.old_doc_id, _kid, true);
                     _fn(emt, *update.old_doc, {update.old_doc_id, update.old_old_doc_id, true});
                 }
                 if (update.new_doc) {
-                    Emit emt(_observers, b, buffer,update.old_doc_id, _kid, false);
+                    Emit emt(_observers, b, update.old_doc_id, _kid, false);
                     _fn(emt, *update.new_doc, {update.new_doc_id, update.old_doc_id, false});
                 }
             } else {
                 if (update.old_doc) {
-                    Emit emt(_observers, b, buffer,update.old_doc_id,_kid, true);
+                    Emit emt(_observers, b, update.old_doc_id,_kid, true);
                     _fn(emt, *update.old_doc);
                 }
                 if (update.new_doc) {
-                    Emit emt(_observers, b, buffer,update.old_doc_id, _kid, false);
+                    Emit emt(_observers, b, update.old_doc_id, _kid, false);
                     _fn(emt, *update.new_doc);
                 }
 

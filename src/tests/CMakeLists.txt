@@ -7,6 +7,7 @@ set(testFiles
     manage_db.cpp
     storage.cpp
     basicrow.cpp
+    buffer.cpp
 )
 
 link_libraries(

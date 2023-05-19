@@ -76,9 +76,6 @@ public:
     void clear() {
         resize(sizeof(KeyspaceID));
     }
-
-
-   operator const leveldb::Slice() const {return {this->data(), this->size()};}
 };
 
 ///Use StringPrefix for a key to search by prefix

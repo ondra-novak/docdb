@@ -4,11 +4,15 @@
 #include "database.h"
 #include "observer.h"
 
+#include <atomic>
 #include <memory>
 #include <queue>
 namespace docdb {
 
 
+
+///Type of document ID
+using DocID = std::uint64_t;
 ///Document storage - Readonly view
 /**
  * @tparam _DocDef Document type definition (and traits)
@@ -33,8 +37,7 @@ public:
 
     ///Type of stored document
     using DocType = typename _DocDef::Type;
-    ///Type of document ID
-    using DocID = std::uint64_t;
+    using DocID = ::docdb::DocID;;
 
     ///Information retrieved from database
     class DocInfo {
@@ -43,8 +46,6 @@ public:
         DocID id;
         ///id of previous document, which was replaced by this document (or zero)
         DocID prev_id;
-        ///document's binary data
-        std::string bin_data;
         ///contains true, if document exists, or false if not found (bin_data are empty)
         bool exists;
         ///document has been deleted (previous document contans latests version)
@@ -53,10 +54,27 @@ public:
         bool available;
         ///Parse binary data and returns parsed document
         DocType doc() const {
-            return _DocDef::from_binary(bin_data.data(), bin_data.data()+bin_data.size());
+            std::string_view part(bin_data);
+            part = part.substr(sizeof(DocID));
+            return _DocDef::from_binary(part.begin(),part.end());
         }
 
+        ///Converts to document
+        operator DocType() const {return doc();}
+
+        ///Returns true if document is available
+        operator bool() const {return available;}
+
+        ///Returns true if document is available
+        bool operator==(std::nullptr_t) const {return available;}
+
+        ///Returns true if document exists (but can be deleted)
+        bool has_value() const {return exists;}
+
     protected:
+        ///document's binary data
+        std::string bin_data;
+
         DocInfo(const PDatabase &db, const PSnapshot &snap, const std::string_view &key, DocID id)
             :id(id),prev_id(0),deleted(false) {
             exists = db->get(key, bin_data, snap);
@@ -121,37 +139,39 @@ public:
     ///Scan whole storage
     Iterator scan(Direction dir=Direction::normal) const {
         if (isForward(changeDirection(_dir, dir))) {
-            return _db->init_iterator<Iterator>(_snap,
-                    RawKey(_kid), FirstRecord::included,
-                    RawKey(_kid+1), Direction::forward,
-                    LastRecord::excluded);
+            return Iterator(_db->make_iterator(false,_snap),{
+                    RawKey(_kid),RawKey(_kid+1),
+                    FirstRecord::included, LastRecord::excluded
+            });
         } else {
-            return _db->init_iterator<Iterator>(_snap,
-                    RawKey(_kid+1), FirstRecord::excluded,
-                    RawKey(_kid), Direction::backward,
-                    LastRecord::included);
+            return Iterator(_db->make_iterator(false,_snap),{
+                    RawKey(_kid+1),RawKey(_kid),
+                    FirstRecord::excluded, LastRecord::included
+            });
         }
     }
 
     ///Scan from given document for given direction
     Iterator scan_from(DocID start_pt, Direction dir = Direction::normal) const {
         if (isForward(changeDirection(_dir, dir))) {
-            return _db->init_iterator<Iterator>(_snap,
-                    RawKey(_kid, start_pt), FirstRecord::included,
-                    RawKey(_kid+1), Direction::forward,
-                    LastRecord::excluded);
+            return Iterator(_db->make_iterator(false,_snap),{
+                    RawKey(_kid, start_pt),RawKey(_kid+1),
+                    FirstRecord::included, LastRecord::excluded
+            });
         } else {
-            return _db->init_iterator<Iterator>(_snap,
-                    RawKey(_kid, start_pt), FirstRecord::included,
-                    RawKey(_kid), Direction::backward,
-                    LastRecord::excluded);
+            return Iterator(_db->make_iterator(false,_snap),{
+                    RawKey(_kid, start_pt),RawKey(_kid),
+                    FirstRecord::included, LastRecord::excluded
+            });
         }
     }
 
     ///Scan for range
     Iterator scan_range(DocID start_id, DocID end_id, LastRecord last_record = LastRecord::excluded) const {
-        return _db->init_iterator<Iterator>(_snap, RawKey(_kid, start_id), FirstRecord::included,
-                RawKey(_kid, end_id), start_id<=end_id?Direction::forward:Direction::backward, last_record);
+        return Iterator(_db->make_iterator(false,_snap),{
+                RawKey(_kid, start_id),RawKey(_kid, end_id),
+                FirstRecord::included, LastRecord::excluded
+        });
     }
 
     ///Retrieve ID of last document
@@ -178,24 +198,32 @@ public:
     using DocType = typename DocumentStorageView<_DocDef>::DocType;
     using DocID = typename DocumentStorageView<_DocDef>::DocID;
     using DocInfo = typename DocumentStorageView<_DocDef>::DocInfo;
+    using Iterator = typename DocumentStorageView<_DocDef>::Iterator;
 
     DocumentStorage(const PDatabase &db, std::string_view name)
-        :DocumentStorageView<_DocDef>(db, name) {}
+        :DocumentStorageView<_DocDef>(db, name)
+        ,_next_id(DocumentStorageView<_DocDef>::get_last_document_id()+1)
+         {}
     DocumentStorage(const PDatabase &db, KeyspaceID kid)
-        :DocumentStorageView<_DocDef>(db, kid) {}
+        :DocumentStorageView<_DocDef>(db, kid)
+         ,_next_id(DocumentStorageView<_DocDef>::get_last_document_id()+1)
+         {}
 
 
     DocID put(const DocType &doc, DocID prev_id = 0) {
         PendingBatch *batch = new_batch();
         DocID id = batch->_id;
         try {
-            batch->_buffer.append(prev_id);
-            _DocDef::to_binary(doc, std::back_inserter(batch->_buffer));
+            auto &buffer = batch->_b.get_buffer();
+            auto iter = std::back_inserter(buffer);
+            BasicRow::serialize_items(iter,prev_id);
+            _DocDef::to_binary(doc, iter);
+            batch->_b.Put(RawKey(this->_kid, id), buffer);
             update_observers(batch->_b, id, &doc, prev_id);
-            batch->_commit = true;
+            batch->_state.store(BatchState::commit, std::memory_order_release);
             finalize_batch();
         } catch (...) {
-            batch->_rollback = true;
+            batch->_state.store(BatchState::rollback, std::memory_order_release);
             finalize_batch();
             throw;
         }
@@ -213,12 +241,15 @@ public:
         PendingBatch *batch = new_batch();
         DocID id = batch->_id;
         try {
-            batch->_buffer.append(del_id);
+            auto &buffer = batch->_b.get_buffer();
+            auto iter = std::back_inserter(buffer);
+            BasicRow::serialize_items(iter,del_id);
+            batch->_b.Put(RawKey(this->_kid,id), {});
             update_observers(batch->_b, id, nullptr, del_id);
-            batch->_commit = true;
+            batch->_state.store(BatchState::commit, std::memory_order_release);
             finalize_batch();
         } catch (...) {
-            batch->_rollback = true;
+            batch->_state.store(BatchState::rollback, std::memory_order_release);
             finalize_batch();
             throw;
         }
@@ -265,19 +296,38 @@ public:
         _observers.register_observer(std::move(observer));
     }
 
+    void compact() {
+        Batch b;
+        Iterator iter = this->scan();
+        while (iter.next()) {
+            DocID p = iter.prev_id();
+            if (p) b.Delete(RawKey(this->_kid,p));
+        }
+        this->_db->commit_batch(b);
+    }
+
+    auto get_rev() const {
+        std::lock_guard _(_mx);
+        return _next_id;
+    }
+
 protected:
 
 
 
     DocID _next_id;
-    std::mutex _mx;
+    mutable std::mutex _mx;
+
+    enum class BatchState {
+            pending = 0,
+            commit,
+            rollback
+    };
 
     struct PendingBatch {
         Batch _b;
         DocID _id = 0;
-        BasicRow _buffer;
-        bool _commit = false;
-        bool _rollback = false;
+        std::atomic<BatchState> _state = BatchState::pending ;
     };
 
 
@@ -297,8 +347,6 @@ protected:
             b = std::make_unique<PendingBatch>();
         }
         b->_id = _next_id;
-        b->_buffer.clear();
-        b->_rollback = false;
         ++_next_id;
         PendingBatch *ret = b.get();
         _pending.push(std::move(b));
@@ -307,20 +355,24 @@ protected:
 
     void finalize_batch() {
         std::lock_guard _(_mx);
-        while (!_pending.empty()) {
+        bool cont = true;
+        while (!_pending.empty() && cont) {
             const PBatch &b = _pending.front();
-            if (b->_commit) {
-                this->_db->commit_batch(b->_b);
-                b->_commit = false;
-                _dropped.push(std::move(_pending.front()));
-                _pending.pop();
-            } else if (b->_rollback){
-                b->_b.Clear();
-                b->_rollback = false;
-                _dropped.push(std::move(_pending.front()));
-                _pending.pop();
-            } else {
-                break;
+            BatchState state = b->_state.exchange(BatchState::pending, std::memory_order_acquire);
+            switch (state) {
+                case BatchState::commit:
+                    this->_db->commit_batch(b->_b);
+                    _dropped.push(std::move(_pending.front()));
+                    _pending.pop();
+                    break;
+                case BatchState::rollback:
+                    b->_b.Clear();
+                    _dropped.push(std::move(_pending.front()));
+                    _pending.pop();
+                    break;
+                default:
+                    cont = false;
+                    break;
             }
         }
     }

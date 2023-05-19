@@ -91,7 +91,7 @@ public:
     }
 
     template<typename ... Args>
-    void call(Args ... args) {
+    void call(Args && ... args) {
         //collect all dead
         std::vector<_Observer> kickup;
         //lock now
