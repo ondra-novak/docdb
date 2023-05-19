@@ -183,7 +183,7 @@ protected:
     }
     template<typename Iter>
     constexpr void alloc_and_copy(Iter from, Iter to) {
-        auto sz = std::distance(from, to);
+        std::size_t sz = std::distance(from, to);
         if (sz <= small_buffer_size) {
             _begin = _static;
             _capa = sizeof(_static);

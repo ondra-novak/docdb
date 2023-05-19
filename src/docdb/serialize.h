@@ -106,7 +106,7 @@ public:
      */
     template<typename T, typename Iter>
     static T deserialize_item(Iter & at, Iter end) {
-        auto sz = end - at;
+        std::size_t sz = end - at;
         if constexpr(IsTuple<T>) {
             T result;
             auto assign_values = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
@@ -122,7 +122,7 @@ public:
         } else if constexpr(std::is_unsigned_v<T>) {
             T var = 0;
             auto cnt = std::min<std::size_t>(sizeof(T), sz);
-            for (int i = 0; i < cnt; i++) {
+            for (std::size_t i = 0; i < cnt; i++) {
                 var = (var << 8) | (at[i]);
             }
             at+=cnt;
@@ -131,7 +131,7 @@ public:
             BinHelper<double> hlp;
             double var = 0;
             if (sz < sizeof(hlp)) return 0;
-            for (int i = 0; i < sizeof(hlp); i++) hlp.bin[i] = at[i];
+            for (std::size_t i = 0; i < sizeof(hlp); i++) hlp.bin[i] = at[i];
             var = T(-hlp.val);
             at += sizeof(hlp);
             return T(var);
@@ -243,7 +243,7 @@ public:
             *iter++ = val?static_cast<char>(0):static_cast<char>(1);
         } else if constexpr(std::is_unsigned_v<X>) {
             X v = val;
-            for (int i = 0; i < sizeof(X); i++) {
+            for (std::size_t i = 0; i < sizeof(X); i++) {
                 int shift = 8*(sizeof(X)-i-1);
                 *iter++=static_cast<char>((v >> shift) & 0xFF);
             }
