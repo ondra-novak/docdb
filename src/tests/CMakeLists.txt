@@ -8,6 +8,7 @@ set(testFiles
     storage.cpp
     basicrow.cpp
     buffer.cpp
+    index.cpp
 )
 
 link_libraries(

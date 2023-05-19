@@ -92,7 +92,7 @@ public:
      * @note you need to pass exact types
      */
     template <typename... Items>
-    auto get() {
+    auto get() const {
         return extract<Items...>(std::string_view(*this));
     }
 

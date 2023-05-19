@@ -10,7 +10,7 @@
 
 namespace docdb {
 
-template<DocumentDef _ValueDef, DocumentStorageViewType _DocStorage>
+template<DocumentStorageViewType _DocStorage, DocumentDef _ValueDef = BasicRowDocument>
 class DocumentIndexView: public ViewBase {
 public:
 
@@ -44,6 +44,12 @@ public:
 
         ///Returns true if document exists (but can be deleted)
         bool has_value() const {return exists;}
+
+        DocID id() const {
+            std::string_view r = _key.substr(_key.length()- sizeof(DocID));
+            auto [id] = BasicRowView(r).get<DocID>();
+            return id;
+        }
 
     protected:
         std::string_view _key;
@@ -193,7 +199,6 @@ public:
     Iterator scan_prefix(Key &&key, Direction dir = Direction::normal) const {return scan_prefix(key,dir);}
     Iterator scan_prefix(Key &key, Direction dir = Direction::normal) const {
         key.change_kid(_kid);
-        RawKey end = key.prefix_end();
         if (isForward(_dir)) {
             return Iterator(_storage,_db->make_iterator(false,_snap),{
                     key,key.prefix_end(),
@@ -238,8 +243,8 @@ protected:
     _DocStorage &_storage;
 };
 
-template<DocumentDef _ValueDef, DocumentStorageType _DocStorage>
-class DocumentIndex: public DocumentIndexView<_ValueDef, _DocStorage> {
+template<DocumentStorageType _DocStorage, DocumentDef _ValueDef = BasicRowDocument>
+class DocumentIndex: public DocumentIndexView<_DocStorage, _ValueDef> {
 public:
 
     using DocType = typename _DocStorage::DocType;
@@ -320,7 +325,7 @@ public:
     template<typename Fn>
     CXX20_REQUIRES(std::invocable<Fn, Emit &, const DocType &> || std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>)
     DocumentIndex(_DocStorage &storage, std::string_view name, int revision, Fn &&indexer)
-        :DocumentIndexView<_ValueDef, _DocStorage>(storage, name)
+        :DocumentIndexView<_DocStorage, _ValueDef>(storage, name)
     {
         _ptr = std::make_shared<Indexer<Fn> >(this->_db, this->_kid, std::forward<Fn>(indexer), revision);
         check_reindex();
@@ -330,7 +335,7 @@ public:
     template<typename Fn>
     CXX20_REQUIRES(std::invocable<Fn, Emit &, const DocType &> || std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>)
     DocumentIndex(_DocStorage &storage, KeyspaceID kid, int revision, Fn &&indexer)
-        :DocumentIndexView<_ValueDef, _DocStorage>(storage, kid)
+        :DocumentIndexView<_DocStorage,_ValueDef>(storage, kid)
     {
         _ptr = std::make_shared<Indexer<Fn> >(this->_db, this->_kid, std::forward<Fn>(indexer), revision);
         check_reindex();
@@ -395,7 +400,7 @@ protected:
                     _fn(emt, *update.old_doc, {update.old_doc_id, update.old_old_doc_id, true});
                 }
                 if (update.new_doc) {
-                    Emit emt(_observers, b, update.old_doc_id, _kid, false);
+                    Emit emt(_observers, b, update.new_doc_id, _kid, false);
                     _fn(emt, *update.new_doc, {update.new_doc_id, update.old_doc_id, false});
                 }
             } else {
@@ -404,7 +409,7 @@ protected:
                     _fn(emt, *update.old_doc);
                 }
                 if (update.new_doc) {
-                    Emit emt(_observers, b, update.old_doc_id, _kid, false);
+                    Emit emt(_observers, b, update.new_doc_id, _kid, false);
                     _fn(emt, *update.new_doc);
                 }
 

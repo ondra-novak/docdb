@@ -44,6 +44,9 @@ public:
     constexpr BufferBase(const T *data, std::size_t count) {
         alloc_and_copy(data, data+count);
     }
+    constexpr BufferBase(const BufferBase &other) {
+        alloc_and_copy(other.begin(), other.end());
+    }
     template<std::size_t N>
     constexpr BufferBase(const BufferBase<T,N> &other) {
         alloc_and_copy(other.begin(), other.end());
@@ -51,17 +54,11 @@ public:
 
     template<std::size_t N>
     constexpr BufferBase(BufferBase<T,N> &&other) {
-        if (other.is_local()) {
-            alloc_and_copy(other.begin(), other.end());
-            other._len = 0;
-        } else {
-            _begin = other._begin;
-            _len = other._len;
-            _capa = other._capa;
-            other._capa = N;
-            other._len = 0;
-            other._begin = other._static;
-        }
+        move_in(other);
+    }
+
+    constexpr BufferBase(BufferBase &&other) {
+        move_in(other);
     }
 
     constexpr ~BufferBase() {
@@ -70,40 +67,19 @@ public:
 
     template<std::size_t N>
     constexpr BufferBase &operator=(const BufferBase<T, N> &other) {
-        if (this != &other) {
-            _len = other.size();
-            if (_len <= _capa) {
-                std::copy(other.begin(), other.end(), _begin);
-            } else {
-                release();
-                alloc_and_copy(other.begin(), other.end());
-            }
-        }
-        return *this;
+        return operator_assign(other);
     }
+
+    constexpr BufferBase &operator=(const BufferBase &other) {
+        return operator_assign(other);    }
 
     template<std::size_t N>
     constexpr BufferBase &operator=(BufferBase<T, N> &&other) {
-        if (this != &other){
-            if (other.is_local()) {
-                _len = other.size();
-                if (_len <= _capa) {
-                    std::copy(other.begin(), other.end(), _begin);
-                } else {
-                    release();
-                    alloc_and_copy(other.begin(), other.end());
-                }
-            } else {
-                release();
-                _begin = other._begin;
-                _len = other._len;
-                _capa = other._capa;
-                other._capa = N;
-                other._len = 0;
-                other._begin = other._static;
-            }
-        }
-        return *this;
+        return operator_assign(other);
+    };
+
+    constexpr BufferBase &operator=(BufferBase &&other) {
+        return operator_assign(std::move(other));
     }
 
     constexpr void push_back(T val) {
@@ -245,6 +221,59 @@ protected:
         _begin = new_begin;
         _capa = newcapa;
     }
+    template<size_t N>
+    constexpr void move_in(BufferBase<T, N> &other) {
+        if (other.is_local()) {
+            alloc_and_copy(other.begin(), other.end());
+            other._len = 0;
+        } else {
+            _begin = other._begin;
+            _len = other._len;
+            _capa = other._capa;
+            other._capa = N;
+            other._len = 0;
+            other._begin = other._static;
+        }
+    }
+
+    template<std::size_t N>
+    constexpr BufferBase &operator_assign(BufferBase<T, N> &&other) {
+        if (this != &other){
+            if (other.is_local()) {
+                _len = other.size();
+                if (_len <= _capa) {
+                    std::copy(other.begin(), other.end(), _begin);
+                } else {
+                    release();
+                    alloc_and_copy(other.begin(), other.end());
+                }
+            } else {
+                release();
+                _begin = other._begin;
+                _len = other._len;
+                _capa = other._capa;
+                other._capa = N;
+                other._len = 0;
+                other._begin = other._static;
+            }
+        }
+        return *this;
+    }
+
+    template<std::size_t N>
+    constexpr BufferBase &operator_assign(const BufferBase<T, N> &other) {
+        if (this != &other) {
+            _len = other.size();
+            if (_len <= _capa) {
+                std::copy(other.begin(), other.end(), _begin);
+            } else {
+                release();
+                alloc_and_copy(other.begin(), other.end());
+            }
+        }
+        return *this;
+    }
+
 };
 
 ///Buffer - used as temporary space to build keys or values

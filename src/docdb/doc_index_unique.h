@@ -9,7 +9,7 @@
 
 namespace docdb {
 
-template<DocumentDef _ValueDef, DocumentStorageType _DocStorage>
+template<DocumentStorageType _DocStorage, DocumentDef _ValueDef=BasicRowDocument>
 class DocumentUniqueIndex: public Map<_ValueDef> {
 public:
 
@@ -87,7 +87,7 @@ public:
     template<typename Fn>
     CXX20_REQUIRES(std::invocable<Fn, Emit &, const DocType &> || std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>)
     DocumentUniqueIndex(_DocStorage &storage, std::string_view name, int revision, Fn &&indexer)
-        :DocumentIndexView<_ValueDef, _DocStorage>(storage, name)
+        :DocumentIndexView<_DocStorage,_ValueDef>(storage, name)
     {
         _ptr = std::make_shared<Indexer<Fn> >(this->_db, this->_kid, std::forward<Fn>(indexer), revision);
         check_reindex();
@@ -97,7 +97,7 @@ public:
     template<typename Fn>
     CXX20_REQUIRES(std::invocable<Fn, Emit &, const DocType &> || std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>)
     DocumentUniqueIndex(_DocStorage &storage, KeyspaceID kid, int revision, Fn &&indexer)
-        :DocumentIndexView<_ValueDef, _DocStorage>(storage, kid)
+        :DocumentIndexView<_DocStorage,_ValueDef>(storage, kid)
     {
         _ptr = std::make_shared<Indexer<Fn> >(this->_db, this->_kid, std::forward<Fn>(indexer), revision);
         check_reindex();
