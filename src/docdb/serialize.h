@@ -47,11 +47,24 @@ protected:
     std::locale _loc;
 };
 
-class RemainingData: public std::string_view {
+///Any binary blob
+/**
+ * Deserializing blob causes that all data from current position till end are
+ * considered as blob.
+ * Serializing blob cause that all data are directly appended to the key
+ * or value, with no separator and terminator
+ *
+ * It is recommended to use blob as the very last field of the row.
+ * However you can use blob to collapse remaining items into single field
+ * (like a tuple) and parse it later
+ */
+class Blob: public std::string_view {
 public:
     using std::string_view::string_view;
-    RemainingData(const std::string_view &other):std::string_view(other) {}
+    Blob(const std::string_view &other):std::string_view(other) {}
 };
+
+
 
 using LocalizedString = LocalizedBasicString<char>;
 using LocalizedWString = LocalizedBasicString<wchar_t>;
@@ -135,8 +148,8 @@ public:
             var = T(-hlp.val);
             at += sizeof(hlp);
             return T(var);
-        } else if constexpr(std::is_base_of_v<RemainingData, T>) {
-            RemainingData var(at, sz);
+        } else if constexpr(std::is_base_of_v<Blob, T>) {
+            Blob var(at, sz);
             at = end;
             return T(var);
         } else if constexpr(std::is_same_v<const char *, T>) {
@@ -272,7 +285,7 @@ public:
             do {
                 *iter++ = *c;
             } while (*c++);
-        } else if constexpr(std::is_base_of_v<RemainingData, X>) {
+        } else if constexpr(std::is_base_of_v<Blob, X>) {
             iter = std::copy(val.begin(), val.end(), iter);
         } else if constexpr(std::is_convertible_v<X, std::string_view>) {
             iter = std::copy(std::begin(val), std::end(val), iter);

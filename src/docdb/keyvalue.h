@@ -83,7 +83,7 @@ public:
  * Key k(_kid, StringPrefix("abc"));
  * generates a key which is able to search for all prefixes of "abc"
  */
-using StringPrefix = RemainingData;
+using StringPrefix = Blob;
 
 template<typename X>
 class TempAppend {

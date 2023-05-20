@@ -78,7 +78,7 @@ public:
         DocInfo(const PDatabase &db, const PSnapshot &snap, const std::string_view &key, DocID id)
             :id(id),prev_id(0),deleted(false) {
             exists = db->get(key, bin_data, snap);
-            auto [docid, remain] = BasicRow::extract<DocID, RemainingData>(bin_data);
+            auto [docid, remain] = BasicRow::extract<DocID, Blob>(bin_data);
             prev_id = docid;
             deleted = remain.empty();
             available = !exists && !deleted;
@@ -278,17 +278,20 @@ public:
      * @exception any sobserver can throw an exception, which automatically rollbacks
      * the whole update
      */
-    using UpdateObserver = Observer<bool(Batch &, const Update &)>;
+    using UpdateObserver = std::function<bool(Batch &, const Update &)>;
 
 
     ///Register new observer
     /**
      * @param observer new observer to register (index)
-     *
-     * @note to unregister observer, the observer must return false when it is called
+     * @return id id of observer
      */
-    void register_observer(UpdateObserver observer) {
-        _observers.register_observer(std::move(observer));
+    std::size_t register_observer(UpdateObserver &&observer) {
+        return _observers.register_observer(std::move(observer));
+    }
+    ///Unregister observer (by id)
+    void unregister_observer(std::size_t id) {
+        _observers.unregister_observer(id);
     }
 
     void compact() {

@@ -131,10 +131,10 @@ public:
     constexpr std::size_t length() const {return _len;}
     constexpr std::size_t size() const {return _len;}
     constexpr bool empty() const {return _len == 0;}
-    constexpr const char *begin() const {return _begin;}
-    constexpr const char *end() const {return _begin+_len;}
-    constexpr char *begin() {return _begin;}
-    constexpr char *end() {return _begin+_len;}
+    constexpr const T *begin() const {return _begin;}
+    constexpr const T *end() const {return _begin+_len;}
+    constexpr T *begin() {return _begin;}
+    constexpr T *end() {return _begin+_len;}
 
     constexpr std::basic_string_view<T> slice(std::size_t from) {
         if (from > _len) return {};

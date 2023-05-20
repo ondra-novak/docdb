@@ -9,6 +9,7 @@ set(testFiles
     basicrow.cpp
     buffer.cpp
     index.cpp
+    aggregation.cpp
 )
 
 link_libraries(

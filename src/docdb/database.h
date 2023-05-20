@@ -74,7 +74,7 @@ public:
      * @return name of table if exists
      */
     std::optional<std::string> name_from_id(KeyspaceID id) const {
-        RawKey k(system_table, id);
+        RawKey k(system_table,system_table, id);
         std::string out;
         if (_dbinst->Get({}, k, &out).ok()) {
             return out;
@@ -109,7 +109,7 @@ public:
                 id = _free_ids.top();;
                 _free_ids.pop();
             }
-            RawKey k(system_table, id);
+            RawKey k(system_table, system_table, id);
             leveldb::WriteOptions wr;
             wr.sync = true;
             if (!_dbinst->Put(wr, k, to_slice(name)).ok()) throw std::runtime_error("Failed to write table record");
@@ -129,24 +129,31 @@ public:
         if (iter == _table_map.end()) return ;
         KeyspaceID id = iter->second;
         _free_ids.push(id);
-        RawKey k(system_table, id);
+        RawKey k(system_table,system_table, id);
         leveldb::WriteOptions wr;
         wr.sync = true;
         _dbinst->Delete(wr, k);
         _table_map.erase(iter);
         lk.unlock();
-        clear_table(id);
+        clear_table(id, true);
+        clear_table(id, false);
 
     }
 
     ///Deletes all rows in given table
     /**
      * @param id keyspace id of table
+     * @param private_area set true to clear private area, otherwise clear public area
      */
-    void clear_table(KeyspaceID id) {
+    void clear_table(KeyspaceID id, bool private_area) {
         std::unique_ptr<leveldb::Iterator> iter2(_dbinst->NewIterator({}));
-        iter2->Seek(RawKey(id));
-        RawKey endKey(id+1);
+        RawKey endKey(private_area?system_table:id+1);
+        if (private_area) {
+            iter2->Seek(RawKey(system_table, id));
+        } else {
+            iter2->Seek(RawKey(id));
+            endKey.append(id+1);
+        }
         while (iter2->Valid()) {
             auto k = iter2->key();
             if (to_string(k) < endKey) {
@@ -172,14 +179,14 @@ public:
         _table_map.clear();
         std::string name;
         std::unique_ptr<leveldb::Iterator> iter(_dbinst->NewIterator({}));
-        iter->Seek(RawKey(system_table));
+        iter->Seek(RawKey(system_table, system_table));
         _min_free_id = 0;
         _free_ids = {};
 
         while (iter->Valid()) {
             auto k = iter->key();
             if (k.size() >= sizeof(KeyspaceID)*2) {
-                auto [tmp, id] = BasicRow::extract<KeyspaceID,KeyspaceID>(to_string(k));
+                auto [tmp, tmp2, id] = BasicRow::extract<KeyspaceID,KeyspaceID,KeyspaceID>(to_string(k));
                 auto vv = iter->value();
                 name.clear();
                 name.append(vv.data(), vv.size());
@@ -256,6 +263,12 @@ public:
         batch.Clear();
     }
 
+
+    ///Generate key to private area.
+    template<typename ... Args>
+    static RawKey get_private_area_key(KeyspaceID id, const Args & ... args) {
+        return RawKey(system_table, id, args...);
+    }
 
 
 protected:

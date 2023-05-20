@@ -162,12 +162,22 @@ class Map: public MapView<_ValueDef> {
     using ValueType = typename _ValueDef::Type;
 
     ///Observes changes of keys in the index;
-    using UpdateObserver = Observer<bool(Batch &b, const BasicRowView  &)>;
+    using UpdateObserver = std::function<bool(Batch &b, const BasicRowView  &)>;
 
 
-    void register_observer(UpdateObserver &&observer) {
-        register_observer(std::move(observer));
+    ///Register new observer
+    /**
+     * @param observer new observer to register (index)
+     * @return id id of observer
+     */
+    std::size_t register_observer(UpdateObserver observer) {
+        return _observers.register_observer(std::move(observer));
     }
+    ///Unregister observer (by id)
+    void unregister_observer(std::size_t id) {
+        _observers.unregister_observer(id);
+    }
+
 
     void put(Key &&key, const ValueType &val) {put(key, val);}
     void put(Key &key, const ValueType &val) {

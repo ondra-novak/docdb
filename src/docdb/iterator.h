@@ -189,7 +189,7 @@ public:
     ///Retrieve key as BasicRowView (to be parsed, without keyspaceid)
     BasicRowView key() const {
         BasicRowView rw(raw_key());
-        auto [kid, remain] = rw.get<KeyspaceID, RemainingData>();
+        auto [kid, remain] = rw.get<KeyspaceID, Blob>();
         return BasicRowView(remain);
     }
 
