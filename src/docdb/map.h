@@ -93,24 +93,7 @@ public:
     RowInfo operator[](Key &&key) const {return get(key);}
 
 
-    class Iterator: public GenIterator {
-    public:
-
-        using GenIterator::GenIterator;
-
-        BasicRowView key() const {
-            return BasicRowView(GenIterator::key());
-        }
-        std::string_view bin_data() const {
-            return GenIterator::value();
-        }
-        ///retrieve the row
-        ValueType value() const {
-            std::string_view data = GenIterator::value();
-            return _ValueDef::from_binary(data.begin(), data.end());
-        }
-
-    };
+    using Iterator = GenIterator<_ValueDef>;
 
     Iterator scan(Direction dir = Direction::normal) {
         if (isForward(_dir)) {
@@ -199,6 +182,7 @@ class Map: public MapView<_ValueDef> {
         key.change_kid(this->_kid);
         _ValueDef::to_binary(val, std::back_inserter(buffer));
         b.Put(key, buffer);
+        _observers.call(b, std::string_view(key).substr(sizeof(KeyspaceID)));
     }
 
     void erase(Key &&key) {erase(key);}
@@ -210,6 +194,7 @@ class Map: public MapView<_ValueDef> {
     void erase(Batch &b, Key &&key) {erase(key);}
     void erase(Batch &b, Key &key) {
         b.Delete(key);
+        _observers.call(b, std::string_view(key).substr(sizeof(KeyspaceID)));
     }
 
 

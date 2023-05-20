@@ -109,28 +109,17 @@ public:
     RowInfo operator[](Key &&key) const {return get(key);}
 
 
-    class Iterator: public GenIterator {
+    class Iterator: public GenIterator<_ValueDef> {
     public:
         Iterator(_DocStorage &stor,
                 std::unique_ptr<leveldb::Iterator> &&iter,
-                GenIterator::Config &&cfg)
-        :GenIterator(std::move(iter), cfg),_storage(stor) {}
+                typename GenIterator<_ValueDef>::Config &&cfg)
+        :GenIterator<_ValueDef>(std::move(iter), cfg),_storage(stor) {}
 
-        BasicRowView key() const {
-            return BasicRowView(GenIterator::key());
-        }
-        std::string_view bin_data() const {
-            return GenIterator::value();
-        }
-        ///retrieve the row
-        ValueType value() const {
-            std::string_view data = GenIterator::value();
-            return _ValueDef::from_binary(data.begin(), data.end());
-        }
 
         ///Retrieve associated document's id
         DocID id() const {
-            std::string_view key = raw_key();
+            std::string_view key = this->raw_key();
             BasicRowView x = key.substr(key.length()-sizeof(DocID));
             auto [id] = x.get<DocID>();
             return id;
@@ -355,19 +344,20 @@ public:
         auto iter = this->_storage.scan();
         Batch b;
         while (iter.next()) {
-            DocType doc = iter.doc();
+            std::optional<DocType> doc = iter.value();
+            const DocType *new_doc =doc.has_value()?&(*doc):nullptr;
             DocID id = iter.id();
             DocID prev_id = iter.prev_id();
             if (prev_id) {
                DocInfo dinfo = this->_storage[prev_id];
                if (dinfo.available) {
                    DocType old_doc = dinfo.doc();
-                   _ptr->update(b, Update {&old_doc,&doc,dinfo.prev_id,prev_id,id});
+                   _ptr->update(b, Update {&old_doc,new_doc,dinfo.prev_id,prev_id,id});
                    this->_db->commit_batch(b);
                    continue;
                }
             }
-            _ptr->update(b, Update {nullptr,&doc,0,prev_id,id});
+            _ptr->update(b, Update {nullptr,new_doc,0,prev_id,id});
             this->_db->commit_batch(b);
         }
     }

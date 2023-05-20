@@ -6,6 +6,8 @@
 #include <docdb/doc_index.h>
 #include <docdb/map.h>
 #include <docdb/doc_index_unique.h>
+#include <docdb/aggregate.h>
+
 
 template class docdb::Buffer<char, 50>;
 

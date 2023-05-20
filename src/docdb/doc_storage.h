@@ -60,7 +60,7 @@ public:
         }
 
         ///Converts to document
-        operator DocType() const {return doc();}
+        DocType operator *() const {return doc();}
 
         ///Returns true if document is available
         operator bool() const {return available;}
@@ -98,42 +98,37 @@ public:
         return get(id);
     }
 
+    struct _IterHelper {
+        using Type = std::optional<DocType>;
+        template<typename Iter>
+        static std::optional<DocType> from_binary(Iter beg, Iter end) {
+            std::advance(beg, sizeof(DocID));
+            if (beg == end) return {};
+            return _DocDef::from_binary(beg, end);
+        }
+        template<typename Iter>
+        static void to_binary(const Type &, Iter );
+    };
+
     ///Iterator
-    class Iterator: public GenIterator{
+    class Iterator: public GenIterator<_IterHelper>{
     public:
-        using GenIterator::GenIterator;
+        using GenIterator<_IterHelper>::GenIterator;
 
         ///Retrieve document id
         DocID id() const {
-            auto [dummy,id] = BasicRow::extract<KeyspaceID, DocID>(key());
+            auto [id] = this->key().template get<DocID>();
             return id;
-        }
-
-        ///retrieve binary representation of the document
-        std::string_view bin_data() const {
-            return value().substr(sizeof(DocID));
         }
 
         ///retrieve id of replaced document
         DocID prev_id() const {
-            auto [id] = BasicRow::extract<DocID>(value());
+            auto [id] = BasicRow::extract<DocID>(this->raw_value());
             return id;
         }
 
-        ///retrieve the document itself
-        DocType doc() const {
-            std::string_view bin = bin_data();
-            return _DocDef::from_binary(bin.data(), bin.data()+bin.size());
-        }
+        auto doc() const {return this->value();}
 
-        ///Document has been deleter
-        /**
-         * @retval true this revision is about deletion of previous revision
-         * @retval false document exists (was not deleted)
-         */
-        bool deleted() const {
-            return bin_data().empty();
-        }
     };
 
     ///Scan whole storage

@@ -28,18 +28,18 @@ void test1() {
 
         auto d = storage.get(d2);
         CHECK(d.has_value());
-        CHECK_EQUAL(d.doc(),"world");
+        CHECK_EQUAL(*d,"world");
         d = storage.get(d4);
         CHECK(d.has_value());
-        CHECK_EQUAL(d.doc(),"foo");
+        CHECK_EQUAL(*d,"foo");
         d =storage.get(d3);
         CHECK(d.has_value());
-        CHECK_EQUAL(d.doc(),"bar");
+        CHECK_EQUAL(*d,"bar");
 
         auto d3_new = storage.put("baz", d3);
         d = storage.get(d3_new);
         CHECK(d.has_value());
-        CHECK_EQUAL(d.doc(),"baz");
+        CHECK_EQUAL(*d,"baz");
         CHECK_EQUAL(d.prev_id,d3);
 
         storage.compact();
@@ -63,12 +63,12 @@ void test1() {
             Storage::Iterator iter = storage.scan_from(d1);
             const Res *pt = res;
             while (iter.next()) {
-                auto doc = iter.doc();
+                auto doc = iter.value();
                 auto id = iter.id();
                 auto prev_id = iter.prev_id();
                 CHECK_EQUAL(id, pt->id);
                 CHECK_EQUAL(prev_id, pt->prevId);
-                CHECK_EQUAL(doc, pt->text);
+                CHECK_EQUAL(*doc, pt->text);
                 pt++;
             }
         }

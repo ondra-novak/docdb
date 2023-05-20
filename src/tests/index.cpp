@@ -43,8 +43,8 @@ void test1() {
             int fnd = 0;
             while (iter.next()) {
                 CHECK_EQUAL(iter.id(), 2);
-                docdb::BasicRowView doc = iter.doc();
-                CHECK_EQUAL(doc, "world");
+                auto docref = iter.doc();
+                CHECK_EQUAL(*docref, "world");
                 fnd++;
             }
             CHECK_EQUAL(fnd,1);
@@ -56,22 +56,22 @@ void test1() {
             CHECK(iter.next());
             {
                 CHECK_EQUAL(iter.id(),3);
-                docdb::BasicRowView doc = iter.doc();
-                CHECK_EQUAL(doc, "bar");
+                auto docref = iter.doc();
+                CHECK_EQUAL(*docref, "bar");
             }
             CHECK(iter.next());
             {
                 CHECK_EQUAL(iter.id(),4);
-                docdb::BasicRowView doc = iter.doc();
-                CHECK_EQUAL(doc, "foo");
+                auto docref = iter.doc();
+                CHECK_EQUAL(*docref, "foo");
             }
             CHECK(!iter.next());
         }
         {
             auto lk = index.get({"world",std::size_t(2)});
             CHECK(lk);
-            docdb::BasicRowView doc = storage[lk.id()];
-            CHECK_EQUAL(doc, "world");
+            auto docref = storage[lk.id()];
+            CHECK_EQUAL(*docref, "world");
         }
 
 }

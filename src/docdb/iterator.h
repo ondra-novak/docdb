@@ -80,6 +80,13 @@ static constexpr bool isForward(Direction dir) {
 }
 
 
+///Defines filter interface
+/**
+ * Filter object allows to filter iterator's results and transform
+ * them, which allows to perform calculations
+ */
+
+template<DocumentDef _ValueType>
 class Iterator {
 
     enum class DirAndState {
@@ -90,24 +97,46 @@ class Iterator {
     };
 
 public:
+    using ValueType = typename _ValueType::Type;
+
+    class AbstractFilter {
+    public:
+        virtual ~AbstractFilter() = default;
+        virtual void release() {delete this;}
+        virtual bool filter(const Iterator &iter) {return true;}
+        virtual ValueType transform(const std::string_view &data) {
+            return _ValueType::from_binary(data.begin(), data.end());
+        }
+        virtual ValueType transform(ValueType &&val) {
+            return val;
+        }
+
+        struct Deleter {
+            void operator()(AbstractFilter *x) const {x->release();}
+        };
+    };
 
 
-    ///Transform function
-    /**
-     * Transform function allows to perform additional transformation or calculation
-     * above the value.
-     *
-     * The function accepts three arguments
-     *
-     * @p @b 1 Iterator as pointer to iterator instance
-     * @p @b 2 string_view instance contains a value to transform
-     * @p @b 3 string reference to buffer, where to put result
-     * @return bool whether transform has been done, or not
-     */
-    using ValueTransform = std::function<bool(const Iterator *, const std::string_view &, std::string &)>;
-    ///Filter function
-    /** The filter function returns true to accept value, or false to skip value */
-    using Filter = std::function<bool(const Iterator *)>;
+    using PFilter = std::unique_ptr<AbstractFilter, typename AbstractFilter::Deleter>;
+
+    class FilterChain {
+    public:
+        FilterChain(PFilter &&first,PFilter &&second)
+            :_first(std::move(first)),_second(std::move(second)) {}
+
+        virtual bool filter(const Iterator &iter) {
+            return _first->filter(iter) && _second->filter(iter);;
+        }
+        virtual ValueType transform(const std::string_view &data) {
+            return _second->transform(_first->transform(data));
+        }
+        virtual ValueType transform(ValueType &&val) {
+            return _second->transform(_first->transform(val));
+        }
+
+        PFilter _first;
+        PFilter _second;
+    };
 
 
     struct Config {
@@ -115,8 +144,7 @@ public:
         std::string_view range_end;
         FirstRecord first_record;
         LastRecord last_record;
-        ValueTransform transform;
-        Filter filter;
+        PFilter filter;
     };
 
     Iterator(std::unique_ptr<leveldb::Iterator> &&iter, Config &&config)
@@ -126,7 +154,6 @@ public:
         ,_range_end(config.range_end)
         ,_direction(config.range_start > config.range_end?DirAndState::previous_first:DirAndState::next_first)
         ,_last_record(config.last_record)
-        ,_transform(std::move(config.transform))
         ,_filter(std::move(config.filter)) {
 
         _iter->Seek(to_slice(config.range_start));
@@ -153,75 +180,45 @@ public:
     }
     ///Retrieve key in raw form
     std::string_view raw_key() const {
-        return _iter->Valid()?to_string(_iter->key()):std::string_view();
+        return to_string(_iter->key());
+    }
+    std::string_view raw_value() const {
+        return to_string(_iter->value());
     }
 
-    ///Retrieve key, strip keyspace id (so you can directly parse the key)
-    std::string_view key() const {
-        return _iter->Valid()?to_string(_iter->key()).substr(sizeof(KeyspaceID)):std::string_view();
+    ///Retrieve key as BasicRowView (to be parsed, without keyspaceid)
+    BasicRowView key() const {
+        BasicRowView rw(raw_key());
+        auto [kid, remain] = rw.get<KeyspaceID, RemainingData>();
+        return BasicRowView(remain);
     }
 
-    std::string_view value() const {
+    ValueType value() const {
         std::string_view val = to_string(_iter->value());
-        if (_transform) {
-            bool b;
-            switch (_trn_state) {
-                case not_transformed_yet:
-                   _value_buff.clear();
-                   b = _transform(this, val, _value_buff);
-                   if (b) {
-                       _trn_state = transformed;
-                       return _value_buff;
-                   } else {
-                       _trn_state = keep_original;
-                       return val;
-                   }
-                case transformed:
-                    return _value_buff;
-                default:
-                    return val;
+        if (_filter) {
+            return _filter->transform(val);
+        } else {
+            return _ValueType::from_binary(val.begin(), val.end());
+        }
+    }
+
+    void add_filter(PFilter &&flt) {
+        if (_filter) {
+            _filter = PFilter(new FilterChain(std::move(_filter), std::move(flt)));
+        } else {
+            _filter = std::move(flt);
+        }
+    }
+    void remove_filter() {
+        if (_filter) {
+            auto f = dynamic_cast<FilterChain *>(_filter.get());
+            if (f) {
+                _filter = std::move(f->_first);
+            } else{
+                _filter.reset();
             }
-        } else {
-            return val;
         }
     }
-
-    ///Set transform
-    ValueTransform set_transform(ValueTransform &&fn) {
-        fn.swap(_transform);
-        return fn;
-    }
-
-    ///Set transform
-    Filter set_filter(Filter &&fn) {
-        fn.swap(_filter);
-        return fn;
-    }
-
-    ///add transform
-    /** Adds transform to the current transform chain
-     *
-     * @param trn new transform function
-     * @param before
-     */
-    void add_transform(ValueTransform &&trn, bool before = false) {
-        if (!_transform) {
-            set_transform(std::move(trn));
-        } else {
-            if (before) set_transform(combine(std::move(trn),set_transform({})));
-            else set_transform(combine(set_transform({}), std::move(trn)));
-        }
-    }
-
-    void add_filter(Filter &&flt) {
-        if (!_filter) {
-            set_filter(std::move(flt));
-        } else {
-            set_filter(combine(set_filter({}), std::move(flt)));
-        }
-    }
-
-
 
     ///move to next item
     /** @retval true next item is available
@@ -230,7 +227,6 @@ public:
     bool next() {
         if (!_iter->Valid()) return false;
         do {
-            clear_state();
             switch(_direction) {
                 default:
                 case DirAndState::next: _iter->Next();
@@ -262,7 +258,7 @@ public:
                     };
                     break;
             };
-            if (!_filter || _filter(this)) return true;
+            if (!_filter || _filter->filter(*this)) return true;
         } while (true);
     }
 
@@ -274,7 +270,6 @@ public:
     bool previous() {
         if (!_iter->Valid()) return false;
         do {
-            clear_state();
             switch(_direction) {
                 default:
                 case DirAndState::next:
@@ -290,58 +285,26 @@ public:
                     if (!_iter->Valid()) return false;
                     break;
             };
-            if (!_filter || _filter(this)) return true;
+            if (!_filter || _filter->filter(*this)) return true;
         } while (true);
 
     }
 
 
 protected:
-    enum ValueTransformState {
-        ///value was not transformed yet, call transform on access
-        not_transformed_yet,
-        ///value has been transformed, return transformed value
-        transformed,
-        ///transformation failed, return original value
-        keep_original
-    };
-
-
 
     std::unique_ptr<leveldb::Iterator> _iter;
     std::string _range_end;
     DirAndState _direction;
     LastRecord _last_record;
-    ValueTransform _transform;
-    Filter _filter;
-    mutable std::string _value_buff;
-    mutable ValueTransformState _trn_state = not_transformed_yet;
-
-    void clear_state() {
-        _trn_state = not_transformed_yet;
-    }
-
-    static ValueTransform combine(ValueTransform &&a, ValueTransform &&b) {
-        return [a = std::move(a), b = std::move(b)](const Iterator *iter, const std::string_view &src, std::string &buff)->bool{
-            std::string tmp;
-            if (a(iter, src, tmp)) {
-                if (!b(iter,tmp, buff)) buff = tmp;
-                return true;
-            }
-            return b(iter, src, buff);
-        };
-    }
-
-    static Filter combine(Filter &&a, Filter &&b) {
-        return [a = std::move(a), b = std::move(b)](const Iterator *iter){
-            return a(iter) && b(iter);
-        };
-    }
-
+    PFilter _filter;
 
 };
 
-using GenIterator = Iterator;
+template<DocumentDef _ValueDef>
+using GenIterator = Iterator<_ValueDef>;
+
+
 
 }
 

@@ -5,7 +5,7 @@ set (CMAKE_CXX_STANDARD 20)
 
 include(library.cmake)
 
-LINK_LIBRARIES(docdb pthread leveldb)
+LINK_LIBRARIES(pthread leveldb)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/)
 add_compile_options(-Wall -Wno-noexcept-type)
 

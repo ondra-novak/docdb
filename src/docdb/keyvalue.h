@@ -111,6 +111,62 @@ public:
     Key(const Args & ... args):RawKey(0, args...) {}
 };
 
+
+///Retrieved value
+/**
+ * Value cannot be retrieved directly, you still need to test whether
+ * the key realy exists in the database. You also need to keep internal
+ * serialized data as the some document still may reffer to serialized
+ * area. This helps to speed-up deserialization, but the document cannot
+ * be separated from its serialized version. So to access the document
+ * you need to keep this structure.
+ *
+ * @tparam _ValueDef Defines format of value/document
+ * @tparam Buffer type of buffer
+ */
+template<DocumentDef _ValueDef, typename Buffer = std::string>
+class Value {
+public:
+
+    using ValueType = typename _ValueDef::Type;
+
+    ///Construct object using function
+    /**
+     * This is adapted to leveldb's Get operation
+     *
+     * @param rt function receives buffer, and returns true if the buffer
+     * was filled with serialized data, or false, if not
+     */
+    template<typename Rtv>
+    Value(Rtv &&rt) {
+        _found = rt(_buff);
+    }
+
+    ///Creates empty value
+    Value():_found(false) {}
+
+    ///Serializes document into buffer
+    Value(const ValueType &val):_found(true) {
+        _ValueDef::to_binary(val, std::back_inserter(_buff));
+    }
+
+    ///Deserialized the document
+    ValueType operator*() const {
+        return _ValueDef::from_binary(_buff.begin(), _buff.end());
+    }
+    ///Tests whether value has been set
+    bool has_value() const {
+        return _found;
+    }
+
+    const Buffer &get_serialized() const {return _buff;}
+
+protected:
+    bool _found;
+    Buffer _buff;
+};
+
+
 }
 
 #endif /* SRC_DOCDB_KEY_H_ */
