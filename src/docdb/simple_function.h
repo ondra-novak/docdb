@@ -53,7 +53,7 @@ public:
     ///Call function
     template<typename ... A>
     CXX20_REQUIRES(std::is_convertible_v<A, Args> && ...)
-    R operator()(A && ... args) {
+    R operator()(A && ... args) const {
         return _fn(_ctx, std::forward<Args>(args)...);
     }
     ///Returns true, if function is set

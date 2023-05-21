@@ -284,7 +284,7 @@ public:
      * @exception any sobserver can throw an exception, which automatically rollbacks
      * the whole update
      */
-    using UpdateObserver = std::function<bool(Batch &, const Update &)>;
+    using UpdateObserver = SimpleFunction<bool, Batch &, const Update &>;
 
 
     ///Register new observer
@@ -316,7 +316,7 @@ public:
     }
 
     ///Replay all documents to a observer
-    void replay_for(const UpdateObserver &observer) {
+    void rescan_for(const UpdateObserver &observer) {
         Batch b;
         Iterator iter = this->scan();
         bool rep = true;

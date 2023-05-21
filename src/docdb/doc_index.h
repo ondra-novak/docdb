@@ -327,7 +327,7 @@ public:
         :DocumentIndexView<_DocStorage, _ValueDef>(storage, name)
         ,_rev(revision)
     {
-        connect_indexer(std::forward<Fn>(indexer));
+        init_observer(std::forward<Fn>(indexer));
         check_reindex();
     }
 
@@ -337,7 +337,7 @@ public:
         :DocumentIndexView<_DocStorage,_ValueDef>(storage, kid)
          ,_rev(revision)
     {
-        connect_indexer(std::forward<Fn>(indexer));
+        init_observer(std::forward<Fn>(indexer));
         check_reindex();
     }
 
@@ -355,7 +355,7 @@ public:
     ///Reindex whole index
     void reindex() {
         this->_db->clear_table(this->_kid, false);
-        this->_storage.replay_for(_indexer);
+        this->_storage.rescan_for(_indexer->create_observer());
         update_revision();
     }
 
@@ -376,10 +376,61 @@ public:
 
 protected:
 
+    using StorageObserver = typename _DocStorage::UpdateObserver;
+
+    class Indexer {
+    public:
+        virtual StorageObserver create_observer() = 0;
+        virtual ~Indexer() = default;
+    };
+
     int _rev;
     std::size_t observer_id;
+    std::unique_ptr<Indexer> _indexer;
     ObserverList<UpdateObserver> _observers;
-    typename _DocStorage::UpdateObserver _indexer;
+
+
+    template<typename Fn>
+    class Indexer_Fn: public Indexer {
+    public:
+        Indexer_Fn(DocumentIndex &owner, Fn &&fn):_owner(owner),_fn(std::forward<Fn>(fn)) {}
+
+        bool run(Batch &b, const Update &update) {
+            if constexpr(std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>) {
+                if (update.old_doc) {
+                    Emit emt(_owner._observers, b, update.old_doc_id, _owner._kid, true);
+                    _fn(emt, *update.old_doc, {update.old_doc_id, update.old_old_doc_id, true});
+                }
+                if (update.new_doc) {
+                    Emit emt(_owner._observers, b, update.new_doc_id, _owner._kid, false);
+                    _fn(emt, *update.new_doc, {update.new_doc_id, update.old_doc_id, false});
+                }
+            } else {
+                if (update.old_doc) {
+                    Emit emt(_owner._observers, b, update.old_doc_id, _owner._kid, true);
+                    _fn(emt, *update.old_doc);
+                }
+                if (update.new_doc) {
+                    Emit emt(_owner._observers, b, update.new_doc_id, _owner._kid, false);
+                    _fn(emt, *update.new_doc);
+                }
+            }
+            return true;
+        }
+        virtual StorageObserver create_observer() {
+            return StorageObserver::template member_fn<&Indexer_Fn::run>(this);
+        }
+    protected:
+        DocumentIndex &_owner;
+        Fn _fn;
+    };
+
+
+    template<typename Fn>
+    void init_observer(Fn &&fn) {
+        _indexer = std::make_unique<Indexer_Fn<Fn> >(*this, std::forward<Fn>(fn));
+        observer_id = this->_storage.register_observer(_indexer->create_observer());
+    }
 
     bool check_revision() {
         std::string v;
@@ -394,34 +445,7 @@ protected:
         this->_db->commit_batch(b);
     }
 
-    template<typename Fn>
-    void connect_indexer(Fn &&fn) {
-        _indexer = [this, fn = std::move(fn)](Batch &b, const Update &update){
-            if constexpr(std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>) {
-                if (update.old_doc) {
-                    Emit emt(_observers, b, update.old_doc_id, this->_kid, true);
-                    fn(emt, *update.old_doc, {update.old_doc_id, update.old_old_doc_id, true});
-                }
-                if (update.new_doc) {
-                    Emit emt(_observers, b, update.new_doc_id, this->_kid, false);
-                    fn(emt, *update.new_doc, {update.new_doc_id, update.old_doc_id, false});
-                }
-            } else {
-                if (update.old_doc) {
-                    Emit emt(_observers, b, update.old_doc_id, this->_kid, true);
-                    fn(emt, *update.old_doc);
-                }
-                if (update.new_doc) {
-                    Emit emt(_observers, b, update.new_doc_id, this->_kid, false);
-                    fn(emt, *update.new_doc);
-                }
-            }
-            return true;
-        };
-        observer_id = this->_storage.register_observer([this](Batch &b, const Update &update){
-            return _indexer(b,update);
-        });
-    }
+
 
 
 

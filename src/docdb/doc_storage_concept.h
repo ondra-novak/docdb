@@ -6,6 +6,7 @@
 #include "concepts.h"
 
 
+
 namespace docdb {
 
 
@@ -20,9 +21,9 @@ CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
 template<typename T>
 CXX20_CONCEPT(DocumentStorageType , requires(T x) {
     DocumentStorageViewType<T>;
-    {x.register_observer([](Batch &, const typename T::Update &){return true;})} -> std::same_as<std::size_t>;
+    {x.register_observer(std::declval<SimpleFunction<bool, Batch &, const typename T::Update &> >())} -> std::same_as<std::size_t>;
     {x.unregister_observer(std::declval<std::size_t>())};
-    {x.replay_for([](Batch &, const typename T::Update &){return true;})};
+    {x.rescan_for(std::declval<SimpleFunction<bool, Batch &, const typename T::Update &> >())};
     {T::Update::old_doc}->std::convertible_to<const typename T::DocType *>;
     {T::Update::new_doc}->std::convertible_to<const typename T::DocType *>;
     {T::Update::old_doc_id}->std::convertible_to<const typename T::DocID>;
