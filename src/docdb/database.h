@@ -156,9 +156,8 @@ public:
         }
         while (iter2->Valid()) {
             auto k = iter2->key();
-            if (to_string(k) < endKey) {
-                _dbinst->Delete({}, k);
-            }
+            if (to_string(k) >= endKey) break;
+            _dbinst->Delete({}, k);
             iter2->Next();
         }
 
@@ -260,7 +259,7 @@ public:
         if (!st.ok()) {
             throw DatabaseError(st);
         }
-        batch.Clear();
+        batch.on_event(true);
     }
 
 

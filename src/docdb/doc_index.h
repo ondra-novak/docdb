@@ -158,12 +158,12 @@ public:
         if (isForward(_dir)) {
             return Iterator(_storage,_db->make_iterator(false,_snap),{
                     RawKey(_kid),RawKey(_kid+1),
-                    FirstRecord::included, LastRecord::excluded
+                    FirstRecord::excluded, LastRecord::excluded
             });
         } else {
             return Iterator(_storage,_db->make_iterator(false,_snap),{
                     RawKey(_kid+1),RawKey(_kid),
-                    FirstRecord::excluded, LastRecord::included
+                    FirstRecord::excluded, LastRecord::excluded
             });
         }
     }
@@ -262,7 +262,6 @@ public:
 
     protected:
         void put(Key &k, const ValueType &v) {
-            auto [dummy, ks] = k.get<KeyspaceID, Blob>();
             k.change_kid(_kid);
             k.append(_cur_doc);
             if (_deleting) {
@@ -272,7 +271,9 @@ public:
                 _ValueDef::to_binary(v, std::back_inserter(buffer));
                 _batch.Put(k, buffer);
             }
-            _observers.call(_batch, BasicRowView(ks));
+            std::string_view ks(k);
+            ks = ks.substr(sizeof(KeyspaceID), ks.length()-sizeof(KeyspaceID)-sizeof(DocID));
+            _observers.call(_batch, ks);
         }
 
         ObserverList<UpdateObserver> &_observers;
@@ -354,25 +355,23 @@ public:
     ///Reindex whole index
     void reindex() {
         this->_db->clear_table(this->_kid, false);
-        auto iter = this->_storage.scan();
+        this->_storage.replay_for(_indexer);
+        update_revision();
+    }
+
+    void rescan_for(const UpdateObserver &observer) {
+
         Batch b;
+        auto iter = this->scan();
         while (iter.next()) {
-            std::optional<DocType> doc = iter.value();
-            const DocType *new_doc =doc.has_value()?&(*doc):nullptr;
-            DocID id = iter.id();
-            DocID prev_id = iter.prev_id();
-            if (prev_id) {
-               DocInfo dinfo = this->_storage[prev_id];
-               if (dinfo.available) {
-                   DocType old_doc = dinfo.doc();
-                   _indexer(b, Update {&old_doc,new_doc,dinfo.prev_id,prev_id,id});
-                   this->_db->commit_batch(b);
-                   continue;
-               }
+            if (b.is_big()) {
+                this->_db->commit_batch(b);
             }
-            _indexer(b, Update {nullptr,new_doc,0,prev_id,id});
-            this->_db->commit_batch(b);
+            auto k = iter.raw_key();
+            k = k.substr(sizeof(KeyspaceID), k.size() - sizeof(KeyspaceID) - sizeof(DocID));
+            if (!observer(b, k)) break;
         }
+        this->_db->commit_batch(b);
     }
 
 protected:

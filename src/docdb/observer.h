@@ -9,6 +9,10 @@
 
 namespace docdb {
 
+
+
+
+
 template<typename Fn>
 class ObserverList {
 public:

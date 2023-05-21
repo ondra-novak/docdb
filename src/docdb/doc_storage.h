@@ -309,6 +309,20 @@ public:
         return _next_id;
     }
 
+    ///Replay all documents to a observer
+    void replay_for(const UpdateObserver &observer) {
+        Batch b;
+        Iterator iter = this->scan();
+        bool rep = true;
+        while (rep && iter.next()) {
+            auto vdoc = iter.value();
+            auto doc = *vdoc;
+            rep = update_for(observer, b, iter.id(), &doc, iter.prev_id());
+            this->_db->commit_batch(b);
+        }
+
+    }
+
 protected:
 
 
@@ -375,23 +389,31 @@ protected:
         }
     }
 
-
-    void update_observers(Batch &b, DocID id, const DocType *doc, DocID prev_id) {
+    template<typename Fn>
+    bool update_for(Fn &&fn, Batch &b, DocID id, const DocType *doc, DocID prev_id) {
         if (prev_id) {
             DocInfo d = this->get(prev_id);
             if (d.exists && !d.deleted) {
                 DocType old_doc = d.doc();
-                _observers.call(b, Update{
+                return fn(b, Update{
                     &old_doc,
                     doc,
                     d.prev_id,
                     prev_id,
                     id
                 });
-                return;
             }
         }
-        _observers.call(b, Update{nullptr, doc, 0, prev_id, id});
+        return fn(b, Update{nullptr, doc, 0, prev_id, id});
+
+    }
+
+
+    void update_observers(Batch &b, DocID id, const DocType *doc, DocID prev_id) {
+        update_for([&](Batch &b, const Update &update){
+            _observers.call(b, update);
+            return true;
+        }, b, id, doc, prev_id);
     }
 
 

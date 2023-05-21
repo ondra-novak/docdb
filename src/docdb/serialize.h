@@ -202,6 +202,8 @@ public:
         const char *end = src.data()+src.size();
         return deserialize_item<Item>(iter, end);
     }
+
+    operator leveldb::Slice() const {return {this->data(),this->size()};}
 };
 
 

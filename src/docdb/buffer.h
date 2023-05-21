@@ -5,6 +5,7 @@
 
 #include <leveldb/slice.h>
 #include <string_view>
+#include <span>
 
 namespace docdb {
 
@@ -22,12 +23,15 @@ class BufferBase { // @suppress("Miss copy constructor or assignment operator")
 public:
 
     using value_type = T;
+    using view_type = std::conditional_t<std::is_trivial_v<T> && std::is_standard_layout_v<T>,
+            std::basic_string_view<T>, std::span<T> >;
 
-    operator std::basic_string_view<T>() const {return {_begin, _len};}
+
+    operator view_type() const {return {_begin, _len};}
 
     constexpr BufferBase():_begin(_static),_len(0),_capa(sizeof(_static)) {}
 
-    constexpr BufferBase(const std::basic_string_view<T> &string) {
+    constexpr BufferBase(const view_type &string) {
         alloc_and_copy(string.begin(), string.end());
     }
     template<std::size_t N>
@@ -88,7 +92,7 @@ public:
         ++_len;
     }
 
-    constexpr void append(const std::basic_string_view<T> &data) {
+    constexpr void append(const view_type &data) {
         if (_len + data.size() > _capa) extend_to(_len+data.size());
         std::copy(data.begin(), data.end(), _begin+_len);
         _len+=data.size();
@@ -136,35 +140,35 @@ public:
     constexpr T *begin() {return _begin;}
     constexpr T *end() {return _begin+_len;}
 
-    constexpr std::basic_string_view<T> slice(std::size_t from) {
+    constexpr view_type slice(std::size_t from) {
         if (from > _len) return {};
         return {_begin+from, _len-from};
     }
 
-    constexpr std::basic_string_view<T> slice(std::size_t from, std::size_t count) {
+    constexpr view_type slice(std::size_t from, std::size_t count) {
         if (from > _len) return {};
         if (from+count > _len) count = _len - from;
         return {_begin+from, count};
     }
 
     constexpr std::size_t capacity() const {return _capa;}
-    constexpr bool operator<(const std::basic_string_view<T> &other) const {
-        return operator std::basic_string_view<T>() < other;
+    constexpr bool operator<(const view_type &other) const {
+        return operator view_type() < other;
     }
-    constexpr bool operator>(const std::basic_string_view<T> &other) const {
-        return operator std::basic_string_view<T>() > other;
+    constexpr bool operator>(const view_type &other) const {
+        return operator view_type() > other;
     }
-    constexpr bool operator<=(const std::basic_string_view<T> &other) const {
-        return operator std::basic_string_view<T>() <= other;
+    constexpr bool operator<=(const view_type &other) const {
+        return operator view_type() <= other;
     }
-    constexpr bool operator>=(const std::basic_string_view<T> &other) const {
-        return operator std::basic_string_view<T>() >= other;
+    constexpr bool operator>=(const view_type &other) const {
+        return operator view_type() >= other;
     }
-    constexpr bool operator==(const std::basic_string_view<T> &other) const {
-        return operator std::basic_string_view<T>() == other;
+    constexpr bool operator==(const view_type &other) const {
+        return operator view_type() == other;
     }
-    constexpr bool operator!=(const std::basic_string_view<T> &other) const {
-        return operator std::basic_string_view<T>() != other;
+    constexpr bool operator!=(const view_type &other) const {
+        return operator view_type() != other;
     }
 
 protected:

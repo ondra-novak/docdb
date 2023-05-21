@@ -37,7 +37,6 @@ public:
 
     protected:
         void put(Key &k, const ValueType &v) {
-            auto [dummy, ks] = k.get<KeyspaceID, Blob>();
             k.change_kid(_kid);
             if (_deleting) {
                 _batch.Delete(k);
@@ -46,7 +45,9 @@ public:
                 _ValueDef::to_binary(v, std::back_inserter(buffer));
                 _batch.Put(k, buffer);
             }
-            _observers.call(_batch, BasicRowView(ks));
+            std::string_view ks(k);
+            ks = ks.substr(sizeof(KeyspaceID), ks.length()-sizeof(KeyspaceID));
+            _observers.call(_batch, ks);
         }
 
         ObserverList<UpdateObserver> &_observers;
@@ -123,27 +124,11 @@ public:
 
 
     ///Reindex whole index
-    void reindex() {
-        this->_db->clear_table(this->_kid);
-        auto iter = this->_storage.scan();
-        Batch b;
-        while (iter.next()) {
-            DocType doc = iter.doc();
-            DocID id = iter.id();
-            DocID prev_id = iter.prev_id();
-            if (prev_id) {
-               DocInfo dinfo = this->_storage[prev_id];
-               if (dinfo.available) {
-                   DocType old_doc = dinfo.doc();
-                   _indexer(b, Update {&old_doc,&doc,dinfo.prev_id,prev_id,id});
-                   this->_db->commit_batch(b);
-                   continue;
-               }
-            }
-            _indexer(b, Update {nullptr,&doc,0,prev_id,id});
-            this->_db->commit_batch(b);
-        }
-    }
+      void reindex() {
+          this->_db->clear_table(this->_kid, false);
+          this->_storage.replay_for(_indexer);
+          update_revision();
+      }
 
 protected:
 

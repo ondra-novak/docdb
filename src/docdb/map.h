@@ -99,12 +99,12 @@ public:
         if (isForward(_dir)) {
             return Iterator(_db->make_iterator(false,_snap),{
                     RawKey(_kid),RawKey(_kid+1),
-                    FirstRecord::included, LastRecord::excluded
+                    FirstRecord::excluded, LastRecord::excluded
             });
         } else {
             return Iterator(_db->make_iterator(false,_snap),{
                     RawKey(_kid+1),RawKey(_kid),
-                    FirstRecord::excluded, LastRecord::included
+                    FirstRecord::excluded, LastRecord::excluded
             });
         }
     }

@@ -138,6 +138,7 @@ public:
      * was filled with serialized data, or false, if not
      */
     template<typename Rtv>
+    CXX20_REQUIRES(std::same_as<decltype(std::declval<Rtv>()(std::declval<Buffer &>())), bool>)
     Value(Rtv &&rt) {
         _found = rt(_buff);
     }

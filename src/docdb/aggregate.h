@@ -70,7 +70,7 @@ protected:
 };
 
 template<typename Index, DocumentDef _ValueDef>
-class AggregateIndex: public MapView<_ValueDef>, public Aggregator<Index, _ValueDef> {
+class AggregateIndex: public MapView<_ValueDef> {
 public:
 
     using ValueType = typename _ValueDef::Type;
@@ -78,7 +78,7 @@ public:
     using Iterator = typename MapView<_ValueDef>::Iterator;
 
     ///Function is using to reduce key
-    using AggregateFn = std::function<ValueType(IndexIterator &iter)>;
+    using AggregateFn = std::function<Value<_ValueDef>(IndexIterator &iter)>;
     using TempMap = std::unordered_map<RawKey, ValueType>;
     using UpdateObserver =  std::function<bool(Batch &, const BasicRowView &)>;
     using RowInfo = typename MapView<_ValueDef>::RowInfo;
@@ -100,7 +100,8 @@ public:
 
     protected:
         void put(const BasicRow &aggr_key,const BasicRow &search_key) {
-            RawKey ak = Database::get_private_area_key(_kid, aggr_key);
+            std::uint32_t rev = static_cast<std::uint32_t>(_batch.get_revision());
+            RawKey ak = Database::get_private_area_key(_kid, rev, aggr_key);
             _batch.Put(ak, search_key);
             _observers.call(_batch, aggr_key);
         }
@@ -132,10 +133,12 @@ public:
             Direction dir = Direction::forward,
             const PSnapshot &snap = {})
         :MapView<_ValueDef>(index.get_db(), name, dir, snap)
-        ,Aggregator<Index, _ValueDef>(index, std::move(aggr_fn))
+        ,_index(index)
+        ,_aggr_fn(std::move(aggr_fn))
         ,_rev(revision)
     {
         connect_indexer(std::move(key_mapping));
+        if (!check_revision()) reindex();
     }
 
 
@@ -145,17 +148,19 @@ public:
             Direction dir = Direction::forward,
             const PSnapshot &snap = {})
         :MapView<_ValueDef>(index.get_db(), kid, dir, snap)
-         ,Aggregator<Index, _ValueDef>(index, std::move(aggr_fn))
+         ,_index(index)
+         ,_aggr_fn(std::move(aggr_fn))
          ,_rev(revision)
     {
         connect_indexer(std::move(key_mapping));
+        if (!check_revision()) reindex();
     }
 
 
 
     void refresh() {
-        std::unique_lock _(_update_lock);
-        if (!_change.load(std::memory_order_relaxed)) return;
+        std::unique_lock _(_mx);
+        if (!_change.exchange(false, std::memory_order_relaxed)) return;
 
         RawKey start = Database::get_private_area_key(this->_kid);
         RawKey end = start.prefix_end();
@@ -166,19 +171,19 @@ public:
         Buffer<char, 128> buffer;
         while (iter.next()) {
             BasicRowView k(iter.raw_key());
-            auto [a1, kk] = k.get<KeyspaceID, Blob>();
+            auto [a1, a2, a3, kk] = k.get<KeyspaceID, KeyspaceID, std::uint32_t, Blob>();
             Key srchkey(Blob(iter.raw_value()));
-            auto vdef = this->aggregate(srchkey);
+            IndexIterator iter = _index.scan_prefix(srchkey);
+            Value<_ValueDef> vdef = _aggr_fn(iter);
             if (vdef.has_value()) {
-                _ValueDef::to_binary(*vdef, std::back_inserter(buffer));
-                b.Put(to_slice(kk), buffer);
+                b.Put(RawKey(this->_kid,kk), vdef.get_serialized());
                 buffer.clear();
             } else {
-                b.Delete(to_slice(kk));
+                b.Delete(RawKey(this->_kid,kk));
             }
-            b.Delete(to_slice(iter.raw_key()));
+            b.Delete(k);
+            this->_db->commit_batch(b);
         }
-        _change.store(false, std::memory_order_relaxed);
     }
 
     ///Retrieves exact row
@@ -235,12 +240,24 @@ public:
         return Super::scan_prefix(from, to, last_record);
     }
 
+    void reindex() {
+        this->_db->clear_table(this->_kid, false);
+        this->_db->clear_table(this->_kid, true);
+        this->_index.rescan_for([&](Batch &b, const BasicRowView &key){
+            return _indexer(b, key);
+        });
+        update_revision();
+    }
+
 protected:
+    Index &_index;
+    AggregateFn _aggr_fn;
     int _rev;
     std::size_t observer_id = 0;
+    typename Index::UpdateObserver _indexer;
     ObserverList<UpdateObserver> _observers;
-    std::shared_mutex _update_lock;
-    std::atomic<bool> _change;
+    std::atomic<bool> _change = true;
+    std::mutex _mx;
 
     bool check_revision() {
         std::string v;
@@ -255,17 +272,24 @@ protected:
         this->_db->commit_batch(b);
     }
 
+    void set_flag(bool commit) {
+        if (commit) _change.store(true, std::memory_order_relaxed);
+    }
+
+    using Hook = typename Batch::Hook;
+
     template<typename Fn>
     void connect_indexer(Fn &&fn) {
-        observer_id = this->_storage.register_observer([this, fn = std::move(fn)](Batch &b, const BasicRowView &key){
-            _update_lock.unlock_shared();
+        _indexer = [this, fn = std::move(fn)](Batch &b, const BasicRowView &key){
             Emit emit(_observers, b, this->_kid, this->_index.get_kid());
             fn(emit, key);
-            b.add_commit_hook([this](bool commit){
-                if (commit) _change.store(true, std::memory_order_relaxed);
-                _update_lock.unlock_shared();
-            });
+            b.add_hook(Hook::member_fn<&AggregateIndex<Index,_ValueDef>::set_flag>(this));
+            return true;
+        };
+        observer_id = this->_index.register_observer([&](Batch &b, const BasicRowView &key){
+           return _indexer(b, key);
         });
+
     }
 
 
