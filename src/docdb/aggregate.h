@@ -78,15 +78,14 @@ public:
     using Iterator = typename MapView<_ValueDef>::Iterator;
 
     ///Function is using to reduce key
-    using AggregateFn = std::function<Value<_ValueDef>(IndexIterator &iter)>;
     using TempMap = std::unordered_map<RawKey, ValueType>;
     using UpdateObserver =  std::function<bool(Batch &, const BasicRowView &)>;
     using RowInfo = typename MapView<_ValueDef>::RowInfo;
     using Super = MapView<_ValueDef>;
 
-    class Emit {
+    class KeyEmit {
     public:
-        Emit(ObserverList<UpdateObserver> &observers,
+        KeyEmit(ObserverList<UpdateObserver> &observers,
             Batch &batch,
             KeyspaceID kid,
             KeyspaceID srchkid)
@@ -112,8 +111,33 @@ public:
         KeyspaceID _srchkid;
     };
 
-    using KeyMapping = std::function<void(Emit &, const BasicRowView &)>;
+    using KeyMapping = std::function<void(KeyEmit &, const BasicRowView &)>;
 
+    class AggrEmit {
+    public:
+        AggrEmit(Batch &b, const RawKey &k, Buffer<char, 128> &buffer)
+            :_buffer(buffer)
+            ,_b(b)
+            ,_k(k) {}
+
+        void operator()(const ValueType &value) {
+            _ValueDef::to_binary(value, std::back_inserter(_buffer));
+            _b.Put(_k, _buffer);
+            _buffer.clear();
+            _delit = false;
+        }
+        ~AggrEmit() {
+            if (_delit) _b.Delete(_k);
+        }
+    protected:
+        Buffer<char, 128> &_buffer;
+        Batch &_b;
+        const RawKey &_k;
+        bool _delit = true;
+    };
+
+
+    using AggregateFn = std::function<void(AggrEmit &, IndexIterator &)>;
 
     ///Construct aggregated index
     /**
@@ -174,16 +198,14 @@ public:
             auto [a1, a2, a3, kk] = k.get<KeyspaceID, KeyspaceID, std::uint32_t, Blob>();
             Key srchkey(Blob(iter.raw_value()));
             IndexIterator iter = _index.scan_prefix(srchkey);
-            Value<_ValueDef> vdef = _aggr_fn(iter);
-            if (vdef.has_value()) {
-                b.Put(RawKey(this->_kid,kk), vdef.get_serialized());
-                buffer.clear();
-            } else {
-                b.Delete(RawKey(this->_kid,kk));
+            {
+               AggrEmit emit(b, RawKey(this->_kid,kk), buffer);
+               _aggr_fn(emit, iter);
             }
             b.Delete(k);
             this->_db->commit_batch(b);
         }
+
     }
 
     ///Retrieves exact row
@@ -281,7 +303,7 @@ protected:
     template<typename Fn>
     void connect_indexer(Fn &&fn) {
         _indexer = [this, fn = std::move(fn)](Batch &b, const BasicRowView &key){
-            Emit emit(_observers, b, this->_kid, this->_index.get_kid());
+            KeyEmit emit(_observers, b, this->_kid, this->_index.get_kid());
             fn(emit, key);
             b.add_hook(Hook::member_fn<&AggregateIndex<Index,_ValueDef>::set_flag>(this));
             return true;

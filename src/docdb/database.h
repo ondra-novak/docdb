@@ -270,6 +270,16 @@ public:
     }
 
 
+    void compact() {
+        _dbinst->CompactRange(nullptr,nullptr);
+    }
+
+    void compact_range(std::string_view from, std::string_view to) {
+        auto f = to_slice(from);
+        auto t = to_slice(to);
+        _dbinst->CompactRange(&f,&t);
+    }
+
 protected:
     static constexpr KeyspaceID system_table = std::numeric_limits<KeyspaceID>::max();
 

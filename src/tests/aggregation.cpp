@@ -54,18 +54,16 @@ void test1() {
     SumAndCountAggr aggr(index, "test_aggr", 1, [](auto &emit, const docdb::BasicRowView &key){
         auto [v] = key.get<std::size_t>();
         emit({v},{v});
-    },SumAndCountAggr::AggregateFn([](auto &iter)->docdb::Value<docdb::BasicRowDocument>{
-        double count = 0;
+    },SumAndCountAggr::AggregateFn([](auto &emit, auto &iter){
         if (iter.next()) {
+            double count = 0;
             do {
                 auto val = iter.value();
                 auto [n] = val.template get<double>();
                 count = count + n;
             }while (iter.next());
             docdb::BasicRow x(count);
-            return docdb::BasicRowView(x);
-        } else {
-            return {};
+            emit(x);
         }
     }));
     for (auto c: words) {
