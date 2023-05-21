@@ -153,6 +153,25 @@ public:
                 FirstRecord::included, LastRecord::excluded
         });
     }
+
+    ///Observes changes of keys in the index;
+    using UpdateObserver = std::function<bool(Batch &b, const BasicRowView  &)>;
+
+    void rescan_for(const UpdateObserver &observer) {
+
+        Batch b;
+        auto iter = this->scan();
+        while (iter.next()) {
+            if (b.is_big()) {
+                this->_db->commit_batch(b);
+            }
+            auto k = iter.raw_key();
+            k = k.substr(sizeof(KeyspaceID), k.size() - sizeof(KeyspaceID) - sizeof(DocID));
+            if (!observer(b, k)) break;
+        }
+        this->_db->commit_batch(b);
+    }
+
 };
 
 template<DocumentDef _ValueDef>
@@ -162,7 +181,7 @@ class Map: public MapView<_ValueDef> {
     using ValueType = typename _ValueDef::Type;
 
     ///Observes changes of keys in the index;
-    using UpdateObserver = std::function<bool(Batch &b, const BasicRowView  &)>;
+    using UpdateObserver = typename MapView<_ValueDef>::UpdateObserver;
 
 
     ///Register new observer

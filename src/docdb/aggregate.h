@@ -9,7 +9,7 @@
 #define SRC_DOCDB_AGGREGATE_H_
 
 #include "concepts.h"
-
+#include "map_concept.h"
 #include "map.h"
 namespace docdb {
 
@@ -69,7 +69,7 @@ protected:
     AggregateFn aggr_fn;
 };
 
-template<typename Index, DocumentDef _ValueDef>
+template<MapType Index, DocumentDef _ValueDef>
 class AggregateIndex: public MapView<_ValueDef> {
 public:
 
@@ -79,7 +79,7 @@ public:
 
     ///Function is using to reduce key
     using TempMap = std::unordered_map<RawKey, ValueType>;
-    using UpdateObserver =  std::function<bool(Batch &, const BasicRowView &)>;
+    using UpdateObserver =  typename MapView<_ValueDef>::UpdateObserver;
     using RowInfo = typename MapView<_ValueDef>::RowInfo;
     using Super = MapView<_ValueDef>;
 
@@ -270,6 +270,21 @@ public:
         });
         update_revision();
     }
+
+    ///Register new observer
+    /**
+     * @param observer new observer to register (index)
+     * @return id id of observer
+     */
+    std::size_t register_observer(UpdateObserver observer) {
+        return _observers.register_observer(std::move(observer));
+    }
+    ///Unregister observer (by id)
+    void unregister_observer(std::size_t id) {
+        _observers.unregister_observer(id);
+    }
+
+
 
 protected:
     Index &_index;

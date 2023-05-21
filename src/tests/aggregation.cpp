@@ -2,84 +2,79 @@
 #include "../docdb/doc_storage.h"
 #include "../docdb/doc_index.h"
 #include "../docdb/aggregate.h"
+#include "../docdb/stats.h"
 
 #include "memdb.h"
 
-static std::string_view words[] = {
-        "feed",
-        "well",
-        "proud",
-        "represent",
-        "accurate",
-        "recruit",
-        "reservoir",
-        "pity",
-        "sigh",
-        "venus",
-        "review",
-        "wolf",
-        "world",
-        "retired",
-        "bitch",
-        "regular",
-        "stock",
-        "fame",
-        "notorious",
-        "cellar",
-        "forecast",
-        "retire",
-        "clearance",
-        "seal",
-        "comedy",
-        "cylinder",
-        "concentration",
-        "falsify",
-        "exile",
-        "reward"
+static std::pair<std::string_view,int> words[] = {
+        {"feed",56},
+        {"well",73},
+        {"proud",74},
+        {"represent",24},
+        {"accurate",63},
+        {"recruit",8},
+        {"reservoir",74},
+        {"pity",93},
+        {"sigh",46},
+        {"venus",44},
+        {"review",97},
+        {"wolf",82},
+        {"world",9},
+        {"retired",72},
+        {"bitch",48},
+        {"regular",63},
+        {"stock",45},
+        {"fame",50},
+        {"notorious",2},
+        {"cellar",14},
+        {"forecast",77},
+        {"retire",68},
+        {"clearance",73},
+        {"seal",34},
+        {"comedy",3},
+        {"cylinder",43},
+        {"concentration",10},
+        {"falsify",36},
+        {"exile",79},
+        {"reward",99}
 };
+
+decltype(auto) operator<<(std::ostream &out, const docdb::StatData &data) {
+    return (out << "count=" << data.count << ", sum=" << data.sum
+               << ", sum^2=" << data.sum2 << ", min=" << data.min
+               << ", max=" << data.max) << ", avg=" << data.sum/data.count;
+}
 
 void test1() {
 
     auto ramdisk = newRamdisk();
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
-    using Storage = docdb::DocumentStorage<docdb::StringDocument>;
+    using Storage = docdb::DocumentStorage<docdb::BasicRowDocument>;
     using Index = docdb::DocumentIndex<Storage>;
     using SumAndCountAggr = docdb::AggregateIndex<Index, docdb::BasicRowDocument>;
 
     Storage storage(db, "test_storage");
-    Index index(storage, "test_index", 1, [](auto &emit, std::string_view doc){
-        emit({doc.length()},docdb::BasicRow(1));
+    Index index(storage, "test_index", 1, [](auto &emit, const docdb::BasicRowView &doc){
+        auto [text,number] = doc.get<std::string_view, int>();
+        emit({text.length()},docdb::BasicRow(number));
     });
-    SumAndCountAggr aggr(index, "test_aggr", 1, [](auto &emit, const docdb::BasicRowView &key){
-        auto [v] = key.get<std::size_t>();
-        emit({v},{v});
-    },SumAndCountAggr::AggregateFn([](auto &emit, auto &iter){
-        if (iter.next()) {
-            double count = 0;
-            do {
-                auto val = iter.value();
-                auto [n] = val.template get<double>();
-                count = count + n;
-            }while (iter.next());
-            docdb::BasicRow x(count);
-            emit(x);
-        }
-    }));
+    SumAndCountAggr aggr(index, "test_aggr", 1, docdb::KeyIdent(), docdb::Stats());
+
     for (auto c: words) {
-        storage.put(c);
+        storage.put(docdb::BasicRow{c.first,c.second});
     }
 
 
     {
         auto s = aggr.scan();
         while (s.next()) {
-            auto [v] = s.value().get<double>();
+            auto [v] = s.value().get<docdb::StatData>();
             auto [k] = s.key().get<std::size_t>();
             std::cout << k << ": " << v << std::endl;
         }
     }
-    storage.put("aaa");
+    storage.put(docdb::BasicRow{"aaa",2});
     auto g = index.lookup(docdb::BasicRow(std::size_t(13)));
     while (g.next()) {
         storage.erase(g.id());
@@ -87,7 +82,7 @@ void test1() {
     {
         auto s = aggr.scan();
         while (s.next()) {
-            auto [v] = s.value().get<double>();
+            auto [v] = s.value().get<docdb::StatData>();
             auto [k] = s.key().get<std::size_t>();
             std::cout << k << ": " << v << std::endl;
         }
