@@ -206,20 +206,23 @@ public:
 
 
     DocID put(const DocType &doc, DocID prev_id = 0) {
-        PendingBatch *batch = new_batch();
-        DocID id = batch->_id;
+        PendingBatch batch;
+        init_batch(batch);
+        DocID id = batch._id;
         try {
-            auto &buffer = batch->_b.get_buffer();
+            auto &buffer = batch._b.get_buffer();
             auto iter = std::back_inserter(buffer);
             BasicRow::serialize_items(iter,prev_id);
             _DocDef::to_binary(doc, iter);
-            batch->_b.Put(RawKey(this->_kid, id), buffer);
-            update_observers(batch->_b, id, &doc, prev_id);
-            batch->_state.store(BatchState::commit, std::memory_order_release);
-            finalize_batch();
+            batch._b.Put(RawKey(this->_kid, id), buffer);
+            update_observers(batch._b, id, &doc, prev_id);
+            batch._state.store(BatchState::commit, std::memory_order_release);
+            finish_batch();
+            batch._state.wait(BatchState::commit);
         } catch (...) {
-            batch->_state.store(BatchState::rollback, std::memory_order_release);
-            finalize_batch();
+            batch._state.store(BatchState::rollback, std::memory_order_release);
+            finish_batch();
+            batch._state.wait(BatchState::rollback);
             throw;
         }
         return id;
@@ -233,19 +236,22 @@ public:
      * @return id of update
      */
     DocID erase(DocID del_id) {
-        PendingBatch *batch = new_batch();
-        DocID id = batch->_id;
+        PendingBatch batch;
+        init_batch(batch);
+        DocID id = batch._id;
         try {
-            auto &buffer = batch->_b.get_buffer();
+            auto &buffer = batch._b.get_buffer();
             auto iter = std::back_inserter(buffer);
             BasicRow::serialize_items(iter,del_id);
-            batch->_b.Put(RawKey(this->_kid,id), {});
-            update_observers(batch->_b, id, nullptr, del_id);
-            batch->_state.store(BatchState::commit, std::memory_order_release);
-            finalize_batch();
+            batch._b.Put(RawKey(this->_kid,id), {});
+            update_observers(batch._b, id, nullptr, del_id);
+            batch._state.store(BatchState::commit, std::memory_order_release);
+            finish_batch();
+            batch._state.wait(BatchState::commit);
         } catch (...) {
-            batch->_state.store(BatchState::rollback, std::memory_order_release);
-            finalize_batch();
+            batch._state.store(BatchState::rollback, std::memory_order_release);
+            finish_batch();
+            batch._state.wait(BatchState::rollback);
             throw;
         }
         return id;
@@ -333,7 +339,8 @@ protected:
     enum class BatchState {
             pending = 0,
             commit,
-            rollback
+            rollback,
+            done
     };
 
     struct PendingBatch {
@@ -346,48 +353,38 @@ protected:
     using PBatch = std::unique_ptr<PendingBatch>;
 
 
-    std::queue<PBatch> _pending, _dropped;
-    ObserverList<UpdateObserver> _observers;
+    std::queue<PendingBatch *> _pending_queue;
 
-    PendingBatch *new_batch() {
+    void init_batch(PendingBatch &batch) {
         std::lock_guard _(_mx);
-        PBatch b;
-        if (!_dropped.empty()) {
-            b = std::move(_dropped.front());
-            _dropped.pop();
-        } else {
-            b = std::make_unique<PendingBatch>();
-        }
-        b->_id = _next_id;
+        batch._id = _next_id;
+        batch._state.store(BatchState::pending, std::memory_order_relaxed);
         ++_next_id;
-        PendingBatch *ret = b.get();
-        _pending.push(std::move(b));
-        return ret;
+        _pending_queue.push(&batch);
     }
-
-    void finalize_batch() {
+    void finish_batch() {
         std::lock_guard _(_mx);
-        bool cont = true;
-        while (!_pending.empty() && cont) {
-            const PBatch &b = _pending.front();
-            BatchState state = b->_state.exchange(BatchState::pending, std::memory_order_acquire);
-            switch (state) {
+        while (!_pending_queue.empty()) {
+            PendingBatch *p = _pending_queue.front();
+            switch (p->_state) {
                 case BatchState::commit:
-                    this->_db->commit_batch(b->_b);
-                    _dropped.push(std::move(_pending.front()));
-                    _pending.pop();
+                    this->_db->commit_batch(p->_b);
+                    p->_state.store(BatchState::done, std::memory_order_relaxed);
+                    p->_state.notify_all();
                     break;
                 case BatchState::rollback:
-                    b->_b.Clear();
-                    _dropped.push(std::move(_pending.front()));
-                    _pending.pop();
+                    p->_state.store(BatchState::done, std::memory_order_relaxed);
+                    p->_state.notify_all();
                     break;
                 default:
-                    cont = false;
-                    break;
+                    return;
             }
+            _pending_queue.pop();
         }
     }
+
+
+    ObserverList<UpdateObserver> _observers;
 
     template<typename Fn>
     bool update_for(Fn &&fn, Batch &b, DocID id, const DocType *doc, DocID prev_id) {
