@@ -313,7 +313,8 @@ public:
 
 ///Defines document type, which is stored as BasicRow;
 struct BasicRowDocument {
-    using Type = BasicRowBasicView<std::string_view>;
+    using Type = BasicRowView;
+    using ConstructType = BasicRow;
     template<typename Iter>
     static void to_binary(const Type &src, Iter insert) {
         std::copy(src.begin(), src.end(), insert);

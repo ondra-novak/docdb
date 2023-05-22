@@ -31,8 +31,8 @@ public:
             ,_batch(batch)
             ,_kid(kid),_deleting(deleting) {}
 
-        void operator()(Key &k, const ValueType &v) {put(k,v);}
-        void operator()(Key &&k, const ValueType &v) {put(k,v);}
+        void operator()(Key &k, const DocConstructType_t<_ValueDef> &v) {put(k,v);}
+        void operator()(Key &&k, const DocConstructType_t<_ValueDef> &v) {put(k,v);}
         operator bool() const {return !_deleting;}
 
     protected:

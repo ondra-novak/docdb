@@ -73,6 +73,24 @@ template<typename T>
 CXX20_CONCEPT(DocumentWrapper, std::is_constructible_v<T, decltype([](std::string &)->bool{})>);
 
 
+template<typename T>
+CXX20_CONCEPT(DocumentDefHasConstructType, requires {
+    typename T::ConstructType;
+});
+
+template<typename T, bool>
+struct DocConstructType {
+    using Type = typename T::Type;
+};
+
+template<typename T>
+struct DocConstructType<T,true> {
+    using Type = typename T::ConstructType;
+};
+
+template<typename T>
+using DocConstructType_t = typename DocConstructType<T, DocumentDefHasConstructType<T> >::Type;
+
 }
 
 

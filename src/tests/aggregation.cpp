@@ -57,12 +57,12 @@ void test1() {
     Storage storage(db, "test_storage");
     Index index(storage, "test_index", 1, [](auto &emit, const docdb::BasicRowView &doc){
         auto [text,number] = doc.get<std::string_view, int>();
-        emit({text.length()},docdb::BasicRow(number));
+        emit({text.length()},{number});
     });
     SumAndCountAggr aggr(index, "test_aggr", 1, docdb::KeyIdent(), docdb::Stats());
 
     for (auto c: words) {
-        storage.put(docdb::BasicRow{c.first,c.second});
+        storage.put({c.first,c.second});
     }
 
 

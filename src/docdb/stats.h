@@ -105,6 +105,37 @@ struct Stats {
     }
 };
 
+struct StatsOfStats {
+    template<typename Emit, typename Iter>
+    void operator()(Emit &emit, Iter &iter) {
+        if (iter.next()) {
+            Buffer<StatData,8> numbers;
+            do {
+                BasicRowView rw = iter.value();
+                int p = 0;
+                while (!rw.empty()) {
+                    auto [v,c] = rw.get<StatData, Blob>();
+                    if (p >= numbers.size()) {
+                        numbers.push_back(v);
+                    } else {
+                        StatData &d = numbers[p];
+                        d.count += v.count;
+                        d.max = std::max(d.max, v.max);
+                        d.min = std::max(d.min, v.min);
+                        d.sum += v.sum;
+                        d.sum2 += v.sum2;
+                    }
+                    rw = c;
+                    ++p;
+                }
+            } while (iter.next());
+            BasicRow out;
+            for (StatData x: numbers) out.append(x);
+            emit(out);
+        }
+    }
+};
+
 struct KeyIdent {
     template<typename Emit>
     void operator()(Emit &emit, const BasicRowView &key) {

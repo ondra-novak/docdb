@@ -201,7 +201,7 @@ public:
     using Update = typename _DocStorage::Update;
 
     ///Observes changes of keys in the index;
-    using UpdateObserver = std::function<bool(Batch &b, const BasicRowView  &)>;
+    using UpdateObserver = SimpleFunction<bool, Batch &, const BasicRowView &>;
 
     class Emit {
     public:
@@ -214,8 +214,8 @@ public:
             ,_cur_doc(cur_doc)
             ,_kid(kid),_deleting(deleting) {}
 
-        void operator()(Key &k, const ValueType &v) {put(k,v);}
-        void operator()(Key &&k, const ValueType &v) {put(k,v);}
+        void operator()(Key &k, const DocConstructType_t<_ValueDef> &v) {put(k,v);}
+        void operator()(Key &&k, const DocConstructType_t<_ValueDef> &v) {put(k,v);}
         operator bool() const {return !_deleting;}
 
     protected:
@@ -231,7 +231,7 @@ public:
             }
             std::string_view ks(k);
             ks = ks.substr(sizeof(KeyspaceID), ks.length()-sizeof(KeyspaceID)-sizeof(DocID));
-            _observers.call(_batch, ks);
+            _observers.call(_batch, BasicRowView(ks));
         }
 
         ObserverList<UpdateObserver> &_observers;
@@ -327,7 +327,7 @@ public:
             }
             auto k = iter.raw_key();
             k = k.substr(sizeof(KeyspaceID), k.size() - sizeof(KeyspaceID) - sizeof(DocID));
-            if (!observer(b, k)) break;
+            if (!observer(b, BasicRowView(k))) break;
         }
         this->_db->commit_batch(b);
     }

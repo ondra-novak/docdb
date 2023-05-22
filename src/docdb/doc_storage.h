@@ -195,6 +195,7 @@ public:
     using DocInfo = typename DocumentStorageView<_DocDef>::DocInfo;
     using Iterator = typename DocumentStorageView<_DocDef>::Iterator;
 
+
     DocumentStorage(const PDatabase &db, std::string_view name)
         :DocumentStorageView<_DocDef>(db, name)
         ,_next_id(DocumentStorageView<_DocDef>::get_last_document_id()+1)
@@ -205,27 +206,8 @@ public:
          {}
 
 
-    DocID put(const DocType &doc, DocID prev_id = 0) {
-        PendingBatch batch;
-        init_batch(batch);
-        DocID id = batch._id;
-        try {
-            auto &buffer = batch._b.get_buffer();
-            auto iter = std::back_inserter(buffer);
-            BasicRow::serialize_items(iter,prev_id);
-            _DocDef::to_binary(doc, iter);
-            batch._b.Put(RawKey(this->_kid, id), buffer);
-            update_observers(batch._b, id, &doc, prev_id);
-            batch._state.store(BatchState::commit, std::memory_order_release);
-            finish_batch();
-            batch._state.wait(BatchState::commit);
-        } catch (...) {
-            batch._state.store(BatchState::rollback, std::memory_order_release);
-            finish_batch();
-            batch._state.wait(BatchState::rollback);
-            throw;
-        }
-        return id;
+    DocID put(const DocConstructType_t<_DocDef> &doc, DocID prev_id = 0) {
+        return put2(doc, prev_id);
     }
 
     ///Delete specified ID
@@ -331,6 +313,29 @@ public:
 
 protected:
 
+
+    DocID put2(const DocType &docview, DocID prev_id = 0) {
+        PendingBatch batch;
+        init_batch(batch);
+        DocID id = batch._id;
+        try {
+            auto &buffer = batch._b.get_buffer();
+            auto iter = std::back_inserter(buffer);
+            BasicRow::serialize_items(iter,prev_id);
+            _DocDef::to_binary(docview, iter);
+            batch._b.Put(RawKey(this->_kid, id), buffer);
+            update_observers(batch._b, id, &docview, prev_id);
+            batch._state.store(BatchState::commit, std::memory_order_release);
+            finish_batch();
+            batch._state.wait(BatchState::commit);
+        } catch (...) {
+            batch._state.store(BatchState::rollback, std::memory_order_release);
+            finish_batch();
+            batch._state.wait(BatchState::rollback);
+            throw;
+        }
+        return id;
+    }
 
 
     DocID _next_id;

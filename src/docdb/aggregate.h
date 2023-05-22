@@ -101,7 +101,7 @@ public:
             std::uint32_t rev = static_cast<std::uint32_t>(_batch.get_revision());
             RawKey ak = Database::get_private_area_key(_kid, rev, aggr_key);
             _batch.Put(ak, search_key);
-            _observers.call(_batch, aggr_key);
+            _observers.call(_batch, BasicRowView(aggr_key));
         }
 
         ObserverList<UpdateObserver> &_observers;
@@ -264,9 +264,7 @@ public:
     void reindex() {
         this->_db->clear_table(this->_kid, false);
         this->_db->clear_table(this->_kid, true);
-        this->_index.rescan_for([&](Batch &b, const BasicRowView &key){
-            return _indexer(b, key);
-        });
+        this->_index.rescan_for(_aggregator->create_observer());
         update_revision();
     }
 
@@ -286,11 +284,19 @@ public:
 
 
 protected:
+    using IndexObserver = typename Index::UpdateObserver;
+    class Aggregator {
+    public:
+        virtual IndexObserver create_observer() = 0;
+        virtual ~Aggregator() = default;
+    };
+
     Index &_index;
     AggregateFn _aggr_fn;
     int _rev;
     std::size_t observer_id = 0;
-    typename Index::UpdateObserver _indexer;
+    std::unique_ptr<Aggregator> _aggregator;
+    //typename Index::UpdateObserver _indexer;
     ObserverList<UpdateObserver> _observers;
     std::atomic<bool> _change = true;
     std::mutex _mx;
@@ -315,17 +321,30 @@ protected:
     using Hook = typename Batch::Hook;
 
     template<typename Fn>
-    void connect_indexer(Fn &&fn) {
-        _indexer = [this, fn = std::move(fn)](Batch &b, const BasicRowView &key){
-            KeyEmit emit(_observers, b, this->_kid, this->_index.get_kid());
-            fn(emit, key);
-            b.add_hook(Hook::member_fn<&AggregateIndex<Index,_ValueDef>::set_flag>(this));
-            return true;
-        };
-        observer_id = this->_index.register_observer([&](Batch &b, const BasicRowView &key){
-           return _indexer(b, key);
-        });
+    class Aggregator_Fn: public Aggregator {
+    public:
+        Aggregator_Fn(AggregateIndex &owner, Fn &&fn):_owner(owner),_fn(std::forward<Fn>(fn)) {}
 
+        bool run(Batch &b, const BasicRowView &key) {
+            KeyEmit emit(_owner._observers, b, _owner._kid, _owner._index.get_kid());
+            _fn(emit, key);
+            b.add_hook(Hook::member_fn<&AggregateIndex::set_flag>(&_owner));
+            return true;
+        }
+        virtual IndexObserver create_observer() override {
+            return IndexObserver::template member_fn<&Aggregator_Fn::run>(this);
+        }
+
+    protected:
+        AggregateIndex &_owner;
+        Fn _fn;
+    };
+
+
+    template<typename Fn>
+    void connect_indexer(Fn &&fn) {
+        _aggregator = std::make_unique<Aggregator_Fn<Fn> >(*this, std::forward<Fn>(fn));
+        observer_id = this->_index.register_observer(_aggregator->create_observer());
     }
 
 

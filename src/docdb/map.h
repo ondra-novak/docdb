@@ -118,7 +118,7 @@ public:
     }
 
     ///Observes changes of keys in the index;
-    using UpdateObserver = std::function<bool(Batch &b, const BasicRowView  &)>;
+    using UpdateObserver = SimpleFunction<bool, Batch &, const BasicRowView &>;
 
     void rescan_for(const UpdateObserver &observer) {
 
