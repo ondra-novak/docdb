@@ -20,94 +20,6 @@ public:
 
     using ValueType = typename _ValueDef::Type;
 
-    ///Information retrieved from database
-    class RowInfo {
-    public:
-        ///Retrieve the key (it is always in BasicRow format)
-        BasicRowView key() const {return _key;}
-        ///contains true, if row exists (was found)
-        bool exists;
-        ///the value of the row is available (non-null)
-        bool available;
-        ///Retrieve the value (parse the value);
-        ValueType value() const {
-            return _ValueDef::from_binary(_bin_data.data(), _bin_data.data()+_bin_data.size());
-        }
-        ///Converts to document
-        operator ValueType() const {return value();}
-
-        ///Returns true if document is available
-        operator bool() const {return available;}
-
-        ///Returns true if document is available
-        bool operator==(std::nullptr_t) const {return available;}
-
-        ///Returns true if document exists (but can be deleted)
-        bool has_value() const {return exists;}
-
-        DocID id() const {
-            std::string_view r = _key.substr(_key.length()- sizeof(DocID));
-            auto [id] = BasicRowView(r).get<DocID>();
-            return id;
-        }
-
-    protected:
-        std::string_view _key;
-        std::string _bin_data;
-        RowInfo(const PDatabase &db, const PSnapshot &snap, const RawKey &key)
-            :_key(std::string_view(key).substr(sizeof(KeyspaceID))) {
-            exists = db->get(key, _bin_data, snap);
-            available = !_bin_data.empty();
-        }
-        friend class DocumentIndexView;
-
-    };
-
-    DocumentIndexView(_DocStorage &storage, std::string_view name, Direction dir = Direction::forward, const PSnapshot snap = {})
-        :ViewBase(storage.get_db(),name, dir, snap)
-        ,_storage(storage) {}
-
-    DocumentIndexView(_DocStorage &storage, KeyspaceID kid, Direction dir = Direction::forward, const PSnapshot snap = {})
-        :ViewBase(storage.get_db(),kid, dir, snap)
-        ,_storage(storage) {}
-
-    DocumentIndexView make_snapshot() const {
-        if (_snap != nullptr) return *this;
-        return DocumentIndexView(_storage, _kid, _dir, _db->make_snapshot());
-    }
-
-    ///Retrieves exact row
-    /**
-     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
-     * part of the key, otherwise, the function cannot find anything
-     * @return
-     */
-    RowInfo get(Key &key) const {
-        key.change_kid(_kid);
-        return RowInfo(_db, _snap, key);
-    }
-    ///Retrieves exact row
-    /**
-     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
-     * part of the key, otherwise, the function cannot find anything
-     * @return
-     */
-    RowInfo get(Key &&key) const {return get(key);}
-    ///Retrieves exact row
-    /**
-     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
-     * part of the key, otherwise, the function cannot find anything
-     * @return
-     */
-    RowInfo operator[](Key &key) const {return get(key);}
-    ///Retrieves exact row
-    /**
-     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
-     * part of the key, otherwise, the function cannot find anything
-     * @return
-     */
-    RowInfo operator[](Key &&key) const {return get(key);}
-
 
     class Iterator: public GenIterator<_ValueDef> {
     public:
@@ -136,6 +48,52 @@ public:
     protected:
         _DocStorage &_storage;
     };
+
+    DocumentIndexView(_DocStorage &storage, std::string_view name, Direction dir = Direction::forward, const PSnapshot snap = {})
+        :ViewBase(storage.get_db(),name, dir, snap)
+        ,_storage(storage) {}
+
+    DocumentIndexView(_DocStorage &storage, KeyspaceID kid, Direction dir = Direction::forward, const PSnapshot snap = {})
+        :ViewBase(storage.get_db(),kid, dir, snap)
+        ,_storage(storage) {}
+
+    DocumentIndexView make_snapshot() const {
+        if (_snap != nullptr) return *this;
+        return DocumentIndexView(_storage, _kid, _dir, _db->make_snapshot());
+    }
+
+    ///Retrieves exact row
+    /**
+     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
+     * part of the key, otherwise, the function cannot find anything
+     * @return
+     */
+    Document<_ValueDef> get(Key &key) const {
+        key.change_kid(_kid);
+        return _db->get_as_document< Document<_ValueDef> >(key, _snap);
+    }
+    ///Retrieves exact row
+    /**
+     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
+     * part of the key, otherwise, the function cannot find anything
+     * @return
+     */
+    Document<_ValueDef> get(Key &&key) const {return get(key);}
+    ///Retrieves exact row
+    /**
+     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
+     * part of the key, otherwise, the function cannot find anything
+     * @return
+     */
+    Document<_ValueDef> operator[](Key &key) const {return get(key);}
+    ///Retrieves exact row
+    /**
+     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
+     * part of the key, otherwise, the function cannot find anything
+     * @return
+     */
+    Document<_ValueDef> operator[](Key &&key) const {return get(key);}
+
 
 
     ///Lookup for single key

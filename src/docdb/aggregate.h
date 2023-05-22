@@ -80,7 +80,6 @@ public:
     ///Function is using to reduce key
     using TempMap = std::unordered_map<RawKey, ValueType>;
     using UpdateObserver =  typename MapView<_ValueDef>::UpdateObserver;
-    using RowInfo = typename MapView<_ValueDef>::RowInfo;
     using Super = MapView<_ValueDef>;
 
     class KeyEmit {
@@ -213,7 +212,7 @@ public:
      * @param key key to search
      * @return
      */
-    RowInfo get(Key &key) const {
+    auto get(Key &key) const {
         refresh();
         return Super::get(key);
     }
@@ -222,19 +221,19 @@ public:
      * @param key key to search
      * @return
      */
-    RowInfo get(Key &&key) const {return get(key);}
+    auto get(Key &&key) const {return get(key);}
     ///Retrieves exact row
     /**
      * @param key key to search
      * @return
      */
-    RowInfo operator[](Key &key) const {return get(key);}
+    auto operator[](Key &key) const {return get(key);}
     ///Retrieves exact row
     /**
      * @param key key to search
      * @return
      */
-    RowInfo operator[](Key &&key) const {return get(key);}
+    auto operator[](Key &&key) const {return get(key);}
 
 
 

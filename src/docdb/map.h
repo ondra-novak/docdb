@@ -21,43 +21,6 @@ public:
 
     using ValueType = typename _ValueDef::Type;
 
-    ///Information retrieved from database
-    class RowInfo {
-    public:
-        ///Retrieve the key (it is always in BasicRow format)
-        BasicRowView key() const {return _key;}
-        ///contains true, if row exists (was found)
-        bool exists;
-        ///the value of the row is available (non-null)
-        bool available;
-        ///Retrieve the value (parse the value);
-        ValueType value() const {
-            return _ValueDef::from_binary(_bin_data.data(), _bin_data.data()+_bin_data.size());
-        }
-        ///Converts to document
-        operator ValueType() const {return value();}
-
-        ///Returns true if document is available
-        operator bool() const {return available;}
-
-        ///Returns true if document is available
-        bool operator==(std::nullptr_t) const {return available;}
-
-        ///Returns true if document exists (but can be deleted)
-        bool has_value() const {return exists;}
-
-    protected:
-        std::string_view _key;
-        std::string _bin_data;
-        RowInfo(const PDatabase &db, const PSnapshot &snap, const RawKey &key)
-            :_key(std::string_view(key).substr(sizeof(KeyspaceID))) {
-            exists = db->get(key, _bin_data, snap);
-            available = !_bin_data.empty();
-        }
-        friend class MapView;
-
-    };
-
 
     MapView make_snapshot() const {
         if (_snap != nullptr) return *this;
@@ -69,28 +32,28 @@ public:
      * @param key key to search
      * @return
      */
-    RowInfo get(Key &key) const {
+    Document<_ValueDef> get(Key &key) const {
         key.change_kid(_kid);
-        return RowInfo(_db, _snap, key);
+        return _db->get_as_document< Document<_ValueDef> >(key, _snap);
     }
     ///Retrieves exact row
     /**
      * @param key key to search
      * @return
      */
-    RowInfo get(Key &&key) const {return get(key);}
+    Document<_ValueDef> get(Key &&key) const {return get(key);}
     ///Retrieves exact row
     /**
      * @param key key to search
      * @return
      */
-    RowInfo operator[](Key &key) const {return get(key);}
+    Document<_ValueDef> operator[](Key &key) const {return get(key);}
     ///Retrieves exact row
     /**
      * @param key key to search
      * @return
      */
-    RowInfo operator[](Key &&key) const {return get(key);}
+    Document<_ValueDef> operator[](Key &&key) const {return get(key);}
 
 
     using Iterator = GenIterator<_ValueDef>;

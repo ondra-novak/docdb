@@ -68,9 +68,10 @@ void test1() {
             CHECK(!iter.next());
         }
         {
-            auto lk = index.get({"world",std::size_t(2)});
+            typename Storage::DocID id = 2;
+            auto lk = index.get({"world",2});
             CHECK(lk);
-            auto docref = storage[lk.id()];
+            auto docref = storage[id];
             CHECK_EQUAL(*docref, "world");
         }
 

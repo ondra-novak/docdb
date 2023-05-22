@@ -125,7 +125,7 @@ public:
  * @tparam Buffer type of buffer
  */
 template<DocumentDef _ValueDef, typename Buffer = std::string>
-class Value {
+class Document {
 public:
 
     using ValueType = typename _ValueDef::Type;
@@ -139,15 +139,15 @@ public:
      */
     template<typename Rtv>
     CXX20_REQUIRES(std::same_as<decltype(std::declval<Rtv>()(std::declval<Buffer &>())), bool>)
-    Value(Rtv &&rt) {
+    Document(Rtv &&rt) {
         _found = rt(_buff);
     }
 
     ///Creates empty value
-    Value():_found(false) {}
+    Document():_found(false) {}
 
     ///Serializes document into buffer
-    Value(const ValueType &val):_found(true) {
+    Document(const ValueType &val):_found(true) {
         _ValueDef::to_binary(val, std::back_inserter(_buff));
     }
 
@@ -160,12 +160,15 @@ public:
         return _found;
     }
 
+    operator bool() const {return has_value();}
+
     const Buffer &get_serialized() const {return _buff;}
 
 protected:
     bool _found;
     Buffer _buff;
 };
+
 
 
 }

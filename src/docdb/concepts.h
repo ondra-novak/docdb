@@ -60,6 +60,19 @@ CXX20_CONCEPT(IsTuple, requires {
   typename std::tuple_element<0, T>::type;
 });
 
+///DocumentWrapper
+/**
+ * Object responsible to store document and keep its binary data. There is
+ * one class which has these requirements : Document<DocumentDef>. The class
+ * must have a constructor, which accepts function which accepts std::string reference and
+ * returns boolean. The string value is filled with binary data, and return value is
+ * true when operation succeed or false if failed (so content of buffer is invalid)
+ * @tparam T
+ */
+template<typename T>
+CXX20_CONCEPT(DocumentWrapper, std::is_constructible_v<T, decltype([](std::string &)->bool{})>);
+
+
 }
 
 

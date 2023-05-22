@@ -238,8 +238,8 @@ public:
     }
 
 
-    template<DocumentDef _ValueDef>
-    Value<_ValueDef> get(std::string_view key, const PSnapshot &snap = {}) {
+    template<DocumentWrapper Document>
+    Document get_as_document(std::string_view key, const PSnapshot &snap = {}) {
         return [&](std::string &buff) {
            return get(key, buff, snap);
         };
