@@ -5,6 +5,7 @@
 #include "buffer.h"
 #include "serialize.h"
 #include <variant>
+#include <ieee754.h>
 
 namespace docdb {
 
@@ -15,7 +16,17 @@ public:
     RowView(const std::string_view &x):std::string_view(x) {}
 };
 
-using RowBuffer = Buffer<char, 32>;
+using RowBuffer = Buffer<char, 64>;
+
+template<typename T>
+struct ConstructVariantHelper {
+
+    template<int index>
+    struct DoIt{
+        static constexpr int val = index;
+    };
+};
+
 
 class Row {
 public:
@@ -39,6 +50,103 @@ public:
         }, _data);
     }
 
+    ///Retrieve internal mutable buffer
+    /**
+     * This function works also in read-only mode. In this case,
+     * it replaces content with mutable copy
+     *
+     * @return mutable buffer
+     */
+    RowBuffer &mutable_buffer() {
+        if (!std::holds_alternative<RowBuffer>(_data)) {
+            std::string_view s = (*this);
+            _data = RowBuffer(s);
+        }
+        RowBuffer &v = std::get<RowBuffer>(_data);
+        return v;
+
+    }
+
+    ///Retrieve mutable pointer
+    /**
+     * Mutable pointer allows to modify content of internal buffer.
+     * This function works, even if the row is in readonly mode. In
+     * this case, it switches the read-write mode (copies the content)
+     * @return mutable pointer
+     */
+    char *mutable_ptr() {
+        return mutable_buffer().data();
+    }
+
+    ///Retrieve size of internal buffer
+    std::size_t size() const {
+        return std::visit([](const auto &x){return x.size();},_data);
+    }
+
+    ///Determines, whether internal buffer is empty
+    bool empty() const {
+        return std::visit([](const auto &x){return x.empty();},_data);
+    }
+
+    ///Clears content and switches to read-write mode
+    void clear() {
+        if (!std::holds_alternative<RowBuffer>(_data)) {
+            _data = RowBuffer();
+        } else {
+            std::get<RowBuffer>(_data).clear();
+        }
+    }
+
+    ///Is view?
+    /**
+     * @retval true current value is view of other row, or string. It means
+     * that row actually refers some outside buffer. To detach
+     * from the buffer, call mutable_buffer() or clear();
+     * @retval false current value is not view
+     *
+     */
+    bool is_view() const {
+        return std::holds_alternative<RowView>(_data);
+    }
+
+    /**
+     * @retval true current value is mutable
+     * @retval false current value is views
+     */
+    bool is_mutable() const {
+        return std::holds_alternative<RowBuffer>(_data);
+    }
+
+    ///Resize the buffer
+    /**
+     * @param sz new size. If the size is larger than current size,
+     * the Row will be switched to read-write mode;
+     * @param init initialization value
+     */
+    void resize(std::size_t sz, char init = 0) {
+        if (std::holds_alternative<RowView>(_data)) {
+            RowView &view = std::get<RowView>(_data);
+            if (sz < view.size()) {
+                _data = RowView({view.data(), sz});
+            } else {
+                RowBuffer &newbuf = mutable_buffer();
+                newbuf.resize(sz,init);
+            }
+        } else if (std::holds_alternative<RowBuffer>(_data)) {
+            RowBuffer &buff = std::get<RowBuffer>(_data);
+            buff.resize(sz, init);
+        }
+    }
+
+    auto begin() const {
+        return std::visit([](const auto &x){return x.begin();}, _data);
+    }
+    auto end() const {
+        return std::visit([](const auto &x){return x.end();}, _data);
+    }
+    RowView view() const {
+        return RowView(*this);
+    }
 
     ///Serialize items into binary container
     /**
@@ -53,10 +161,20 @@ public:
             iter = std::apply([&](const auto & ... args){
                 return serialize_items(iter, args...);
             }, val);
-        }
-        else if constexpr(std::is_same_v<bool, X>) {
+        } else if constexpr(IsVariant<X>) {
+            *iter++ = static_cast<std::uint8_t>(val.index());
+            iter = std::visit([&](const auto &v){
+                return serialize_items(iter, v);
+            },val);
+        } else if constexpr(std::is_null_pointer_v<X> || std::is_same_v<X, std::monostate>) {
+            //empty;
+        } else if constexpr(std::is_same_v<X, Row> || std::is_same_v<X, RowView> || std::is_base_of_v<Blob, X>) {
+            iter = std::copy(val.begin(), val.end(), iter);
+        } else if constexpr(std::is_same_v<bool, X>) {
             *iter++ = val?static_cast<char>(1):static_cast<char>(0);
-        } else if constexpr(std::is_unsigned_v<X>) {
+        } else if constexpr(std::is_enum_v<X>) {
+            *iter++ = static_cast<std::uint8_t>(val);
+        } else if constexpr(std::is_unsigned_v<X> || std::is_same_v<X, wchar_t>) {
             X v = val;
             for (std::size_t i = 0; i < sizeof(X); i++) {
                 int shift = 8*(sizeof(X)-i-1);
@@ -64,13 +182,21 @@ public:
             }
         } else if constexpr(std::is_convertible_v<X, double>) {
             double d = val;
-            BinHelper<double> hlp{-d};
-            iter  = std::copy(std::begin(hlp.bin), std::end(hlp.bin), iter);
+            ieee754_double hlp{d};
+            std::uint64_t bin_val = (std::uint64_t(hlp.ieee.negative) << 63)
+                    | (std::uint64_t(hlp.ieee.exponent) << 52)
+                    | (std::uint64_t(hlp.ieee.mantissa0) << 32)
+                    | (std::uint64_t(hlp.ieee.mantissa1));
+            std::uint64_t mask = hlp.ieee.negative?~std::uint64_t(0):(std::uint64_t(1)<<63);
+            iter = serialize_items(iter, bin_val ^ mask);
         } else if constexpr(std::is_base_of_v<LocalizedString, X>) {
             auto &f = std::use_facet<std::collate<char> >(val.get_locale());
+            std::string out = f.transform(val.begin(), val.end());
+            iter = serialize_items(iter, out);
+        } else if constexpr(std::is_base_of_v<LocalizedWString, X>) {
+            auto &f = std::use_facet<std::collate<wchar_t> >(val.get_locale());
             auto out = f.transform(val.begin(), val.end());
-            iter  = std::copy(out.begin(), out.end(), iter);
-            *iter++ = '\0';
+            iter = serialize_items(iter, out);
         } else if constexpr(std::is_array_v<std::remove_reference_t<X> >) {
             auto beg = std::begin(val);
             auto end = std::end(val);
@@ -80,18 +206,27 @@ public:
                 std::advance(last, sz-1);
                 if (*last == 0) end = last;
             }
-            iter = std::copy(beg, end, iter);
-            *iter++ = '\0';
+            if constexpr(sizeof(val[0]) == 1) {
+                iter = std::copy(beg, end, iter);
+                *iter++ = '\0';
+            } else {
+                using Type = decltype(val[0]);
+                for (auto i = beg; i != end; ++i) {
+                    iter = serialize_items(iter, *i);
+                }
+                serialize_items(iter, Type{});
+            }
         } else if constexpr(std::is_same_v<std::decay_t<X>, const char *>) {
             const char *c = val;
             do {
                 *iter++ = *c;
             } while (*c++);
-        } else if constexpr(std::is_base_of_v<Blob, X>) {
-            iter = std::copy(val.begin(), val.end(), iter);
         } else if constexpr(std::is_convertible_v<X, std::string_view>) {
             iter = std::copy(std::begin(val), std::end(val), iter);
             *iter++ = '\0';
+        } else if constexpr(std::is_convertible_v<X, std::wstring_view>) {
+            for (auto c: val) iter = serialize_items(iter, c);
+            serialize_items(iter, wchar_t(0));
         } else {
             iter = CustomSerializer<X>::serialize(val, iter);
         }
@@ -138,31 +273,56 @@ public:
              };
              assign_values(std::make_index_sequence<std::tuple_size_v<T> >{});
              return result;
-         }else if constexpr(std::is_same_v<bool, T>) {
+         } else if constexpr(IsVariant<T>) {
+             if (sz == 0) return T();
+             std::uint8_t index = *at++;
+             ByteToIntegralType<ConstructVariantHelper<T>::template DoIt> c;
+             return c.visit([&](auto c){
+                 if constexpr(c.val >= std::variant_size_v<T>) {
+                     throw std::invalid_argument("ROW: Variant index out of range (corrupted row?)");
+                     return T();
+                 } else {
+                     using Type = std::variant_alternative_t<c.val,T>;
+                     return T(deserialize_item<Type>(at, end));
+                 }
+             }, index);
+         } else if constexpr(std::is_null_pointer_v<T> || std::is_same_v<T, std::monostate>) {
+             return T();
+         } else if constexpr(std::is_base_of_v<Blob, T> || std::is_base_of_v<RowView, T>) {
+             T var(at, sz);
+             at = end;
+             return T(var);
+         } else if constexpr(std::is_base_of_v<Row, T>) {
+             auto v = deserialize_item<RowView>(at, end);
+             return T(v);
+         } else if constexpr(std::is_same_v<bool, T>) {
              if (sz == 0) return false;
              bool var = *at != 0;
              ++at;
              return var;
-         } else if constexpr(std::is_unsigned_v<T>) {
+         } else if constexpr(std::is_enum_v<T>) {
+             if (sz == 0) return T();;
+             std::uint8_t x = static_cast<std::uint8_t>(*at);
+             return static_cast<T>(x);
+         } else if constexpr(std::is_unsigned_v<T> || std::is_same_v<T, wchar_t>) {
              T var = 0;
              auto cnt = std::min<std::size_t>(sizeof(T), sz);
              for (std::size_t i = 0; i < cnt; i++) {
-                 var = (var << 8) | (at[i]);
+                 var = (var << 8) | std::uint8_t(*at);
+                 ++at;
              }
-             at+=cnt;
              return var;
          } else if constexpr(std::is_convertible_v<double,T>) {
-             BinHelper<double> hlp;
-             double var = 0;
-             if (sz < sizeof(hlp)) return 0;
-             for (std::size_t i = 0; i < sizeof(hlp); i++) hlp.bin[i] = at[i];
-             var = T(-hlp.val);
-             at += sizeof(hlp);
-             return T(var);
-         } else if constexpr(std::is_base_of_v<Blob, T>) {
-             Blob var(at, sz);
-             at = end;
-             return T(var);
+             auto bin_val = deserialize_item<std::uint64_t>(at, end);
+             std::uint64_t mask = (std::uint64_t(1)<<63);
+             auto mask2 = (bin_val & mask) != 0?mask:~std::uint64_t(0);;
+             bin_val ^= mask2;
+             ieee754_double hlp;
+             hlp.ieee.negative = (bin_val & mask)?1:0;
+             hlp.ieee.exponent = bin_val >> 52;
+             hlp.ieee.mantissa0 = bin_val >> 32;
+             hlp.ieee.mantissa1 = bin_val;;
+             return T(hlp.d);
          } else if constexpr(std::is_same_v<const char *, T>) {
              const char *x = at;
              while (x != end && *x) ++x;
@@ -181,6 +341,14 @@ public:
              std::string var(at, x-at);
              at = x+1;
              return T(var);
+         } else if constexpr(std::is_convertible_v<std::wstring, T>) {
+             std::wstring out;
+             auto z = deserialize_item<wchar_t>(at, end);
+             while (z) {
+                 out.push_back(z);
+                 z = deserialize_item<wchar_t>(at, end);
+             }
+             return out;
          } else {
              return CustomSerializer<T>::deserialize(at, end);
          }
@@ -214,6 +382,13 @@ public:
          return deserialize_item<Item>(iter, end);
      }
 
+     int operator<(const Row &other) const {return std::string_view(*this) < std::string_view(other);}
+     int operator>(const Row &other) const {return std::string_view(*this) > std::string_view(other);}
+     int operator==(const Row &other) const {return std::string_view(*this) == std::string_view(other);}
+     int operator!=(const Row &other) const {return std::string_view(*this) != std::string_view(other);}
+     int operator<=(const Row &other) const {return std::string_view(*this) <= std::string_view(other);}
+     int operator>=(const Row &other) const {return std::string_view(*this) >= std::string_view(other);}
+
 
 protected:
     auto back_inserter() -> decltype(std::back_inserter(std::declval<RowBuffer &>())) {
@@ -224,6 +399,29 @@ protected:
     }
 
     std::variant<RowBuffer, RowView> _data;
+
+};
+
+
+struct RowDocument {
+    using Type = Row;
+    template<typename Iter>
+    static Row from_binary(Iter beg, Iter end) {
+        if constexpr(std::is_convertible_v<Iter, const char *>) {
+            const char *bptr = beg;
+            const char *eptr = end;
+            return RowView(bptr, eptr-bptr);
+        } else {
+            Row out;
+            auto &buf = out.mutable_buffer();
+            std::copy(beg, end, std::back_inserter(buf));
+            return out;
+        }
+    }
+    template<typename Iter>
+    static auto to_binary(const Row &row, Iter iter) {
+        return std::copy(row.begin(), row.end(), iter);
+    }
 };
 
 

@@ -10,7 +10,43 @@
 
 namespace docdb {
 
-template<DocumentStorageViewType _DocStorage, DocumentDef _ValueDef = BasicRowDocument>
+enum class IndexType {
+    ///unique index
+    /**
+     * Unique index.
+     * It expects, that there is no duplicate keys, but
+     * it cannot enforce this. In case of failure of this rule,
+     * key is overwritten, so old document is dereferenced.
+     *
+     * This index is the simplest and the most efficient
+     */
+    unique,
+    ///Unique index with enforcement
+    /**
+     * Checks, whether keys are really unique. In case of failure of this
+     * rule, the transaction is rejected and exception is thrown
+     *
+     * This index can be slow, because it needs to search the database
+     * for every incoming record
+     */
+    unique_enforced,
+    ///Non-uniuqe, multivalue key
+    /**
+     * Duplicated keys are allowed for different documents (it
+     * is not allowed to have duplicated key in the single document).
+     *
+     * This index type can handle the most cases of use
+     *
+     * This index requires to store document id as last item of the key. This
+     * is handled automatically by the index function. However, because
+     * of this, there can be difficulties with some operations. For example
+     * retrieval function (get) needs whole key and document ID, otherwise
+     * nothing is retrieved. Using a blob as key is undefined behavior.
+     */
+    multi,
+};
+
+template<DocumentStorageViewType _DocStorage, DocumentDef _ValueDef = RowDocument, IndexType index_type = IndexType::multi>
 class DocumentIndexView: public ViewBase {
 public:
 
@@ -30,10 +66,13 @@ public:
 
 
         ///Retrieve associated document's id
-        DocID id() const {
+        /** This operation is defined for IndexType::multi */
+        template<typename ... X>
+        DocID id(X &&...) const {
+            static_assert(index_type == IndexType::multi || defer_false<X...>, "Operation is not defined for this index type");
             std::string_view key = this->raw_key();
-            BasicRowView x = key.substr(key.length()-sizeof(DocID));
-            auto [id] = x.get<DocID>();
+            auto x = key.substr(key.length()-sizeof(DocID));
+            auto [id] = Row::extract<DocID>(x);
             return id;
         }
         ///retrieve associated document
@@ -135,11 +174,10 @@ public:
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
-            TempAppend k1(key);
-            key.append<DocID>(-1);
+            Key pfx = key.prefix_end();
             return Iterator(_storage,_db->make_iterator(false,_snap),{
-                    key,RawKey(_kid),
-                    FirstRecord::included, LastRecord::excluded
+                    pfx,RawKey(_kid),
+                    FirstRecord::excluded, LastRecord::included
             });
         }
     }
@@ -167,22 +205,33 @@ public:
         from.change_kid(_kid);
         to.change_kid(_kid);
         if (from <= to) {
-            TempAppend t1(to);
-            if (last_record == LastRecord::included) to.append<DocID>(-1);
-            return Iterator(_storage,_db->make_iterator(false,_snap),{
-                    from,to,
-                    FirstRecord::included, LastRecord::excluded
-            });
+            if (last_record == LastRecord::included) {
+                Key pfx = from.prefix_end();
+                return Iterator(_storage,_db->make_iterator(false,_snap),{
+                        from,pfx,
+                        FirstRecord::included, LastRecord::excluded
+                });
+            } else {
+                return Iterator(_storage,_db->make_iterator(false,_snap),{
+                        from,to,
+                        FirstRecord::included, LastRecord::excluded
+                });
+            }
 
         } else {
-            TempAppend t1(from);
-            TempAppend t2(to);
-            from.append<DocID>(-1);
-            if (last_record == LastRecord::excluded) to.append<DocID>(-1);
-            return Iterator(_storage,_db->make_iterator(false,_snap),{
-                    from,to,
-                    FirstRecord::included, LastRecord::excluded
-            });
+            Key xfrom = from.prefix_end();
+            if (last_record == LastRecord::included) {
+                return Iterator(_storage,_db->make_iterator(false,_snap),{
+                        xfrom,to,
+                        FirstRecord::excluded, LastRecord::included
+                });
+            } else {
+                Key xto = to.prefix_end();
+                return Iterator(_storage,_db->make_iterator(false,_snap),{
+                        xfrom,xto,
+                        FirstRecord::excluded, LastRecord::included
+                });
+            }
         }
     }
 
@@ -190,8 +239,8 @@ protected:
     _DocStorage &_storage;
 };
 
-template<DocumentStorageType _DocStorage, DocumentDef _ValueDef = BasicRowDocument>
-class DocumentIndex: public DocumentIndexView<_DocStorage, _ValueDef> {
+template<DocumentStorageType _DocStorage, DocumentDef _ValueDef = RowDocument, IndexType index_type = IndexType::multi>
+class DocumentIndex: public DocumentIndexView<_DocStorage, _ValueDef, index_type> {
 public:
 
     using DocType = typename _DocStorage::DocType;
@@ -201,27 +250,28 @@ public:
     using Update = typename _DocStorage::Update;
 
     ///Observes changes of keys in the index;
-    using UpdateObserver = SimpleFunction<bool, Batch &, const BasicRowView &>;
+    using UpdateObserver = SimpleFunction<bool, Batch &, const Key &>;
 
     class Emit {
     public:
-        Emit(ObserverList<UpdateObserver> &observers,
-            Batch &batch,
-            DocID cur_doc,
-            KeyspaceID kid,bool deleting)
-            :_observers(observers)
-            ,_batch(batch)
-            ,_cur_doc(cur_doc)
-            ,_kid(kid),_deleting(deleting) {}
+        Emit(DocumentIndex &owner, Batch &b, DocID cur_doc, bool deleting)
+            :_owner(owner), _batch(b), _cur_doc(cur_doc), _deleting(deleting) {}
 
         void operator()(Key &k, const DocConstructType_t<_ValueDef> &v) {put(k,v);}
         void operator()(Key &&k, const DocConstructType_t<_ValueDef> &v) {put(k,v);}
         operator bool() const {return !_deleting;}
 
     protected:
+        DocumentIndex &_owner;
+        Batch &_batch;
+        DocID _cur_doc;
+        bool _deleting;
+
         void put(Key &k, const ValueType &v) {
-            k.change_kid(_kid);
-            k.append(_cur_doc);
+            k.change_kid(_owner._kid);
+            if constexpr(index_type == IndexType::multi) {
+                k.append(_cur_doc);
+            }
             if (_deleting) {
                 _batch.Delete(k);
             } else {
@@ -229,16 +279,9 @@ public:
                 _ValueDef::to_binary(v, std::back_inserter(buffer));
                 _batch.Put(k, buffer);
             }
-            std::string_view ks(k);
-            ks = ks.substr(sizeof(KeyspaceID), ks.length()-sizeof(KeyspaceID)-sizeof(DocID));
-            _observers.call(_batch, BasicRowView(ks));
+            _owner._observers.call(_batch, Key(RowView(k)));
         }
 
-        ObserverList<UpdateObserver> &_observers;
-        Batch &_batch;
-        DocID _cur_doc;
-        KeyspaceID _kid;
-        bool _deleting;
 
         friend class DocumentIndex;
     };
@@ -249,20 +292,9 @@ public:
         ///Previous document id (if replacing existing one)
         DocID prev_id;
         ///true, if document being deleted
-        bool deleteing;
+        bool deleting;
     };
 
-
-
-
-    class AbstractIndexer {
-    public:
-        virtual void update(Batch &b, const Update &update) = 0;
-        virtual void register_observer(UpdateObserver &&observer) = 0;
-        virtual bool check_revision() = 0;
-        virtual void update_revision() = 0;
-        virtual ~AbstractIndexer() = default;
-    };
 
     ///Register new observer
     /**
@@ -327,7 +359,7 @@ public:
             }
             auto k = iter.raw_key();
             k = k.substr(sizeof(KeyspaceID), k.size() - sizeof(KeyspaceID) - sizeof(DocID));
-            if (!observer(b, BasicRowView(k))) break;
+            if (!observer(b, Key(RowView(k)))) break;
         }
         this->_db->commit_batch(b);
     }
@@ -344,8 +376,8 @@ protected:
 
     int _rev;
     std::size_t observer_id;
-    std::unique_ptr<Indexer> _indexer;
     ObserverList<UpdateObserver> _observers;
+    std::unique_ptr<Indexer> _indexer;
 
 
     template<typename Fn>
@@ -356,20 +388,20 @@ protected:
         bool run(Batch &b, const Update &update) {
             if constexpr(std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>) {
                 if (update.old_doc) {
-                    Emit emt(_owner._observers, b, update.old_doc_id, _owner._kid, true);
+                    Emit emt(_owner, b, update.old_doc_id, true);
                     _fn(emt, *update.old_doc, {update.old_doc_id, update.old_old_doc_id, true});
                 }
                 if (update.new_doc) {
-                    Emit emt(_owner._observers, b, update.new_doc_id, _owner._kid, false);
+                    Emit emt(_owner, b, update.new_doc_id, false);
                     _fn(emt, *update.new_doc, {update.new_doc_id, update.old_doc_id, false});
                 }
             } else {
                 if (update.old_doc) {
-                    Emit emt(_owner._observers, b, update.old_doc_id, _owner._kid, true);
+                    Emit emt(_owner, b, update.old_doc_id, true);
                     _fn(emt, *update.old_doc);
                 }
                 if (update.new_doc) {
-                    Emit emt(_owner._observers, b, update.new_doc_id, _owner._kid, false);
+                    Emit emt(_owner, b, update.new_doc_id, false);
                     _fn(emt, *update.new_doc);
                 }
             }
@@ -391,15 +423,17 @@ protected:
     }
 
     bool check_revision() {
-        std::string v;
-        if (!this->_db->get(RawKey(this->_kid), v)) return false;
-        BasicRowView row(v);
-        auto [cur_rev] = row.get<int>();
-        return (cur_rev == _rev);
+        auto d=this->_db->template get_as_document<Document<RowDocument> >(
+                                   Database::get_private_area_key(this->_kid));
+        if (d) {
+             auto [cur_rev] = (*d).template get<int>();
+             return (cur_rev == _rev);
+        }
+        return false;
     }
     void update_revision() {
         Batch b;
-        b.Put(RawKey(this->_kid), BasicRow(_rev));
+        b.Put(Database::get_private_area_key(this->_kid), Row(_rev));
         this->_db->commit_batch(b);
     }
 

@@ -50,16 +50,16 @@ void test1() {
     auto ramdisk = newRamdisk();
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
-    using Storage = docdb::DocumentStorage<docdb::BasicRowDocument>;
+    using Storage = docdb::DocumentStorage<docdb::RowDocument>;
     using Index = docdb::DocumentIndex<Storage>;
-    using SumAndCountAggr = docdb::AggregateIndex<Index, docdb::BasicRowDocument>;
+    using SumAndCountAggr = docdb::AggregateIndex<Index, docdb::RowDocument>;
 
     Storage storage(db, "test_storage");
-    Index index(storage, "test_index", 1, [](auto &emit, const docdb::BasicRowView &doc){
+    Index index(storage, "test_index", 1, [](auto &emit, const docdb::Row &doc){
         auto [text,number] = doc.get<std::string_view, int>();
         emit({text.length()},{number});
     });
-    SumAndCountAggr aggr(index, "test_aggr", 1, docdb::KeyIdent(), docdb::Stats());
+    SumAndCountAggr aggr(index, "test_aggr", 1, docdb::KeyReduce<std::size_t>(), docdb::Stats());
 
     for (auto c: words) {
         storage.put({c.first,c.second});
@@ -74,8 +74,8 @@ void test1() {
             std::cout << k << ": " << v << std::endl;
         }
     }
-    storage.put(docdb::BasicRow{"aaa",2});
-    auto g = index.lookup(docdb::BasicRow(std::size_t(13)));
+    storage.put(docdb::Row{"aaa",2});
+    auto g = index.lookup(13);
     while (g.next()) {
         storage.erase(g.id());
     }

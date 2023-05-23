@@ -11,18 +11,19 @@ void test1() {
     auto ramdisk = newRamdisk();
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
-    using Storage = docdb::DocumentStorage<docdb::BasicRowDocument>;
+    using Storage = docdb::DocumentStorage<docdb::RowDocument>;
     using Index = docdb::DocumentIndex<Storage>;
 
     Storage storage(db, "test_storage");
-    Index index(storage, "test_index", 1, [](Index::Emit &emit, const docdb::BasicRowView &doc) {
+    Index index(storage, "test_index", 1, [](Index::Emit &emit, const docdb::Row &doc, const Index::DocMetadata &mt) {
+        CHECK(!mt.deleting || doc.is_view());
         auto [txt] = doc.get<std::string_view>();
-        emit({txt},docdb::BasicRow{txt.length()});
+        emit({txt},{txt.length()});
     });
 
-    Index index2(storage, "test_index_2", 1, [](Index::Emit &emit, const docdb::BasicRowView &doc) {
+    Index index2(storage, "test_index_2", 1, [](Index::Emit &emit, const docdb::Row &doc) {
         auto [txt] = doc.get<std::string_view>();
-        emit({txt.length()},docdb::BasicRow{txt});
+        emit({txt.length()},{txt});
     });
 
     Storage::DocID d1,d2,d3,d4;
@@ -44,7 +45,8 @@ void test1() {
             while (iter.next()) {
                 CHECK_EQUAL(iter.id(), 2);
                 auto docref = iter.doc();
-                CHECK_EQUAL(*docref, "world");
+                auto [txt] = docref->get<std::string_view>();
+                CHECK_EQUAL(txt, "world");
                 fnd++;
             }
             CHECK_EQUAL(fnd,1);
@@ -57,22 +59,25 @@ void test1() {
             {
                 CHECK_EQUAL(iter.id(),3);
                 auto docref = iter.doc();
-                CHECK_EQUAL(*docref, "bar");
+                auto [txt] = docref->get<std::string_view>();
+                CHECK_EQUAL(txt, "bar");
             }
             CHECK(iter.next());
             {
                 CHECK_EQUAL(iter.id(),4);
                 auto docref = iter.doc();
-                CHECK_EQUAL(*docref, "foo");
+                auto [txt] = docref->get<std::string_view>();
+                CHECK_EQUAL(txt, "foo");
             }
             CHECK(!iter.next());
         }
         {
             typename Storage::DocID id = 2;
-            auto lk = index.get({"world",2});
+            auto lk = index.get({"world",id});
             CHECK(lk);
             auto docref = storage[id];
-            CHECK_EQUAL(*docref, "world");
+            auto [txt] = docref->get<std::string_view>();
+            CHECK_EQUAL(txt, "world");
         }
 
 }

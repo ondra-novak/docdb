@@ -17,7 +17,7 @@ using DocID = std::uint64_t;
 /**
  * @tparam _DocDef Document type definition (and traits)
  */
-template<DocumentDef _DocDef>
+template<DocumentDef _DocDef = RowDocument>
 class DocumentStorageView: public ViewBase {
 public:
 
@@ -39,58 +39,35 @@ public:
     using DocType = typename _DocDef::Type;
     using DocID = ::docdb::DocID;;
 
-    ///Information retrieved from database
-    class DocInfo {
+    class DocInfo: public Document<_DocDef, std::string_view> {
     public:
-        ///document id
-        DocID id;
-        ///id of previous document, which was replaced by this document (or zero)
-        DocID prev_id;
-        ///contains true, if document exists, or false if not found (bin_data are empty)
-        bool exists;
-        ///document has been deleted (previous document contans latests version)
-        bool deleted;
-        ///document is available and can be parsed (!exists && !deleted)
-        bool available;
-        ///Parse binary data and returns parsed document
-        DocType doc() const {
-            std::string_view part(bin_data);
-            part = part.substr(sizeof(DocID));
-            return _DocDef::from_binary(part.begin(),part.end());
+        using Document<_DocDef, std::string_view>::Document;
+
+        template<typename Rtv>
+        CXX20_REQUIRES(std::same_as<decltype(std::declval<Rtv>()(std::declval<std::string &>())), bool>)
+        DocInfo(Rtv &&fn) {
+            this->_found = fn(_s);
+            if (this->_found) {
+                auto [p,d] = Row::extract<DocID, Blob>(_s);
+                this->_buff = d;
+                _prev_id = p;
+            }
         }
 
-        ///Converts to document
-        DocType operator *() const {return doc();}
+        bool deleted() const {return this->_buff.empty();}
 
-        ///Returns true if document is available
-        operator bool() const {return available;}
-
-        ///Returns true if document is available
-        bool operator==(std::nullptr_t) const {return available;}
-
-        ///Returns true if document exists (but can be deleted)
-        bool has_value() const {return exists;}
+        DocID prev_id() const {return _prev_id;}
 
     protected:
-        ///document's binary data
-        std::string bin_data;
-
-        DocInfo(const PDatabase &db, const PSnapshot &snap, const std::string_view &key, DocID id)
-            :id(id),prev_id(0),deleted(false) {
-            exists = db->get(key, bin_data, snap);
-            auto [docid, remain] = BasicRow::extract<DocID, Blob>(bin_data);
-            prev_id = docid;
-            deleted = remain.empty();
-            available = !exists && !deleted;
-        }
-
-        friend class DocumentStorageView;
-
+        DocID _prev_id;
+        std::string _s;
     };
+
+
 
     ///Retrieve document under given id
     DocInfo get(DocID id) const {
-        return DocInfo(_db,_snap, RawKey(_kid,id), id);
+        return _db->get_as_document<DocInfo>(RawKey(_kid,id),this->_snap);
     }
 
     ///Operator[]
@@ -107,7 +84,7 @@ public:
             return _DocDef::from_binary(beg, end);
         }
         template<typename Iter>
-        static void to_binary(const Type &, Iter );
+        static Iter to_binary(const Type &, Iter x) {return x;}
     };
 
     ///Iterator
@@ -117,13 +94,15 @@ public:
 
         ///Retrieve document id
         DocID id() const {
-            auto [id] = this->key().template get<DocID>();
+            Key k = this->key();
+            auto [id] = k.get<DocID>();
             return id;
         }
 
         ///retrieve id of replaced document
         DocID prev_id() const {
-            auto [id] = BasicRow::extract<DocID>(this->raw_value());
+
+            auto [id] = Row::extract<DocID>(this->raw_value());
             return id;
         }
 
@@ -224,7 +203,7 @@ public:
         try {
             auto &buffer = batch._b.get_buffer();
             auto iter = std::back_inserter(buffer);
-            BasicRow::serialize_items(iter,del_id);
+            Row::serialize_items(iter,del_id);
             batch._b.Put(RawKey(this->_kid,id), {});
             update_observers(batch._b, id, nullptr, del_id);
             batch._state.store(BatchState::commit, std::memory_order_release);
@@ -321,7 +300,7 @@ protected:
         try {
             auto &buffer = batch._b.get_buffer();
             auto iter = std::back_inserter(buffer);
-            BasicRow::serialize_items(iter,prev_id);
+            Row::serialize_items(iter,prev_id);
             _DocDef::to_binary(docview, iter);
             batch._b.Put(RawKey(this->_kid, id), buffer);
             update_observers(batch._b, id, &docview, prev_id);
@@ -395,12 +374,12 @@ protected:
     bool update_for(Fn &&fn, Batch &b, DocID id, const DocType *doc, DocID prev_id) {
         if (prev_id) {
             DocInfo d = this->get(prev_id);
-            if (d.exists && !d.deleted) {
-                DocType old_doc = d.doc();
+            if (d.has_value() && !d.deleted()) {
+                DocType old_doc = *d;
                 return fn(b, Update{
                     &old_doc,
                     doc,
-                    d.prev_id,
+                    d.prev_id(),
                     prev_id,
                     id
                 });

@@ -8,7 +8,7 @@ void test1() {
     auto ramdisk = newRamdisk();
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
-    using Storage = docdb::DocumentStorage<docdb::BasicRowDocument>;
+    using Storage = docdb::DocumentStorage<docdb::StringDocument>;
     {
         Storage storage(db, "test_storage");
 
@@ -40,7 +40,7 @@ void test1() {
         d = storage.get(d3_new);
         CHECK(d.has_value());
         CHECK_EQUAL(*d,"baz");
-        CHECK_EQUAL(d.prev_id,d3);
+        CHECK_EQUAL(d.prev_id(),d3);
 
         storage.compact();
         d = storage.get(d3);

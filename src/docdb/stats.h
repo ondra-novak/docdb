@@ -21,16 +21,16 @@ class CustomSerializer<StatData> {
 public:
     template<typename Iter>
     static Iter serialize(const StatData &val, Iter target) {
-        return BasicRow::serialize_items(target, val.count, val.sum, val.sum2, val.max, val.min);
+        return Row::serialize_items(target, val.count, val.sum, val.sum2, val.max, val.min);
     }
     template<typename Iter>
     static StatData deserialize(Iter &at, Iter end) {
         StatData s;
-        s.count = BasicRow::deserialize_item<std::uint64_t>(at, end);
-        s.sum = BasicRow::deserialize_item<double>(at, end);
-        s.sum2 = BasicRow::deserialize_item<double>(at, end);
-        s.min = BasicRow::deserialize_item<double>(at, end);
-        s.max = BasicRow::deserialize_item<double>(at, end);
+        s.count = Row::deserialize_item<std::uint64_t>(at, end);
+        s.sum = Row::deserialize_item<double>(at, end);
+        s.sum2 = Row::deserialize_item<double>(at, end);
+        s.min = Row::deserialize_item<double>(at, end);
+        s.max = Row::deserialize_item<double>(at, end);
         return s;
     }
 
@@ -44,7 +44,7 @@ struct Count {
             do {
                 ++count;
             } while (iter.next());
-            emit(BasicRow(static_cast<double>(count)));
+            emit(Row(static_cast<double>(count)));
         }
     }
 };
@@ -55,7 +55,7 @@ struct Sum {
         if (iter.next()) {
             Buffer<double,8> numbers;
             do {
-                BasicRowView rw = iter.value();
+                Row rw = iter.value();
                 int p = 0;
                 while (!rw.empty()) {
                     if (p >= numbers.size()) numbers.push_back(0.0);
@@ -65,7 +65,7 @@ struct Sum {
                     ++p;
                 }
             } while (iter.next());
-            BasicRow out;
+            Row out;
             for (double x: numbers) out.append(x);
             emit(out);
         }
@@ -78,7 +78,7 @@ struct Stats {
         if (iter.next()) {
             Buffer<StatData,8> numbers;
             do {
-                BasicRowView rw = iter.value();
+                Row rw = iter.value();
                 int p = 0;
                 while (!rw.empty()) {
                     auto [v,c] = rw.get<double, Blob>();
@@ -98,7 +98,7 @@ struct Stats {
                     ++p;
                 }
             } while (iter.next());
-            BasicRow out;
+            Row out;
             for (StatData x: numbers) out.append(x);
             emit(out);
         }
@@ -111,7 +111,7 @@ struct StatsOfStats {
         if (iter.next()) {
             Buffer<StatData,8> numbers;
             do {
-                BasicRowView rw = iter.value();
+                Row rw = iter.value();
                 int p = 0;
                 while (!rw.empty()) {
                     auto [v,c] = rw.get<StatData, Blob>();
@@ -129,19 +129,13 @@ struct StatsOfStats {
                     ++p;
                 }
             } while (iter.next());
-            BasicRow out;
+            Row out;
             for (StatData x: numbers) out.append(x);
             emit(out);
         }
     }
 };
 
-struct KeyIdent {
-    template<typename Emit>
-    void operator()(Emit &emit, const BasicRowView &key) {
-        emit(key, key);
-    }
-};
 
 
 

@@ -3,8 +3,8 @@
 #define SRC_DOCDB_DATABASE_H_
 
 #include "iterator.h"
-#include "keyvalue.h"
 #include "batch.h"
+#include "key.h"
 
 #include <memory>
 #include <leveldb/db.h>
@@ -185,7 +185,7 @@ public:
         while (iter->Valid()) {
             auto k = iter->key();
             if (k.size() >= sizeof(KeyspaceID)*2) {
-                auto [tmp, tmp2, id] = BasicRow::extract<KeyspaceID,KeyspaceID,KeyspaceID>(to_string(k));
+                auto [tmp, tmp2, id] = Row::extract<KeyspaceID,KeyspaceID,KeyspaceID>(to_string(k));
                 auto vv = iter->value();
                 name.clear();
                 name.append(vv.data(), vv.size());

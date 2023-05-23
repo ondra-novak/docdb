@@ -13,7 +13,7 @@ namespace docdb {
 template<typename T>
 CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
     {x.get_db() } -> std::same_as<const PDatabase &>;
-    {*x[std::declval<typename T::DocID>()] } -> std::same_as<typename T::DocType>;
+    {*x[std::declval<typename T::DocID>()] } -> std::same_as<typename T::DocType &>;
     {x.scan()} -> std::convertible_to<typename T::Iterator>;
     {x.scan_from(std::declval<typename T::DocID>())} -> std::convertible_to<typename T::Iterator>;
 });

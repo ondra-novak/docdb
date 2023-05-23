@@ -92,16 +92,16 @@ public:
             ,_batch(batch)
             ,_kid(kid),_srchkid(srchkid) {}
 
-        void operator()(const BasicRow &aggr_key,const BasicRow &search_key) {
+        void operator()(const Key &aggr_key,const Key &search_key) {
             put(aggr_key,search_key);
         }
 
     protected:
-        void put(const BasicRow &aggr_key,const BasicRow &search_key) {
+        void put(const Key &aggr_key,const Key &search_key) {
             std::uint32_t rev = static_cast<std::uint32_t>(_batch.get_revision());
             RawKey ak = Database::get_private_area_key(_kid, rev, aggr_key);
             _batch.Put(ak, search_key);
-            _observers.call(_batch, BasicRowView(aggr_key));
+            _observers.call(_batch, Key(RowView(aggr_key)));
         }
 
         ObserverList<UpdateObserver> &_observers;
@@ -110,7 +110,7 @@ public:
         KeyspaceID _srchkid;
     };
 
-    using KeyMapping = std::function<void(KeyEmit &, const BasicRowView &)>;
+    using KeyMapping = std::function<void(KeyEmit &, const Key &)>;
 
     class AggrEmit {
     public:
@@ -193,7 +193,7 @@ public:
         Batch b;
         Buffer<char, 128> buffer;
         while (iter.next()) {
-            BasicRowView k(iter.raw_key());
+            Row k(RowView(iter.raw_key()));
             auto [a1, a2, a3, kk] = k.get<KeyspaceID, KeyspaceID, std::uint32_t, Blob>();
             Key srchkey(Blob(iter.raw_value()));
             IndexIterator iter = _index.scan_prefix(srchkey);
@@ -302,17 +302,21 @@ protected:
     std::mutex _mx;
 
     bool check_revision() {
-        std::string v;
-        if (!this->_db->get(RawKey(this->_kid), v)) return false;
-        BasicRowView row(v);
-        auto [cur_rev] = row.get<int>();
-        return (cur_rev == _rev);
+        auto d=this->_db->template get_as_document<Document<RowDocument> >(
+                                   Database::get_private_area_key(this->_kid));
+        if (d) {
+             auto [cur_rev] = (*d).template get<int>();
+             return (cur_rev == _rev);
+        }
+        return false;
     }
     void update_revision() {
         Batch b;
-        b.Put(RawKey(this->_kid), BasicRow(_rev));
+        b.Put(Database::get_private_area_key(this->_kid), Row(_rev));
         this->_db->commit_batch(b);
     }
+
+
 
     void set_flag(bool commit) {
         if (commit) _change.store(true, std::memory_order_relaxed);
@@ -325,7 +329,7 @@ protected:
     public:
         Aggregator_Fn(AggregateIndex &owner, Fn &&fn):_owner(owner),_fn(std::forward<Fn>(fn)) {}
 
-        bool run(Batch &b, const BasicRowView &key) {
+        bool run(Batch &b, const Key &key) {
             KeyEmit emit(_owner._observers, b, _owner._kid, _owner._index.get_kid());
             _fn(emit, key);
             b.add_hook(Hook::member_fn<&AggregateIndex::set_flag>(&_owner));
@@ -352,23 +356,25 @@ protected:
 
 namespace _details {
     template<typename T, typename ... Args>
-    void fill_key(Key &out, const BasicRowView &keys) {
-        auto [item, rest] = keys.get<T, Blob>();
+    void fill_key(Key &out, const Row &key) {
+        auto [item, rest] = key.get<T, Blob>();
         out.append(item);
         fill_key<Args...>(out, std::string_view(rest));
     }
-    void fill_key(Key &out, const BasicRowView &keys) {
-        //emptys
+    void fill_key(Key &out, const Row &key) {
+        //empty
     }
 }
 
 template<typename ... Items>
 struct KeyReduce {
 public:
-    Key operator()(const BasicRowView &keys) {
+    template<typename Emit>
+    void operator()(Emit &emit, const Key &key) {
         Key out;
-        _details::fill_key(out, keys);
-        return out;
+        auto [row] = key.get<Row>();
+        _details::fill_key(out, row);
+        emit(out, out);
     }
 };
 

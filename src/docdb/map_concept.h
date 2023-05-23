@@ -19,9 +19,9 @@ CXX20_CONCEPT(MapViewType , requires(T x) {
 template<typename T>
 CXX20_CONCEPT(MapType , requires(T x) {
     MapViewType<T>;
-    {x.register_observer(std::declval<SimpleFunction<bool, Batch &, const BasicRowView &> >())} -> std::same_as<std::size_t>;
+    {x.register_observer(std::declval<SimpleFunction<bool, Batch &, const Key &> >())} -> std::same_as<std::size_t>;
     {x.unregister_observer(std::declval<std::size_t>())};
-    {x.rescan_for(std::declval<SimpleFunction<bool, Batch &, const BasicRowView &> >())};
+    {x.rescan_for(std::declval<SimpleFunction<bool, Batch &, const Key &> >())};
 });
 
 

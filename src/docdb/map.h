@@ -118,7 +118,7 @@ public:
     }
 
     ///Observes changes of keys in the index;
-    using UpdateObserver = SimpleFunction<bool, Batch &, const BasicRowView &>;
+    using UpdateObserver = SimpleFunction<bool, Batch &, const Key &>;
 
     void rescan_for(const UpdateObserver &observer) {
 

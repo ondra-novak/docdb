@@ -25,6 +25,7 @@
 
 
 #define CHECK_EQUAL(a,b) CHECK_BINARY_OP(a,==,b)
+#define CHECK_NEAR(a,b, precis) do {CHECK_BINARY_OP(a,<=,(b)+(precis)); CHECK_BINARY_OP(a,>=,(b)-(precis));} while(false)
 #define CHECK_NOT_EQUAL(a,b) CHECK_BINARY_OP(a,!=,b)
 #define CHECK_LESS(a,b) CHECK_BINARY_OP(a,<,b)
 #define CHECK_GREATER(a,b) CHECK_BINARY_OP(a,>,b)

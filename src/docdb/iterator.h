@@ -7,9 +7,9 @@
 
 #ifndef SRC_DOCDB_ITERATOR_H_
 #define SRC_DOCDB_ITERATOR_H_
+#include "key.h"
 #include "leveldb_adapters.h"
 
-#include "keyvalue.h"
 #include <leveldb/iterator.h>
 #include <memory>
 #include <utility>
@@ -187,10 +187,8 @@ public:
     }
 
     ///Retrieve key as BasicRowView (to be parsed, without keyspaceid)
-    BasicRowView key() const {
-        BasicRowView rw(raw_key());
-        auto [kid, remain] = rw.get<KeyspaceID, Blob>();
-        return BasicRowView(remain);
+    Key key() const {
+        return Key(RowView(raw_key()));
     }
 
     ValueType value() const {
