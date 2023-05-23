@@ -6,6 +6,7 @@
 #include <variant>
 #include <type_traits>
 #include <utility>
+#include <string>
 
 
 namespace docdb {

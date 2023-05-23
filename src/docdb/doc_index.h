@@ -5,6 +5,7 @@
 #include "database.h"
 #include "serialize.h"
 #include "map.h"
+#include "keylock.h"
 
 #include "doc_storage_concept.h"
 
@@ -30,6 +31,18 @@ enum class IndexType {
      * for every incoming record
      */
     unique_enforced,
+
+    ///Unique index with enforcement but expect single thread insert
+    /**
+     * This is little faster index in compare to unique_enforced, as it
+     * expects that only one thread is inserting. Failing this requirement
+     * can cause that duplicate key can be inserted during parallel insert (
+     * as the conflicting key is still in transaction, not in the database
+     * itself). This index type doesn't check for keys in transaction,
+     * so the implementation is less complicated
+     */
+    unique_enforced_single_thread,
+
     ///Non-uniuqe, multivalue key
     /**
      * Duplicated keys are allowed for different documents (it
@@ -45,6 +58,9 @@ enum class IndexType {
      */
     multi,
 };
+
+
+
 
 template<DocumentStorageViewType _DocStorage, DocumentDef _ValueDef = RowDocument, IndexType index_type = IndexType::multi>
 class DocumentIndexView: public ViewBase {
@@ -252,10 +268,14 @@ public:
     ///Observes changes of keys in the index;
     using UpdateObserver = SimpleFunction<bool, Batch &, const Key &>;
 
+
+    using KeyLocks = std::conditional_t<index_type == IndexType::unique_enforced,
+            std::vector<KeyHolder>, std::monostate>;
+
     class Emit {
     public:
-        Emit(DocumentIndex &owner, Batch &b, DocID cur_doc, bool deleting)
-            :_owner(owner), _batch(b), _cur_doc(cur_doc), _deleting(deleting) {}
+        Emit(DocumentIndex &owner, Batch &b, KeyLocks &lks, DocID cur_doc, bool deleting)
+            :_owner(owner), _batch(b), _lks(lks),_cur_doc(cur_doc), _deleting(deleting) {}
 
         void operator()(Key &k, const DocConstructType_t<_ValueDef> &v) {put(k,v);}
         void operator()(Key &&k, const DocConstructType_t<_ValueDef> &v) {put(k,v);}
@@ -264,6 +284,7 @@ public:
     protected:
         DocumentIndex &_owner;
         Batch &_batch;
+        KeyLocks &_lks;
         DocID _cur_doc;
         bool _deleting;
 
@@ -275,6 +296,13 @@ public:
             if (_deleting) {
                 _batch.Delete(k);
             } else {
+                if constexpr(index_type == IndexType::unique_enforced) {
+                    _lks.push_back(_owner.lock_key(k));
+                } else if constexpr(index_type == IndexType::unique_enforced_single_thread) {
+                    std::string dummy;
+                    if (_owner._db->get(k, dummy)) throw std::runtime_error("Conflict (unique index)");
+                }
+
                 auto &buffer = _batch.get_buffer();
                 _ValueDef::to_binary(v, std::back_inserter(buffer));
                 _batch.Put(k, buffer);
@@ -314,7 +342,7 @@ public:
     template<typename Fn>
     CXX20_REQUIRES(std::invocable<Fn, Emit &, const DocType &> || std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>)
     DocumentIndex(_DocStorage &storage, std::string_view name, int revision, Fn &&indexer)
-        :DocumentIndexView<_DocStorage, _ValueDef>(storage, name)
+        :DocumentIndexView<_DocStorage, _ValueDef, index_type>(storage, name)
         ,_rev(revision)
     {
         init_observer(std::forward<Fn>(indexer));
@@ -324,7 +352,7 @@ public:
     template<typename Fn>
     CXX20_REQUIRES(std::invocable<Fn, Emit &, const DocType &> || std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>)
     DocumentIndex(_DocStorage &storage, KeyspaceID kid, int revision, Fn &&indexer)
-        :DocumentIndexView<_DocStorage,_ValueDef>(storage, kid)
+        :DocumentIndexView<_DocStorage,_ValueDef, index_type>(storage, kid)
          ,_rev(revision)
     {
         init_observer(std::forward<Fn>(indexer));
@@ -379,6 +407,24 @@ protected:
     ObserverList<UpdateObserver> _observers;
     std::unique_ptr<Indexer> _indexer;
 
+    using LockKey = std::conditional_t<index_type == IndexType::unique_enforced, KeyLock, std::monostate>;
+
+    LockKey _lock_key;
+
+    class Unlocker {
+    public:
+        Unlocker(DocumentIndex &owner, KeyLocks &&lk)
+            :_owner(owner), _lk(std::move(lk)) {}
+
+        void unlock(bool) {
+            _owner.unlock_keys(_lk);
+            delete this;
+        }
+
+    protected:
+        DocumentIndex &_owner;
+        KeyLocks _lk;
+    };
 
     template<typename Fn>
     class Indexer_Fn: public Indexer {
@@ -386,24 +432,29 @@ protected:
         Indexer_Fn(DocumentIndex &owner, Fn &&fn):_owner(owner),_fn(std::forward<Fn>(fn)) {}
 
         bool run(Batch &b, const Update &update) {
+            KeyLocks lks;
             if constexpr(std::invocable<Fn, Emit &, const DocType &, const DocMetadata &>) {
                 if (update.old_doc) {
-                    Emit emt(_owner, b, update.old_doc_id, true);
+                    Emit emt(_owner, b, lks, update.old_doc_id, true);
                     _fn(emt, *update.old_doc, {update.old_doc_id, update.old_old_doc_id, true});
                 }
                 if (update.new_doc) {
-                    Emit emt(_owner, b, update.new_doc_id, false);
+                    Emit emt(_owner, b, lks, update.new_doc_id, false);
                     _fn(emt, *update.new_doc, {update.new_doc_id, update.old_doc_id, false});
                 }
             } else {
                 if (update.old_doc) {
-                    Emit emt(_owner, b, update.old_doc_id, true);
+                    Emit emt(_owner, b, lks, update.old_doc_id, true);
                     _fn(emt, *update.old_doc);
                 }
                 if (update.new_doc) {
-                    Emit emt(_owner, b, update.new_doc_id, false);
+                    Emit emt(_owner, b, lks, update.new_doc_id, false);
                     _fn(emt, *update.new_doc);
                 }
+            }
+            if constexpr(index_type == IndexType::unique_enforced) {
+                Unlocker *unlk = new Unlocker(_owner, std::move(lks));
+                b.add_hook(Batch::Hook::member_fn<&Unlocker::unlock>(unlk));
             }
             return true;
         }
@@ -437,6 +488,26 @@ protected:
         this->_db->commit_batch(b);
     }
 
+    KeyHolder lock_key(const std::string_view &key) {
+       if constexpr(index_type == IndexType::unique_enforced) {
+           std::string dummy;
+           if (!this->_db->get(key, dummy)) {
+               KeyHolder hld(key);
+               if (_lock_key.lock_key(hld)) {
+                   return hld;
+               }
+           }
+           throw std::runtime_error("Conflict (duplicate key on unique index)");
+       } else {
+           throw std::runtime_error("Unreachable code");
+       }
+    }
+
+    void unlock_keys(const KeyLocks &keys) {
+        if constexpr(index_type == IndexType::unique_enforced) {
+            _lock_key.unlock_keys(keys.begin(), keys.end());
+        }
+    }
 
 
 

@@ -157,6 +157,7 @@ public:
                 _inited = true;
             }
         }
+        return *this;
     }
 
     ~Document() {

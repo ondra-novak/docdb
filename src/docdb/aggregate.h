@@ -188,17 +188,18 @@ public:
         RawKey start = Database::get_private_area_key(this->_kid);
         RawKey end = start.prefix_end();
         GenIterator<StringDocument> iter(this->_db->make_iterator(false),{
-                start, end, FirstRecord::included, FirstRecord::excluded
+                start, end, FirstRecord::excluded, FirstRecord::excluded
         });
         Batch b;
         Buffer<char, 128> buffer;
         while (iter.next()) {
             Row k(RowView(iter.raw_key()));
-            auto [a1, a2, a3, kk] = k.get<KeyspaceID, KeyspaceID, std::uint32_t, Blob>();
-            Key srchkey(Blob(iter.raw_value()));
+            auto [a1, a2, a3,kk] = k.get<KeyspaceID,KeyspaceID, std::uint32_t, Blob>();
+            Key srchkey(RowView(iter.raw_value()));
             IndexIterator iter = _index.scan_prefix(srchkey);
             {
-               AggrEmit emit(b, RawKey(this->_kid,kk), buffer);
+                RawKey rk(this->_kid,kk);
+               AggrEmit emit(b,rk , buffer);
                _aggr_fn(emit, iter);
             }
             b.Delete(k);

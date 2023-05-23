@@ -8,8 +8,10 @@ set(testFiles
     storage.cpp
     buffer.cpp
     index.cpp
+    index_unique.cpp
     aggregation.cpp
     row.cpp
+    schema.cpp
 )
 
 link_libraries(

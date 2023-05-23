@@ -38,18 +38,22 @@ public:
     void call(Args && ... args) {
         std::unique_lock lk(_mx);
         if (_observers.empty()) return;
-        _locks.fetch_add(1, std::memory_order_relaxed);
+        add_shared();
         lk.unlock();
 
         Buffer<std::size_t, 8> kick;
         for (const auto &c: _observers) {
-            if (!c.second(std::forward<Args>(args)...)) {
-                kick.push_back(c.first);
+            try {
+                if (!c.second(std::forward<Args>(args)...)) {
+                    kick.push_back(c.first);
+                }
+            } catch (...) {
+                release_shared();
+                throw;
             }
         }
-        if (_locks.fetch_sub(1, std::memory_order_relaxed) - 1 == 0) {
-            _locks.notify_one();
-        }
+        release_shared();
+
 
         if (!kick.empty()) {
 
@@ -78,6 +82,15 @@ protected:
             _locks.wait(l,std::memory_order_relaxed);
             l = _locks.load(std::memory_order_relaxed);
         }
+    }
+    void release_shared() {
+        if (_locks.fetch_sub(1, std::memory_order_relaxed) - 1 == 0) {
+            _locks.notify_one();
+        }
+    }
+
+    void add_shared() {
+        _locks.fetch_add(1, std::memory_order_relaxed);
     }
 
 
