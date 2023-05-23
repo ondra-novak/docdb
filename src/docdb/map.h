@@ -81,9 +81,10 @@ public:
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
+            auto pfx = key.prefix_end();
             return Iterator(_db->make_iterator(false,_snap),{
-                    key,RawKey(_kid),
-                    FirstRecord::included, LastRecord::included
+                    pfx,RawKey(_kid),
+                    FirstRecord::excluded, LastRecord::included
             });
         }
     }

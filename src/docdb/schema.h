@@ -12,13 +12,13 @@
 namespace docdb {
 
 
-template<IsTuple TupleHandlers, typename ... Args>
+template<typename TupleHandlers, typename ... Args>
 class ChainExecutor {
 public:
     constexpr ChainExecutor(std::string_view name, TupleHandlers handlers):_name(name),_handlers(handlers) {}
 
-    template<IsTuple Instances>
-    constexpr void operator()(Instances &inst, Args ... args) const {
+    template<typename Instances>
+    constexpr void send(Instances &inst, Args ... args) const {
         static_assert(std::tuple_size_v<Instances> == std::tuple_size_v<TupleHandlers> );
         auto call_each = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
              (std::get<Is>(_handlers)(std::get<Is>(inst), args ...), ...);
@@ -196,7 +196,7 @@ protected:
 };
 
 
-template<DocumentDef _DocDef, IsTuple _TupleHandlers>
+template<DocumentDef _DocDef, typename _TupleHandlers>
 class StorageSchema: public StorageSchemaBase<_DocDef>,
                      public ChainExecutor<_TupleHandlers, Batch &, const typename StorageSchemaBase<_DocDef>::Update &> {
 public:
@@ -210,7 +210,7 @@ public:
     class Instance: public StorageView<_DocDef> {
     public:
         Instance(const PDatabase &db, KeyspaceID kid, const StorageSchema &schema, Inst &&inst)
-            :StorageView<_DocDef>(db, kid),_schema(schema), _handlers(std::move(inst)) {}
+            :StorageView<_DocDef>(db, kid),_schema(schema), _inst(std::move(inst)) {}
 
         DocID put(const DocType &doc, DocID update_id = 0) {
             Batch b;
@@ -252,18 +252,18 @@ public:
                     auto [old_old_doc_id, bin] = rw.get<DocID, Blob>();
                     if (!bin.empty()) {
                         auto old_doc = _DocDef::from_binary(bin.begin(), bin.end());
-                        _schema(_handlers, b, Update {
+                        _schema.send(_inst, b, Update {
                            doc,&old_doc,id,update_id,old_old_doc_id
                         });
                         return id;
                     }
-                    _schema(_handlers, b, Update{
+                    _schema.send(_inst, b, Update{
                             doc,nullptr,id,update_id,old_old_doc_id
                     });
                     return id;
                 }
             }
-            _schema(_handlers, b, Update{
+            _schema.send(_inst, b, Update{
                     doc,nullptr,id,update_id,0
             });
             return id;
@@ -271,7 +271,7 @@ public:
         }
 
         const StorageSchema &_schema;
-        Inst _handlers;
+        Inst _inst;
         std::atomic<DocID> _next_id = 1;
     };
 
@@ -298,39 +298,6 @@ constexpr auto create_storage(std::string_view name, Handlers ... handlers) {
     return StorageSchema<_DocDef, std::tuple<Handlers...>>(name, Tup(handlers...));
 }
 
-template<DocumentDef _DocDef>
-class IndexerSchema {
-public:
-
-    constexpr IndexerSchema(std::string_view name):_name(name) {}
-
-    class Instance {
-    public:
-        Instance(const PDatabase &db, KeyspaceID kid,const IndexerSchema &schema)
-            :_schema(schema), _db(db), _kid(kid) {}
-    protected:
-        const IndexerSchema &_schema;
-        PDatabase _db;
-        KeyspaceID _kid;
-    };
-
-    using Update = typename StorageSchemaBase<_DocDef>::Update;
-
-    void operator()(Instance &inst, Batch &b, const Update &up) const {
-        std::cout << "Index:" << up.new_doc_id << std::endl;
-    }
-
-    Instance connect(const PDatabase &db) const {
-        return Instance(db, db->open_table(this->_name), *this);
-    }
-
-    std::string_view _name;
-};
-
-template<DocumentDef _DocDef>
-constexpr auto create_index(std::string_view name) {
-    return IndexerSchema<_DocDef>(name);
-}
 
 
 

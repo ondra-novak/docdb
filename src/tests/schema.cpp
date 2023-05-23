@@ -1,13 +1,16 @@
 #include "check.h"
 #include <iostream>
 #include <docdb/schema.h>
+#include <docdb/index_schema.h>
 
 #include "memdb.h"
 
 
 constexpr auto myDatabaseSchema = docdb::create_storage<docdb::RowDocument>("test_storage",
-        docdb::create_index<docdb::RowDocument>("aaa"),docdb::create_index<docdb::RowDocument>("bbb")
-);
+        docdb::create_index<docdb::RowDocument>("aaa", [](auto &emit, const docdb::Row &doc, const auto &mt) {
+    auto [txt] = doc.get<std::string_view>();
+    emit({txt},{txt.length()});
+}));
 
 using Database = docdb::SchemaType_t<&myDatabaseSchema>;
 
