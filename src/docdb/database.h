@@ -5,6 +5,7 @@
 #include "iterator.h"
 #include "batch.h"
 #include "key.h"
+#include "purpose.h"
 
 #include <memory>
 #include <leveldb/db.h>
@@ -66,7 +67,7 @@ public:
         std::shared_lock lk(_mx);
         auto iter = _table_map.find(v);
         if (iter == _table_map.end()) return {};
-        else return iter->second;
+        else return iter->second.first;
     }
     ///Retrieves name of the table from the id
     /**
@@ -87,7 +88,7 @@ public:
     /**
      * @return a map object which contains a name as key and keyspace id as value
      */
-    std::map<std::string, KeyspaceID, std::less<> > list() const {
+    std::map<std::string, std::pair<KeyspaceID, Purpose>, std::less<> > list() const {
         std::shared_lock lk(_mx);
         return _table_map;
     }
@@ -95,9 +96,10 @@ public:
     ///Create or open the table
     /**
      * @param name name of table
+     * @param purpose purpose of keyspace
      * @return keyspace id for given table. The table is automatically create if not exists
      */
-    KeyspaceID open_table(std::string_view name) {
+    KeyspaceID open_table(std::string_view name, Purpose purpose) {
         std::unique_lock lk(_mx);
         auto iter = _table_map.find(name);
         if (iter == _table_map.end()) {
@@ -111,12 +113,16 @@ public:
             }
             RawKey k(system_table, system_table, id);
             leveldb::WriteOptions wr;
+            Row row(purpose, Blob(name));
             wr.sync = true;
-            if (!_dbinst->Put(wr, k, to_slice(name)).ok()) throw std::runtime_error("Failed to write table record");
-            _table_map.emplace(std::string(name), id);
+            if (!_dbinst->Put(wr, k, row).ok()) throw std::runtime_error("Failed to write table record");
+            _table_map.emplace(std::string(name), std::pair(id, purpose));
             return id;
         } else {
-            return iter->second;
+            if (iter->second.second != purpose && purpose != Purpose::undefined && iter->second.second != Purpose::undefined) {
+                throw std::runtime_error("Keyspace has different purpose");
+            }
+            return iter->second.first;
         }
     }
     ///Delete table
@@ -127,7 +133,7 @@ public:
         std::unique_lock lk(_mx);
         auto iter = _table_map.find(vname);
         if (iter == _table_map.end()) return ;
-        KeyspaceID id = iter->second;
+        KeyspaceID id = iter->second.first;
         _free_ids.push(id);
         RawKey k(system_table,system_table, id);
         leveldb::WriteOptions wr;
@@ -176,7 +182,6 @@ public:
 
         std::unique_lock lk(_mx);
         _table_map.clear();
-        std::string name;
         std::unique_ptr<leveldb::Iterator> iter(_dbinst->NewIterator({}));
         iter->Seek(RawKey(system_table, system_table));
         _min_free_id = 0;
@@ -186,15 +191,13 @@ public:
             auto k = iter->key();
             if (k.size() >= sizeof(KeyspaceID)*2) {
                 auto [tmp, tmp2, id] = Row::extract<KeyspaceID,KeyspaceID,KeyspaceID>(to_string(k));
-                auto vv = iter->value();
-                name.clear();
-                name.append(vv.data(), vv.size());
+                auto [purpose, name] = Row::extract<Purpose, Blob>(to_string(iter->value()));
 
                 while (_min_free_id < id) {
                     _free_ids.push(_min_free_id);
                     ++_min_free_id;
                 }
-                _table_map.emplace(std::move(name), std::move(id));
+                _table_map.emplace(name, std::pair(id, purpose));
                 _min_free_id = id+1;
             }
             iter->Next();
@@ -286,7 +289,7 @@ protected:
     std::unique_ptr<leveldb::DB> _dbinst;
     leveldb::WriteOptions _write_opts;
 
-    std::map<std::string, KeyspaceID, std::less<> > _table_map;
+    std::map<std::string, std::pair<KeyspaceID, Purpose>, std::less<> > _table_map;
     std::stack<KeyspaceID> _free_ids;
     KeyspaceID _min_free_id = 0;
     mutable std::shared_mutex _mx;
@@ -297,7 +300,7 @@ class ViewBase {
 public:
 
     ViewBase(const PDatabase &db, std::string_view name, Direction dir = Direction::forward, const PSnapshot &snap = {})
-        :_db(db),_snap(snap),_kid(_db->open_table(name)), _dir(dir) {}
+        :_db(db),_snap(snap),_kid(_db->open_table(name, Purpose::undefined)), _dir(dir) {}
     ViewBase(const PDatabase &db, KeyspaceID kid, Direction dir = Direction::forward, const PSnapshot &snap = {})
         :_db(db), _snap(snap),_kid(kid), _dir(dir) {}
 

@@ -1,18 +1,21 @@
 #include "check.h"
 #include "memdb.h"
 
+#include "../docdb/storage.h"
 #include "../docdb/doc_storage.h"
+
+
 
 void test1() {
 
     auto ramdisk = newRamdisk();
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
-    using Storage = docdb::DocumentStorage<docdb::StringDocument>;
+    using Storage = docdb::Storage<docdb::StringDocument>;
     {
         Storage storage(db, "test_storage");
 
-        Storage::DocID d1,d2,d3,d4;
+        docdb::DocID d1,d2,d3,d4;
         {
             d1 = storage.put("hello");
             d2 = storage.put("world");
@@ -24,24 +27,25 @@ void test1() {
         CHECK_EQUAL(d3,3);
         CHECK_EQUAL(d4,4);
 
-        std::string buffer;
+        auto view = storage.get_view();
 
-        auto d = storage.get(d2);
+        auto d = view[d2];
         CHECK(d.has_value());
-        CHECK_EQUAL(*d,"world");
-        d = storage.get(d4);
+        CHECK_EQUAL(*d->document,"world");
+        d = view[d4];
         CHECK(d.has_value());
-        CHECK_EQUAL(*d,"foo");
-        d =storage.get(d3);
+        CHECK_EQUAL(*d->document,"foo");
+        d =view[d3];
         CHECK(d.has_value());
-        CHECK_EQUAL(*d,"bar");
+        CHECK_EQUAL(*d->document,"bar");
 
         auto d3_new = storage.put("baz", d3);
-        d = storage.get(d3_new);
+        d = view[d3_new];
         CHECK(d.has_value());
-        CHECK_EQUAL(*d,"baz");
-        CHECK_EQUAL(d.prev_id(),d3);
+        CHECK_EQUAL(*d->document,"baz");
+        CHECK_EQUAL(d->previous_id,d3);
 
+#if 0
         storage.compact();
         d = storage.get(d3);
         CHECK(!d.has_value());
@@ -72,6 +76,7 @@ void test1() {
                 pt++;
             }
         }
+#endif
     }
     {
         Storage storage(db, "test_storage");

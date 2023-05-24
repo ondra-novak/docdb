@@ -7,9 +7,9 @@ void test_keyspaces() {
     docdb::KeyspaceID t1,t2;
     {
         auto db = docdb::Database::create(createTestDB(ramdisk.get()));
-        auto ktbl1 = db->open_table("tbl1");
-        auto ktbl2 = db->open_table("tbl2");
-        auto ktbl3 = db->open_table("tbl1");
+        auto ktbl1 = db->open_table("tbl1", docdb::Purpose::storage);
+        auto ktbl2 = db->open_table("tbl2", docdb::Purpose::index);
+        auto ktbl3 = db->open_table("tbl1", docdb::Purpose::storage);
         CHECK_EQUAL(ktbl1, 0);
         CHECK_EQUAL(ktbl1, ktbl3);
         CHECK_NOT_EQUAL(ktbl1, ktbl2);
@@ -18,9 +18,9 @@ void test_keyspaces() {
     }
     {
         auto db = docdb::Database::create(createTestDB(ramdisk.get()));
-        auto ktbl1 = db->open_table("tbl1");
-        auto ktbl2 = db->open_table("tbl2");
-        auto ktbl3 = db->open_table("tbl1");
+        auto ktbl1 = db->open_table("tbl1", docdb::Purpose::storage);
+        auto ktbl2 = db->open_table("tbl2", docdb::Purpose::index);
+        auto ktbl3 = db->open_table("tbl1", docdb::Purpose::storage);
         CHECK_EQUAL(ktbl1, ktbl3);
         CHECK_NOT_EQUAL(ktbl1, ktbl2);
         CHECK_EQUAL(t1, ktbl1);
@@ -32,7 +32,7 @@ void test_keyspaces() {
     }
     {
         auto db = docdb::Database::create(createTestDB(ramdisk.get()));
-        auto ktbl1 = db->open_table("tbl1");
+        auto ktbl1 = db->open_table("tbl1", docdb::Purpose::index);
         CHECK_EQUAL(ktbl1, 0);
     }
 

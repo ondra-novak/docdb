@@ -57,6 +57,13 @@ template<typename T>
 CXX20_CONCEPT(DocumentDef,ToBinaryConvertible<T> && FromBinaryConvertible<T>);
 
 template<typename T>
+CXX20_CONCEPT(DocumentCustomDeleted, requires(ReadIteratorConcept b, ReadIteratorConcept e){
+    {T::is_deleted(b, e)} -> std::convertible_to<bool>;
+});
+
+
+
+template<typename T>
 CXX20_CONCEPT(IsTuple, requires {
   typename std::tuple_size<T>::type;
   typename std::tuple_element<0, T>::type;

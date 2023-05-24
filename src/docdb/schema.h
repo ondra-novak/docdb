@@ -276,7 +276,7 @@ public:
     };
 
     auto connect(const PDatabase &db) const {
-        KeyspaceID kid = db->open_table(this->_name);
+        KeyspaceID kid = db->open_table(this->_name, Purpose::storage);
         auto inst = this->init_handlers(db);
         return Instance<decltype(inst)>(db, kid, *this, std::move(inst));
     }

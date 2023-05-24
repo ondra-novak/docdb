@@ -303,6 +303,7 @@ public:
          } else if constexpr(std::is_enum_v<T>) {
              if (sz == 0) return T();;
              std::uint8_t x = static_cast<std::uint8_t>(*at);
+             ++at;
              return static_cast<T>(x);
          } else if constexpr(std::is_unsigned_v<T> || std::is_same_v<T, wchar_t>) {
              T var = 0;

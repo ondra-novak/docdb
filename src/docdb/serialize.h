@@ -190,7 +190,11 @@ protected:
     };
 
     ValueType &get_parse() const {
-        if (!_inited) ::new(&_storage) ValueType(_ValueDef::from_binary(_buff.begin(), _buff.end()));
+        if (!_inited) {
+            ::new(&_storage) ValueType(_ValueDef::from_binary(_buff.begin(), _buff.end()));
+            _inited =true;
+        }
+
         return _storage;
     }
 
