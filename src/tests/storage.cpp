@@ -27,7 +27,7 @@ void test1() {
         CHECK_EQUAL(d3,3);
         CHECK_EQUAL(d4,4);
 
-        auto view = storage.get_view();
+        auto view = storage.get_snapshot();
 
         auto d = view[d2];
         CHECK(d.has_value());

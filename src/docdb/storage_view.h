@@ -145,6 +145,8 @@ public:
     }
 
 
+    const PDatabase get_db() const {return _db;}
+
 protected:
     PDatabase _db;
     PSnapshot _snap;

@@ -7,29 +7,21 @@
 namespace docdb {
 
 template<DocumentDef _DocDef = RowDocument>
-class Storage {
+class Storage: public StorageView<_DocDef> {
 public:
 
     using DocType = typename _DocDef::Type;
     using DocRecord = typename StorageView<_DocDef>::DocRecord;
 
     Storage(const PDatabase &db, const std::string_view &name)
-        :_db(db),_kid(db->open_table(name, Purpose::storage)) {
-        init_id();
-    }
+        :Storage(db,db->open_table(name, Purpose::storage)) {}
+
     Storage(const PDatabase &db, KeyspaceID kid)
-        :_db(db),_kid(kid) {
+        :StorageView<_DocDef>(db,kid, Direction::forward, {}) {
         init_id();
     }
 
-    StorageView<_DocDef> get_view(Direction dir = Direction::forward, const PSnapshot &snap = {}) const {
-        return StorageView<_DocDef>(_db, _kid, dir, snap);
-    }
-    StorageView<_DocDef> get_snapshot(Direction dir = Direction::forward) const {
-        return StorageView<_DocDef>(_db, _kid, dir, _db->make_snapshot());
-    }
 
-    const PDatabase get_db() const {return _db;}
 
     ///Definition of an update
     struct Update {
@@ -214,24 +206,39 @@ public:
                 notify_observers(b, Update {nullptr,&old_doc,del_id,del_id,old_doc_id});
             }
             b.Delete(kk);
-            _db->commit_batch(b);
+            this->_db->commit_batch(b);
             return true;
         }
         return false;
 
     }
 
+    ///Replay all documents to a observer
+      void rescan_for(const TransactionObserver &observer) {
+          Batch b;
+          auto iter = this->scan();
+          bool rep = true;
+          while (rep && iter.next()) {
+              auto vdoc = iter.value();
+              DocType *doc =  vdoc.document.has_value()?&(*vdoc.document):nullptr;
+              if constexpr(std::is_void_v<decltype(update_for(observer, b, iter.id(), doc, vdoc.previous_id))>) {
+                  update_for(observer, b, iter.id(), doc, vdoc.previous_id);
+              } else {
+                  rep = update_for(observer, b, iter.id(), doc, vdoc.previous_id);
+              }
+              this->_db->commit_batch(b);
+          }
+
+      }
 
     DocID get_rev() const {
         return _next_id.load(std::memory_order_relaxed);
     }
 
+
+
 protected:
 
-
-
-    PDatabase _db;
-    KeyspaceID _kid;
     std::vector<TransactionObserver> _transaction_observers;
     std::vector<CommitObserver> _commit_observers;
     std::mutex _commit_observers_mx;
@@ -280,7 +287,7 @@ protected:
     }
 
     void init_id() {
-        _next_id = get_view().get_last_document_id()+1;
+        _next_id = this->get_last_document_id()+1;
     }
 
     DocID write(Batch &b, const DocType *doc, DocID update_id) {
@@ -310,6 +317,25 @@ protected:
         }
         notify_observers( b, Update{doc,nullptr,id,update_id,0});
         return id;
+    }
+
+    template<typename Fn>
+    auto update_for(Fn &&fn, Batch &b, DocID id, const DocType *doc, DocID prev_id) {
+          if (prev_id) {
+              std::string tmp;
+              if (this->_db->get(RawKey(this->_kid, prev_id), tmp)) {
+                  Row rw((RowView(tmp)));
+                  auto [old_old_doc_id, bin] = rw.get<DocID, Blob>();
+                  auto beg = bin.begin();
+                  auto end = bin.end();
+                  if (!StorageView<_DocDef>::is_deleted(beg, end)) {
+                      auto old_doc = _DocDef::from_binary(beg, end);
+                      return fn(b, Update {doc,&old_doc,id,prev_id,old_old_doc_id});
+                  }
+                  return fn(b, Update{doc,nullptr,id,prev_id,old_old_doc_id});
+              }
+          }
+          return fn(b, Update{nullptr, doc, 0, prev_id, id});
     }
 };
 

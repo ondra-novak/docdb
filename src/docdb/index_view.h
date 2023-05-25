@@ -95,7 +95,7 @@ public:
     };
 
     template<typename DocDef>
-    Iterator<DocDef> create_iterator(std::unique_ptr<leveldb::Iterator> &&iter, typename GenIterator<DocDef>::Config &&config) {
+    Iterator<DocDef> create_iterator(std::unique_ptr<leveldb::Iterator> &&iter, typename GenIterator<DocDef>::Config &&config) const {
         return Iterator<DocDef>(_storage, std::move(iter), std::move(config));
     }
 
@@ -174,6 +174,9 @@ public:
             });
         }
     }
+
+    Iterator lookup(Key &key) const {return scan_prefix(key);}
+    Iterator lookup(Key &&key) const {return scan_prefix(key);}
 
     Iterator scan_from(Key &&key, Direction dir = Direction::normal) {return scan_from(key,dir);}
     Iterator scan_from(Key &key, Direction dir = Direction::normal) {
