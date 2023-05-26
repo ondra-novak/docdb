@@ -5,6 +5,7 @@
 #include "recordset.h"
 #include "row.h"
 
+#include "doc_storage_concept.h"
 namespace docdb {
 
 enum class IndexType {
@@ -94,7 +95,7 @@ public:
 
 };
 
-template<typename _Storage, typename DocIDExtract>
+template<DocumentStorageViewType _Storage, typename DocIDExtract>
 class IndexViewBaseWithStorage {
 public:
 
@@ -328,7 +329,7 @@ struct SkipDocIDDcument {
     //WriteIteratorConcept to_binary(const Type &val, WriteIteratorConcept push);
 };
 
-template<typename _Storage, typename _ValueDef, IndexType index_type>
+template<DocumentStorageViewType _Storage, typename _ValueDef, IndexType index_type>
 using IndexView =
         std::conditional_t<index_type == IndexType::multi,
         IndexViewGen<_ValueDef,IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromKey> >,

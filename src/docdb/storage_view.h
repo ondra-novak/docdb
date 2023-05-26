@@ -260,7 +260,7 @@ public:
     }
 
 
-    const PDatabase get_db() const {return _db;}
+    const PDatabase &get_db() const {return _db;}
 
 protected:
     PDatabase _db;

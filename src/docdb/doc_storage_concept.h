@@ -9,26 +9,26 @@
 
 namespace docdb {
 
+using DocID = std::uint64_t;
 
 template<typename T>
 CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
-    {x.get_db() } -> std::same_as<const PDatabase &>;
-    {*x[std::declval<typename T::DocID>()] } -> std::same_as<typename T::DocType &>;
-    {x.scan()} -> std::convertible_to<typename T::Iterator>;
-    {x.scan_from(std::declval<typename T::DocID>())} -> std::convertible_to<typename T::Iterator>;
+    {x.get_db() } -> std::convertible_to<PDatabase>;
+    {x[std::declval<DocID>()]->content } -> std::same_as<const typename T::DocType &>;
+    {x.select_all()} -> std::derived_from<RecordSetBase>;
+    {x.select_from(std::declval<DocID>())} -> std::derived_from<RecordSetBase>;
 });
 
 template<typename T>
 CXX20_CONCEPT(DocumentStorageType , requires(T x) {
     DocumentStorageViewType<T>;
-    {x.register_observer(std::declval<SimpleFunction<bool, Batch &, const typename T::Update &> >())} -> std::same_as<std::size_t>;
-    {x.unregister_observer(std::declval<std::size_t>())};
+    {x.register_transaction_observer(std::declval<std::function<void(Batch &, const typename T::Update &)> >())} -> std::same_as<void>;
     {x.rescan_for(std::declval<SimpleFunction<bool, Batch &, const typename T::Update &> >())};
     {T::Update::old_doc}->std::convertible_to<const typename T::DocType *>;
     {T::Update::new_doc}->std::convertible_to<const typename T::DocType *>;
-    {T::Update::old_doc_id}->std::convertible_to<const typename T::DocID>;
-    {T::Update::old_old_doc_id}->std::convertible_to<const typename T::DocID>;
-    {T::Update::new_doc_id}->std::convertible_to<const typename T::DocID>;
+    {T::Update::old_doc_id}->std::convertible_to<DocID>;
+    {T::Update::old_old_doc_id}->std::convertible_to<DocID>;
+    {T::Update::new_doc_id}->std::convertible_to<DocID>;
 });
 
 

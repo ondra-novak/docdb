@@ -35,7 +35,7 @@ protected:
 
 };
 
-template<typename Storage, auto indexFn, IndexerRevision revision, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
+template<DocumentStorageType Storage, auto indexFn, IndexerRevision revision, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
 //CXX20_REQUIRES(std::invocable<decltype(indexFn), IndexerEmitTemplate<_ValueDef>, const typename Storage::DocType &>)
 class Indexer: public IndexView<Storage, _ValueDef, index_type> {
 public:

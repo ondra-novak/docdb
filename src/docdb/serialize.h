@@ -165,7 +165,7 @@ public:
     }
 
     ///Deserialized the document
-    ValueType &operator*() const {
+    const ValueType &operator*() const {
         return get_parse();
     }
     ///Tests whether value has been set
@@ -177,7 +177,7 @@ public:
 
     const Buffer &get_serialized() const {return _buff;}
 
-    ValueType *operator->() const {
+    const ValueType *operator->() const {
         return &get_parse();
     }
 
