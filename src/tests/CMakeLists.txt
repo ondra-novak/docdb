@@ -2,16 +2,13 @@ cmake_minimum_required(VERSION 3.1)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests/)
 #file(GLOB testFiles "*.cpp")
-set(testFiles
-    compile_test.cpp
+set(testFiles    
     manage_db.cpp
     storage.cpp
     buffer.cpp
     index.cpp
     index_unique_1.cpp
-    aggregation.cpp
     row.cpp
-    schema.cpp
 )
 
 link_libraries(

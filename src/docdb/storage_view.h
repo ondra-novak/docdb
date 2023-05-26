@@ -28,7 +28,7 @@ public:
         ///ID of document which has been replaced by this document (previous revision)
         DocID previous_id;
         ///Contains document itself. The value is not defined, if the ID contains a deleted document
-        std::optional<DocType> document;
+        std::optional<DocType> content;
     };
 
 
@@ -48,13 +48,13 @@ public:
             Type out;
             out.previous_id = Row::deserialize_item<DocID>(b, e);
             if (is_deleted(b, e)) return out;
-            out.document.emplace(_DocDef::from_binary(b,e));
+            out.content.emplace(_DocDef::from_binary(b,e));
             return out;
         }
         template<typename Iter>
         static Iter to_binary(const Type &type, Iter iter) {
             Row::serialize_items(iter, type.previous_id);
-            return _DocDef::to_binary(type.document, iter);
+            return _DocDef::to_binary(*type.content, iter);
         }
     };
 
@@ -83,39 +83,48 @@ public:
         return _db->get_as_document<Document<DocRecordDef> >(RawKey(_kid, id));
     }
 
-    struct IteratorValueType {
-        DocID id;
-        DocID prev_id;
-        std::string_view bin_document;
-
-        std::optional<DocType> document() const {
-
-        }
-
+    struct IteratorValueType: DocRecord {
+        DocID id = 0;
+        IteratorValueType(std::string_view raw_key, std::string_view raw_value)
+            :DocRecord(DocRecordDef::from_binary(raw_value.begin(),raw_value.end()))
+             {
+                Key k ((RowView(raw_key)));
+                id  = std::get<0>(k.get<DocID>());
+             }
     };
 
-    ///Iterator
-    class Recordset: public RecordSetT<StringDocument>{
-    public:
-        using RecordSetT<DocRecordDef>::GenIterator;
 
-        ///Retrieve document id
-        DocID id() const {
-            Key k = this->key();
-            auto [id] = k.get<DocID>();
-            return id;
+
+    ///Iterator
+    class RecordSet: public RecordSetBase {
+    public:
+        using RecordSetBase::RecordSetBase;
+
+        using Iterator = RecordSetIterator<RecordSet, IteratorValueType>;
+
+        auto begin() {
+            return Iterator {this, false};
+        }
+        auto end() {
+            return Iterator {this, true};
+        }
+
+        IteratorValueType get_item() const {
+
+
+            return {this->raw_key(), this->raw_value()};
         }
     };
 
     ///Scan whole storage
-    Recordset scan(Direction dir=Direction::normal) const {
+    RecordSet select_all(Direction dir=Direction::normal) const {
         if (isForward(changeDirection(_dir, dir))) {
-            return Iterator(_db->make_iterator(false,_snap),{
+            return RecordSet(_db->make_iterator(false,_snap),{
                     RawKey(_kid),RawKey(_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
-            return Iterator(_db->make_iterator(false,_snap),{
+            return RecordSet(_db->make_iterator(false,_snap),{
                     RawKey(_kid+1),RawKey(_kid),
                     FirstRecord::excluded, LastRecord::included
             });
@@ -123,14 +132,14 @@ public:
     }
 
     ///Scan from given document for given direction
-    Recordset scan_from(DocID start_pt, Direction dir = Direction::normal) const {
+    RecordSet select_from(DocID start_pt, Direction dir = Direction::normal) const {
         if (isForward(changeDirection(_dir, dir))) {
-            return Iterator(_db->make_iterator(false,_snap),{
+            return RecordSet(_db->make_iterator(false,_snap),{
                     RawKey(_kid, start_pt),RawKey(_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
-            return Iterator(_db->make_iterator(false,_snap),{
+            return RecordSet(_db->make_iterator(false,_snap),{
                     RawKey(_kid, start_pt),RawKey(_kid),
                     FirstRecord::included, LastRecord::excluded
             });
@@ -138,10 +147,10 @@ public:
     }
 
     ///Scan for range
-    Recordset scan_range(DocID start_id, DocID end_id, LastRecord last_record = LastRecord::excluded) const {
-        return Iterator(_db->make_iterator(false,_snap),{
+    RecordSet select_range(DocID start_id, DocID end_id, LastRecord last_record = LastRecord::excluded) const {
+        return RecordSet(_db->make_iterator(false,_snap),{
                 RawKey(_kid, start_id),RawKey(_kid, end_id),
-                FirstRecord::included, LastRecord::excluded
+                FirstRecord::included, last_record
         });
     }
 
@@ -150,9 +159,10 @@ public:
      * @return id of last document, or zero if database is empty
      */
     DocID get_last_document_id() const {
-        auto iter = scan(Direction::backward);
-        if (iter.next()) return iter.id();
-        else return 0;
+        auto rs = select_all(Direction::backward);
+        auto beg = rs.begin();
+        if (beg == rs.end()) return 0;
+        return beg->id;
     }
 
 

@@ -2,7 +2,7 @@
 #include "memdb.h"
 
 #include "../docdb/storage.h"
-#include "../docdb/doc_storage.h"
+
 
 
 
@@ -31,18 +31,18 @@ void test1() {
 
         auto d = view[d2];
         CHECK(d.has_value());
-        CHECK_EQUAL(*d->document,"world");
+        CHECK_EQUAL(*d->content,"world");
         d = view[d4];
         CHECK(d.has_value());
-        CHECK_EQUAL(*d->document,"foo");
+        CHECK_EQUAL(*d->content,"foo");
         d =view[d3];
         CHECK(d.has_value());
-        CHECK_EQUAL(*d->document,"bar");
+        CHECK_EQUAL(*d->content,"bar");
 
         auto d3_new = storage.put("baz", d3);
         d = view[d3_new];
         CHECK(d.has_value());
-        CHECK_EQUAL(*d->document,"baz");
+        CHECK_EQUAL(*d->content,"baz");
         CHECK_EQUAL(d->previous_id,d3);
 
 #if 0
@@ -81,6 +81,9 @@ void test1() {
     {
         Storage storage(db, "test_storage");
         CHECK_EQUAL(storage.get_rev(), 6);
+        for (auto x: storage.select_range(3,1,docdb::LastRecord::included)) {
+            std::cout << x.id << std::endl;
+        }
     }
 
 

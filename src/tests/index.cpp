@@ -32,49 +32,51 @@ void test1() {
     CHECK_EQUAL(d3,3);
     CHECK_EQUAL(d4,4);
 
-    {
-        auto iter = index1.lookup({"world"});
-
-        int fnd = 0;
-        while (iter.next()) {
-            CHECK_EQUAL(iter.id(), 2);
-            auto docref = iter.doc();
-            CHECK_EQUAL(*docref->document, "world");
-            fnd++;
-        }
-        CHECK_EQUAL(fnd,1);
+    int fnd = 0;
+    for(const auto &x: index1.lookup({"world"})) {
+       CHECK_EQUAL(x.id, 2);
+       auto [v] = x.value.get<std::size_t>();
+       CHECK_EQUAL(v, 5);
+       CHECK_EQUAL(*x.document()->content, "world");
+       fnd++;
     }
 
-        {
-            auto iter = index2.lookup({std::size_t(3)});
+    CHECK_EQUAL(fnd,1);
 
-            CHECK(iter.next());
+        {
+            auto recordset = index2.lookup({std::size_t(3)});
+            auto iter = recordset.begin();
+            CHECK(iter != recordset.end());
             {
-                CHECK_EQUAL(iter.id(),3);
-                auto docref = iter.doc();
-                CHECK_EQUAL(*docref->document, "bar");
+                auto &x = *iter;
+                CHECK_EQUAL(x.id,3);
+                auto docref = x.document();
+                CHECK_EQUAL(*docref->content, "bar");
             }
-            CHECK(iter.next());
+            ++iter;
+            CHECK(iter != recordset.end());
             {
-                CHECK_EQUAL(iter.id(),4);
-                auto docref = iter.doc();
-                CHECK_EQUAL(*docref->document, "foo");
+                auto &x = *iter;
+                CHECK_EQUAL(x.id,4);
+                auto docref = x.document();
+                CHECK_EQUAL(*docref->content, "foo");
             }
-            CHECK(!iter.next());
+            ++iter;
+            CHECK(iter == recordset.end());
         }
         {
             docdb::DocID id = 2;
             auto lk = index1[{"world",id}];
             CHECK(lk);
             auto docref = storage[id];
-            CHECK_EQUAL(*docref->document, "world");
+            CHECK_EQUAL(*docref->content, "world");
         }
         storage.put("world2",d2);
         {
-            auto iter = index1.lookup("world");
-            CHECK(!iter.next());
-            auto iter2 = index1.lookup("world2");
-            CHECK(iter2.next());
+            auto rs1 = index1.lookup("world");
+            CHECK(rs1.begin() == rs1.end());
+            auto rs2 = index1.lookup("world2");
+            CHECK(rs2.begin() != rs2.end());
         }
 
 

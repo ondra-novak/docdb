@@ -216,15 +216,13 @@ public:
     ///Replay all documents to a observer
       void rescan_for(const TransactionObserver &observer) {
           Batch b;
-          auto iter = this->scan();
           bool rep = true;
-          while (rep && iter.next()) {
-              auto vdoc = iter.value();
-              DocType *doc =  vdoc.document.has_value()?&(*vdoc.document):nullptr;
-              if constexpr(std::is_void_v<decltype(update_for(observer, b, iter.id(), doc, vdoc.previous_id))>) {
-                  update_for(observer, b, iter.id(), doc, vdoc.previous_id);
+          for (const auto &vdoc: this->select_all()) {
+              const DocType *doc =  vdoc.content.has_value()?&(*vdoc.content):nullptr;
+              if constexpr(std::is_void_v<decltype(update_for(observer, b, vdoc.id, doc, vdoc.previous_id))>) {
+                  update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
               } else {
-                  rep = update_for(observer, b, iter.id(), doc, vdoc.previous_id);
+                  rep = update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
               }
               this->_db->commit_batch(b);
           }

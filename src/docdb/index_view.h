@@ -2,7 +2,7 @@
 #ifndef SRC_DOCDB_INDEX_VIEW_H_
 #define SRC_DOCDB_INDEX_VIEW_H_
 
-#include "iterator.h"
+#include "recordset.h"
 #include "row.h"
 
 namespace docdb {
@@ -61,7 +61,31 @@ class IndexViewBaseEmpty {
 public:
 
     template<typename DocDef>
-    using RecordSet = RecordSetT<DocDef>;
+    struct IteratorValueType {
+        Key key;
+        typename DocDef::Type value;
+    };
+
+    template<typename DocDef>
+    class RecordSet : public RecordSetBase {
+    public:
+        using RecordSetBase::RecordSetBase;
+
+        using Iterator = RecordSetIterator<RecordSet, IteratorValueType<DocDef> >;
+
+        auto begin() {
+            return Iterator(this, false);
+        }
+        auto end() {
+            return Iterator(this, true);
+        }
+
+        IteratorValueType<DocDef> get_item() const {
+            auto rv = this->raw_value();
+            return {Key(RowView(this->raw_key())), DocDef::from_binary(rv.begin(), rv.end())};
+        }
+
+    };
 
     template<typename DocDef>
     RecordSet<DocDef> create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSet<DocDef>::Config &&config) {
@@ -76,34 +100,40 @@ public:
 
     IndexViewBaseWithStorage(_Storage &storage):_storage(storage) {}
 
-    template<typename DocDef>
-    struct IteratorValueType: RecordSetT<DocDef>::IteratorValueType {
-        DocID id;
 
+    template<typename DocDef>
+    struct IteratorValueType: IndexViewBaseEmpty::IteratorValueType<DocDef> {
+        DocID id;
+        _Storage *storage = nullptr;
+        auto document() const {
+            return (*storage)[id];
+        }
     };
 
     template<typename DocDef>
-    class RecordSet: public RecordSetT<DocDef> {
+    class RecordSet: public RecordSetBase {
     public:
-        RecordSet(_Storage &stor, std::unique_ptr<leveldb::Iterator> &&iter, typename GenIterator<DocDef>::Config &&config)
-        :GenIterator<DocDef>(std::move(iter), std::move(config))
+        RecordSet(_Storage &stor, std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSetBase::Config &&config)
+        :RecordSetBase(std::move(iter), std::move(config))
         ,_storage(stor) {}
 
-        auto id() const {
-            return _extract(this->raw_key(), this->raw_value());
-        }
-        auto doc() const {
-            return _storage[id()];
+        using Iterator = RecordSetIterator<RecordSet, IteratorValueType<DocDef> >;
+
+
+        IteratorValueType<DocDef> get_item() const {
+            auto rk = this->raw_key();
+            auto rv = this->raw_value();
+            auto id = _extract(rk, rv);
+            return {
+                Key(RowView(rk)),
+                DocDef::from_binary(rv.begin(), rv.end()),
+                id,
+                &_storage
+            };
         }
 
-        using Iterator =  RecordSetIteratorT<RecordSet,  IteratorValueType<DocDef> >;
-
-        auto get_item() const {
-            return IteratorValueType<DocDef>{this->key(), this->value(), this->id()};
-        }
-
-        auto  begin()  {return Iterator(*this, false);}
-        auto  end() {return Iterator(*this, true);}
+        Iterator begin()  {return {this, false};}
+        Iterator end() {return {this, true};}
 
     protected:
         _Storage &_storage;
@@ -111,7 +141,7 @@ public:
     };
 
     template<typename DocDef>
-    RecordSet<DocDef> create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, typename GenIterator<DocDef>::Config &&config) const {
+    RecordSet<DocDef> create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSetBase::Config &&config) const {
         return RecordSet<DocDef>(_storage, std::move(iter), std::move(config));
     }
 

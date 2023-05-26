@@ -28,18 +28,16 @@ void test1() {
     CHECK_EQUAL(d3,3);
     CHECK_EQUAL(d4,4);
 
-    {
-        auto iter = index1.lookup({"world"});
+    int fnd = 0;
+    for(const auto &x: index1.lookup({"world"})) {
+       CHECK_EQUAL(x.id, 2);
+       auto [v] = x.value.get<std::size_t>();
+       CHECK_EQUAL(v, 5);
+       CHECK_EQUAL(*x.document()->content, "world");
+       fnd++;
+    }
 
-        int fnd = 0;
-        while (iter.next()) {
-            CHECK_EQUAL(iter.id(), 2);
-            auto [val] = iter.value().get<size_t>();
-            CHECK_EQUAL(val, 5);
-            auto docref = iter.doc();
-            CHECK_EQUAL(*docref->document, "world");
-            fnd++;
-        }
+    CHECK_EQUAL(fnd,1);
 
         {
             std::pair<std::string_view, std::size_t> results[] = {
@@ -57,7 +55,6 @@ void test1() {
                 ++r;
             }
         }
-    }
 
 }
 

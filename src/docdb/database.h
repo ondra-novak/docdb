@@ -2,7 +2,7 @@
 #ifndef SRC_DOCDB_DATABASE_H_
 #define SRC_DOCDB_DATABASE_H_
 
-#include "iterator.h"
+#include "recordset.h"
 #include "batch.h"
 #include "key.h"
 #include "purpose.h"
