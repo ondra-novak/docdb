@@ -8,7 +8,7 @@ set(testFiles
     storage.cpp
     buffer.cpp
     index.cpp
-    index_unique.cpp
+    index_unique_1.cpp
     aggregation.cpp
     row.cpp
     schema.cpp

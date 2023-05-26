@@ -83,10 +83,21 @@ public:
         return _db->get_as_document<Document<DocRecordDef> >(RawKey(_kid, id));
     }
 
+    struct IteratorValueType {
+        DocID id;
+        DocID prev_id;
+        std::string_view bin_document;
+
+        std::optional<DocType> document() const {
+
+        }
+
+    };
+
     ///Iterator
-    class Iterator: public GenIterator<DocRecordDef>{
+    class Recordset: public RecordSetT<StringDocument>{
     public:
-        using GenIterator<DocRecordDef>::GenIterator;
+        using RecordSetT<DocRecordDef>::GenIterator;
 
         ///Retrieve document id
         DocID id() const {
@@ -97,7 +108,7 @@ public:
     };
 
     ///Scan whole storage
-    Iterator scan(Direction dir=Direction::normal) const {
+    Recordset scan(Direction dir=Direction::normal) const {
         if (isForward(changeDirection(_dir, dir))) {
             return Iterator(_db->make_iterator(false,_snap),{
                     RawKey(_kid),RawKey(_kid+1),
@@ -112,7 +123,7 @@ public:
     }
 
     ///Scan from given document for given direction
-    Iterator scan_from(DocID start_pt, Direction dir = Direction::normal) const {
+    Recordset scan_from(DocID start_pt, Direction dir = Direction::normal) const {
         if (isForward(changeDirection(_dir, dir))) {
             return Iterator(_db->make_iterator(false,_snap),{
                     RawKey(_kid, start_pt),RawKey(_kid+1),
@@ -127,7 +138,7 @@ public:
     }
 
     ///Scan for range
-    Iterator scan_range(DocID start_id, DocID end_id, LastRecord last_record = LastRecord::excluded) const {
+    Recordset scan_range(DocID start_id, DocID end_id, LastRecord last_record = LastRecord::excluded) const {
         return Iterator(_db->make_iterator(false,_snap),{
                 RawKey(_kid, start_id),RawKey(_kid, end_id),
                 FirstRecord::included, LastRecord::excluded

@@ -36,7 +36,7 @@ protected:
 };
 
 template<typename Storage, auto indexFn, IndexerRevision revision, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
-CXX20_REQUIRES(std::invocable<decltype(indexFn), IndexerEmitTemplate<_ValueDef>, const typename Storage::DocType &>)
+//CXX20_REQUIRES(std::invocable<decltype(indexFn), IndexerEmitTemplate<_ValueDef>, const typename Storage::DocType &>)
 class Indexer: public IndexView<Storage, _ValueDef, index_type> {
 public:
 
@@ -50,8 +50,7 @@ public:
         :Indexer(storage, storage.get_db()->open_table(name, _purpose)) {}
 
     Indexer(Storage &storage, KeyspaceID kid)
-        :IndexView<Storage, _ValueDef, index_type>(storage, kid)
-        ,_db(storage.get_db())
+        :IndexView<Storage, _ValueDef, index_type>(storage.get_db(), kid, Direction::forward, {}, storage)
     {
         if (get_revision() != revision) {
             reindex();
@@ -61,8 +60,8 @@ public:
 
 
     IndexerRevision get_revision() const {
-        auto k = _db->get_private_area_key(this->_kid);
-        auto doc = _db->get_as_document<Document<RowDocument> >(k);
+        auto k = this->_db->get_private_area_key(this->_kid);
+        auto doc = this->_db->template get_as_document<Document<RowDocument> >(k);
         if (doc.has_value()) {
             auto [cur_rev] = doc->template get<IndexerRevision>();
             return cur_rev;
@@ -127,7 +126,6 @@ public:
 
 
 protected:
-    PDatabase _db;
     std::vector<TransactionObserver> _tx_observers;
 
     using Update = typename Storage::Update;
@@ -140,19 +138,19 @@ protected:
                 indexFn(Emit<true>(*this, b, IndexedDoc{update.old_doc_id, update.old_old_doc_id}), *update.old_doc);
             }
             if (update.new_doc) {
-                indexFn(Emit<false>(*this, b, IndexedDoc{update.old_doc_id, update.old_old_doc_id}), *update.new_doc);
+                indexFn(Emit<false>(*this, b, IndexedDoc{update.new_doc_id, update.old_doc_id}), *update.new_doc);
             }
         };
     }
 
     void update_revision() {
         Batch b;
-        b.Put(_db->get_private_area_key(this->_kid), Row(revision));
-        _db->commit_batch(b);
+        b.Put(this->_db->get_private_area_key(this->_kid), Row(revision));
+        this->_db->commit_batch(b);
     }
 
     void reindex() {
-        _db->clear_table(this->_kid, false);
+        this->_db->clear_table(this->_kid, false);
         this->_storage.rescan_for(make_observer());
         update_revision();
     }
@@ -165,10 +163,10 @@ protected:
 
     void check_for_dup_key(const Key &key, DocID prev_doc, DocID cur_doc) {
         std::string tmp;
-        if (_db->get(key, tmp)) {
+        if (this->_db->get(key, tmp)) {
             auto [srcid] = Row::extract<DocID>(tmp);
             if (srcid != prev_doc) {
-                throw DuplicateKeyException(key, _db, cur_doc, srcid);
+                throw DuplicateKeyException(key, this->_db, cur_doc, srcid);
             }
         }
     }

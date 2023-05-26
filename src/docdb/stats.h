@@ -79,7 +79,7 @@ struct Stats {
             Buffer<StatData,8> numbers;
             do {
                 Row rw = iter.value();
-                int p = 0;
+                unsigned int p = 0;
                 while (!rw.empty()) {
                     auto [v,c] = rw.get<double, Blob>();
                     if (!std::isnan(v)) {

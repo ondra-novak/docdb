@@ -127,7 +127,8 @@ public:
         if (std::holds_alternative<RowView>(_data)) {
             RowView &view = std::get<RowView>(_data);
             if (sz < view.size()) {
-                _data = RowView({view.data(), sz});
+                std::string_view x = view;
+                _data = RowView(x.substr(0, sz));
             } else {
                 RowBuffer &newbuf = mutable_buffer();
                 newbuf.resize(sz,init);

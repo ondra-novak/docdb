@@ -25,18 +25,18 @@ public:
 
     ///Definition of an update
     struct Update {
-        ///old document
-        /** This pointer can be nullptr, when there is no old document */
-        const DocType *old_doc;
         ///new document
         /** This pointer can be nullptr, when the update just deleted the document */
         const DocType *new_doc;
-        ///old id of old document (or zero)
-        DocID old_old_doc_id;
-        ///id of old document (or zero)
-        DocID old_doc_id;
+        ///old document
+        /** This pointer can be nullptr, when there is no old document */
+        const DocType *old_doc;
         ///id of new document
         DocID new_doc_id;
+        ///id of old document (or zero)
+        DocID old_doc_id;
+        ///old id of old document (or zero)
+        DocID old_old_doc_id;
     };
 
     ///Notifies about ongoing update transaction

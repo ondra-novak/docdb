@@ -61,67 +61,85 @@ class IndexViewBaseEmpty {
 public:
 
     template<typename DocDef>
-    using Iterator = GenIterator<DocDef>;
+    using RecordSet = RecordSetT<DocDef>;
 
     template<typename DocDef>
-    Iterator<DocDef> create_iterator(std::unique_ptr<leveldb::Iterator> &&iter, typename Iterator<DocDef>::Config &&config) {
-        return Iterator<DocDef>(std::move(iter), std::move(config));
+    RecordSet<DocDef> create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSet<DocDef>::Config &&config) {
+        return RecordSet<DocDef>(std::move(iter), std::move(config));
     }
 
 };
 
-template<typename _Storage, auto docid_parser>
+template<typename _Storage, typename DocIDExtract>
 class IndexViewBaseWithStorage {
 public:
 
     IndexViewBaseWithStorage(_Storage &storage):_storage(storage) {}
 
     template<typename DocDef>
-    class Iterator: public GenIterator<DocDef> {
+    struct IteratorValueType: RecordSetT<DocDef>::IteratorValueType {
+        DocID id;
+
+    };
+
+    template<typename DocDef>
+    class RecordSet: public RecordSetT<DocDef> {
     public:
-        Iterator(_Storage &stor, std::unique_ptr<leveldb::Iterator> &&iter, typename GenIterator<DocDef>::Config &&config)
+        RecordSet(_Storage &stor, std::unique_ptr<leveldb::Iterator> &&iter, typename GenIterator<DocDef>::Config &&config)
         :GenIterator<DocDef>(std::move(iter), std::move(config))
         ,_storage(stor) {}
 
         auto id() const {
-            return docid_parser(*this);
+            return _extract(this->raw_key(), this->raw_value());
         }
         auto doc() const {
             return _storage[id()];
         }
 
+        using Iterator =  RecordSetIteratorT<RecordSet,  IteratorValueType<DocDef> >;
+
+        auto get_item() const {
+            return IteratorValueType<DocDef>{this->key(), this->value(), this->id()};
+        }
+
+        auto  begin()  {return Iterator(*this, false);}
+        auto  end() {return Iterator(*this, true);}
+
     protected:
         _Storage &_storage;
+        [[no_unique_address]] DocIDExtract _extract;
     };
 
     template<typename DocDef>
-    Iterator<DocDef> create_iterator(std::unique_ptr<leveldb::Iterator> &&iter, typename GenIterator<DocDef>::Config &&config) const {
-        return Iterator<DocDef>(_storage, std::move(iter), std::move(config));
+    RecordSet<DocDef> create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, typename GenIterator<DocDef>::Config &&config) const {
+        return RecordSet<DocDef>(_storage, std::move(iter), std::move(config));
     }
 
 protected:
     _Storage &_storage;
 };
 
-template<typename _Storage>
-using IndexViewBaseWithStorage_IDinkey = IndexViewBaseWithStorage<_Storage,[](const auto &iter){
-    std::string_view rawkey =iter.raw_key();
-    auto docidstr = rawkey.substr(rawkey.length()-sizeof(DocID));
-    auto [id] = Row::extract<DocID>(docidstr);
-    return id;
-}>;
+struct ExtractDocumentIDFromKey {
+    DocID operator()(const std::string_view &key, const std::string_view &value) const {
+        auto docidstr = key.substr(key.length()-sizeof(DocID));
+        auto [id] = Row::extract<DocID>(docidstr);
+        return id;
+    }
+};
 
-template<typename _Storage>
-using IndexViewBaseWithStorage_IDinvalue = IndexViewBaseWithStorage<_Storage,[](const auto &iter){
-   auto [id] = Row::extract<DocID>(iter.raw_value());
-   return id;
-}>;
+struct ExtractDocumentIDFromValue {
+    DocID operator()(const std::string_view &key, const std::string_view &value) const{
+        auto [id] = Row::extract<DocID>(value);
+        return id;
+    }
+};
+
 
 template<typename _ValueDef, typename IndexBase>
 class IndexViewGen: public IndexBase {
 public:
 
-    using Iterator = typename IndexBase::template Iterator<_ValueDef>;
+    using RecordSet = typename IndexBase::template RecordSet<_ValueDef>;
 
     template<typename ... Args>
     IndexViewGen(const PDatabase &db,KeyspaceID kid,Direction dir,const PSnapshot &snap, Args && ... baseArgs)
@@ -159,15 +177,15 @@ public:
      */
     Document<_ValueDef> operator[](Key &&key) const {return get(key);}
 
-    Iterator scan(Direction dir = Direction::normal)const  {
+    RecordSet select_all(Direction dir = Direction::normal)const  {
         if (isForward(_dir)) {
-            return IndexBase::template create_iterator<_ValueDef>(
+            return IndexBase::template create_recordset<_ValueDef>(
                     _db->make_iterator(false,_snap),{
                     RawKey(_kid),RawKey(_kid+1),
                     FirstRecord::excluded, LastRecord::excluded
             });
         } else {
-            return IndexBase::template create_iterator<_ValueDef>(
+            return IndexBase::template create_recordset<_ValueDef>(
                     _db->make_iterator(false,_snap),{
                     RawKey(_kid+1),RawKey(_kid),
                     FirstRecord::excluded, LastRecord::excluded
@@ -175,38 +193,38 @@ public:
         }
     }
 
-    Iterator lookup(Key &key) const {return scan_prefix(key);}
-    Iterator lookup(Key &&key) const {return scan_prefix(key);}
+    RecordSet lookup(Key &key) const {return select_prefix(key);}
+    RecordSet lookup(Key &&key) const {return select_prefix(key);}
 
-    Iterator scan_from(Key &&key, Direction dir = Direction::normal) {return scan_from(key,dir);}
-    Iterator scan_from(Key &key, Direction dir = Direction::normal) {
+    RecordSet select_from(Key &&key, Direction dir = Direction::normal) {return select_from(key,dir);}
+    RecordSet select_from(Key &key, Direction dir = Direction::normal) {
         key.change_kid(_kid);
         if (isForward(_dir)) {
-            return IndexBase::template create_iterator<_ValueDef>(
+            return IndexBase::template create_recordset<_ValueDef>(
                     _db->make_iterator(false,_snap),{
                     key,RawKey(_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
             Key pfx = key.prefix_end();
-            return IndexBase::template create_iterator<_ValueDef>(
+            return IndexBase::template create_recordset<_ValueDef>(
                     _db->make_iterator(false,_snap),{
                     pfx,RawKey(_kid),
                     FirstRecord::excluded, LastRecord::included
             });
         }
     }
-    Iterator scan_prefix(Key &&key, Direction dir = Direction::normal) const {return scan_prefix(key,dir);}
-    Iterator scan_prefix(Key &key, Direction dir = Direction::normal) const {
+    RecordSet select_prefix(Key &&key, Direction dir = Direction::normal) const {return select_prefix(key,dir);}
+    RecordSet select_prefix(Key &key, Direction dir = Direction::normal) const {
         key.change_kid(_kid);
         if (isForward(_dir)) {
-            return IndexBase::template create_iterator<_ValueDef>(
+            return IndexBase::template create_recordset<_ValueDef>(
                     _db->make_iterator(false,_snap),{
                     key,key.prefix_end(),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
-            return IndexBase::template create_iterator<_ValueDef>(
+            return IndexBase::template create_recordset<_ValueDef>(
                     _db->make_iterator(false,_snap),{
                     key.prefix_end(),key,
                     FirstRecord::excluded, LastRecord::included
@@ -215,22 +233,22 @@ public:
 
     }
 
-    Iterator scan_range(Key &&from, Key &&to, LastRecord last_record = LastRecord::excluded)const  {return scan_range(from, to, last_record);}
-    Iterator scan_range(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) const {return scan_range(from, to, last_record);}
-    Iterator scan_range(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) const {return scan_range(from, to, last_record);}
-    Iterator scan_range(Key &from, Key &to, LastRecord last_record = LastRecord::excluded)const  {
+    RecordSet select_range(Key &&from, Key &&to, LastRecord last_record = LastRecord::excluded)const  {return select_range(from, to, last_record);}
+    RecordSet select_range(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) const {return select_range(from, to, last_record);}
+    RecordSet select_range(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) const {return select_range(from, to, last_record);}
+    RecordSet select_range(Key &from, Key &to, LastRecord last_record = LastRecord::excluded)const  {
         from.change_kid(_kid);
         to.change_kid(_kid);
         if (from <= to) {
             if (last_record == LastRecord::included) {
                 Key pfx = from.prefix_end();
-                return IndexBase::template create_iterator<_ValueDef>(
+                return IndexBase::template create_recordset<_ValueDef>(
                         _db->make_iterator(false,_snap),{
                         from,pfx,
                         FirstRecord::included, LastRecord::excluded
                 });
             } else {
-                return IndexBase::template create_iterator<_ValueDef>(
+                return IndexBase::template create_recordset<_ValueDef>(
                         _db->make_iterator(false,_snap),{
                         from,to,
                         FirstRecord::included, LastRecord::excluded
@@ -240,14 +258,14 @@ public:
         } else {
             Key xfrom = from.prefix_end();
             if (last_record == LastRecord::included) {
-                return IndexBase::template create_iterator<_ValueDef>(
+                return IndexBase::template create_recordset<_ValueDef>(
                         _db->make_iterator(false,_snap),{
                         xfrom,to,
                         FirstRecord::excluded, LastRecord::included
                 });
             } else {
                 Key xto = to.prefix_end();
-                return IndexBase::template create_iterator<_ValueDef>(
+                return IndexBase::template create_recordset<_ValueDef>(
                         _db->make_iterator(false,_snap),{
                         xfrom,xto,
                         FirstRecord::excluded, LastRecord::included
@@ -268,21 +286,23 @@ template<typename _DocDef>
 struct SkipDocIDDcument {
     using Type = typename _DocDef::Type;
     template<typename Iter>
-    Type from_binary(Iter from, Iter to) {
+    static Type from_binary(Iter from, Iter to) {
         std::advance(from, sizeof(DocID));
         return _DocDef::from_binary(from, to);
     }
     template<typename Iter>
-    void to_binary(const Type &val, Iter push) {
+    static Iter to_binary(const Type &val, Iter push) {
         static_assert(defer_false<Iter>, "Not implemented");
+        return push;
     }
+    //WriteIteratorConcept to_binary(const Type &val, WriteIteratorConcept push);
 };
 
-template<typename _Storage, typename _ValueDef=RowDocument, IndexType index_type = IndexType::multi>
-using IndexView = IndexViewGen<_ValueDef,
+template<typename _Storage, typename _ValueDef, IndexType index_type>
+using IndexView =
         std::conditional_t<index_type == IndexType::multi,
-                IndexViewBaseWithStorage_IDinkey<_Storage>,
-                IndexViewBaseWithStorage_IDinvalue<_Storage>> >;
+        IndexViewGen<_ValueDef,IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromKey> >,
+        IndexViewGen<SkipDocIDDcument<_ValueDef>, IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromValue> > >;
 
 }
 

@@ -83,7 +83,7 @@ CXX20_CONCEPT(IsVariant,requires {
  * @tparam T
  */
 template<typename T>
-CXX20_CONCEPT(DocumentWrapper, std::is_constructible_v<T, decltype([](std::string &)->bool{})>);
+CXX20_CONCEPT(DocumentWrapper, std::is_constructible_v<T, decltype([](std::string &)->bool{return true;})>);
 
 
 template<typename T>

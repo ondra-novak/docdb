@@ -14,6 +14,7 @@
 #include <memory>
 #include <utility>
 #include <functional>
+#include <optional>
 
 
 namespace docdb {
@@ -80,14 +81,64 @@ static constexpr bool isForward(Direction dir) {
 }
 
 
-///Defines filter interface
-/**
- * Filter object allows to filter iterator's results and transform
- * them, which allows to perform calculations
- */
+
+template<typename Collection, typename ValueType>
+class RecordSetIteratorT: public std::iterator<std::forward_iterator_tag, ValueType> {
+public:
+
+
+    RecordSetIteratorT () = default;
+    RecordSetIteratorT (Collection &coll, bool is_end):_coll(&coll), _is_end(is_end) {}
+    RecordSetIteratorT (const RecordSetIteratorT &other):_coll(other._coll),_is_end(other._is_end) {}
+    RecordSetIteratorT &operator=(const RecordSetIteratorT &other) {
+        if (this != &other) {
+            _coll = other._coll;
+            _is_end = other._is_end;
+            _val.reset();
+        }
+    }
+
+    bool operator==(const RecordSetIteratorT &other) const {
+        return _coll == other._coll && _is_end == other._is_end;
+    }
+    RecordSetIteratorT &operator++() {
+        _is_end = !_coll->next();
+        _val.reset();
+        return *this;
+    }
+
+    RecordSetIteratorT operator++(int) {
+        RecordSetIteratorT ret = *this;
+        _is_end = !_coll->next();
+        _val.reset();
+        return ret;
+    }
+
+    const ValueType &operator *() const {
+        return get_value();
+    }
+
+    const ValueType *operator->() const {
+        return &get_value();
+    }
+
+protected:
+    Collection *_coll = nullptr;
+    bool _is_end = true;
+    mutable std::optional<ValueType> _val;
+    const ValueType &get_value() const {
+        if (!_val.has_value()) {
+            _val.emplace(_coll->get_item());
+        }
+        return *_val;
+    }
+
+};
+
+
 
 template<DocumentDef _ValueType>
-class Iterator {
+class RecordSetT {
 
     enum class DirAndState {
         next_first,
@@ -103,7 +154,7 @@ public:
     public:
         virtual ~AbstractFilter() = default;
         virtual void release() {delete this;}
-        virtual bool filter(const Iterator &iter) {return true;}
+        virtual bool filter(const RecordSetT &iter) {return true;}
         virtual ValueType transform(const std::string_view &data) {
             return _ValueType::from_binary(data.begin(), data.end());
         }
@@ -124,7 +175,7 @@ public:
         FilterChain(PFilter &&first,PFilter &&second)
             :_first(std::move(first)),_second(std::move(second)) {}
 
-        virtual bool filter(const Iterator &iter) {
+        virtual bool filter(const RecordSetT &iter) {
             return _first->filter(iter) && _second->filter(iter);;
         }
         virtual ValueType transform(const std::string_view &data) {
@@ -147,9 +198,9 @@ public:
         PFilter filter;
     };
 
-    Iterator(std::unique_ptr<leveldb::Iterator> &&iter, Config &&config)
-        : Iterator(std::move(iter), config) {}
-    Iterator(std::unique_ptr<leveldb::Iterator> &&iter, Config &config)
+    RecordSetT(std::unique_ptr<leveldb::Iterator> &&iter, Config &&config)
+        : RecordSetT(std::move(iter), config) {}
+    RecordSetT(std::unique_ptr<leveldb::Iterator> &&iter, Config &config)
         :_iter(std::move(iter))
         ,_range_end(config.range_end)
         ,_direction(config.range_start > config.range_end?DirAndState::previous_first:DirAndState::next_first)
@@ -288,6 +339,25 @@ public:
 
     }
 
+    struct IteratorValueType {
+        Key key;
+        ValueType value;
+    };
+
+    auto get_item() const {
+        return IteratorValueType{key(), value()};
+    }
+
+    using Iterator = RecordSetIteratorT<RecordSetT, IteratorValueType>;
+
+
+    Iterator begin() {
+        return Iterator(*this, false);
+    }
+    Iterator end() {
+        return Iterator(*this, true);
+    }
+
 
 protected:
 
@@ -296,11 +366,12 @@ protected:
     DirAndState _direction;
     LastRecord _last_record;
     PFilter _filter;
+    std::size_t _cur_pos = 0;
 
 };
 
 template<DocumentDef _ValueDef>
-using GenIterator = Iterator<_ValueDef>;
+using GenIterator = RecordSetT<_ValueDef>;
 
 
 

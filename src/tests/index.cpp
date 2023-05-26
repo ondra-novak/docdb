@@ -20,7 +20,7 @@ void test1() {
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
     Storage storage(db, "test_storage");
     Index_TextToLen index1(storage, "text_to_len");
-    Index_TextToLen index2(storage, "len_to_text");
+    Index_LenToText index2(storage, "len_to_text");
 
     docdb::DocID d1,d2,d3,d4;
     d1 = storage.put("hello");
@@ -69,6 +69,14 @@ void test1() {
             auto docref = storage[id];
             CHECK_EQUAL(*docref->document, "world");
         }
+        storage.put("world2",d2);
+        {
+            auto iter = index1.lookup("world");
+            CHECK(!iter.next());
+            auto iter2 = index1.lookup("world2");
+            CHECK(iter2.next());
+        }
+
 
 }
 
