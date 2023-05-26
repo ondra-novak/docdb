@@ -222,7 +222,7 @@ public:
 
     }
 
-    void reset() {
+    bool reset() {
         _iter->Seek(_range_beg);
 
         switch (_direction) {
@@ -247,6 +247,7 @@ public:
             default:
                 throw;
         }
+        return !_is_at_end;
 
     }
 

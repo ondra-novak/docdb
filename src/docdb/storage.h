@@ -6,6 +6,7 @@
 
 namespace docdb {
 
+
 template<DocumentDef _DocDef = RowDocument>
 class Storage: public StorageView<_DocDef> {
 public:
@@ -218,7 +219,7 @@ public:
           Batch b;
           bool rep = true;
           for (const auto &vdoc: this->select_all()) {
-              const DocType *doc =  vdoc.content.has_value()?&(*vdoc.content):nullptr;
+              const DocType *doc =  vdoc.deleted?nullptr:&vdoc.content;
               if constexpr(std::is_void_v<decltype(update_for(observer, b, vdoc.id, doc, vdoc.previous_id))>) {
                   update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
               } else {
@@ -304,7 +305,7 @@ protected:
                 auto [old_old_doc_id, bin] = rw.get<DocID, Blob>();
                 auto beg = bin.begin();
                 auto end = bin.end();
-                if (!StorageView<_DocDef>::is_deleted(beg, end)) {
+                if (!document_is_deleted<_DocDef>(beg, end)) {
                     auto old_doc = _DocDef::from_binary(beg, end);
                     notify_observers(b, Update {doc,&old_doc,id,update_id,old_old_doc_id});
                     return id;
@@ -326,7 +327,7 @@ protected:
                   auto [old_old_doc_id, bin] = rw.get<DocID, Blob>();
                   auto beg = bin.begin();
                   auto end = bin.end();
-                  if (!StorageView<_DocDef>::is_deleted(beg, end)) {
+                  if (!document_is_deleted<_DocDef>(beg, end)) {
                       auto old_doc = _DocDef::from_binary(beg, end);
                       return fn(b, Update {doc,&old_doc,id,prev_id,old_old_doc_id});
                   }

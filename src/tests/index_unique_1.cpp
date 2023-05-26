@@ -33,7 +33,7 @@ void test1() {
        CHECK_EQUAL(x.id, 2);
        auto [v] = x.value.get<std::size_t>();
        CHECK_EQUAL(v, 5);
-       CHECK_EQUAL(*x.document()->content, "world");
+       CHECK_EQUAL(x.document()->content, "world");
        fnd++;
     }
 

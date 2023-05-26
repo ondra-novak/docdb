@@ -9,6 +9,132 @@ namespace docdb {
 using DocID = std::uint64_t;
 
 
+
+template<typename _DocDef, typename Iter>
+static bool document_is_deleted(Iter b, Iter e) {
+    if (b == e) return true;
+    if constexpr(DocumentCustomDeleted<_DocDef>) {
+        return _DocDef::is_deleted(b, e);
+    }
+    return false;
+}
+
+
+///Contains whole record from the storage
+/**
+ * This class is accessible from DocRecordT and from Storage::DocRecord. For document
+ * without default constructor, the struct DocRecord_Un is used
+ *
+ * @tparam _DocDef Document definition struct
+ */
+template<typename _DocDef>
+struct DocRecord_Def {
+    using DocType = typename _DocDef::Type;
+    ///Contains document itself
+    DocType content = {};
+    ///Contains ID of a document which has been replaced
+    DocID previous_id = 0;
+    ///Contains true if this record is deleted document
+    bool deleted = true;
+    DocRecord_Def(DocID previous_id):previous_id(previous_id),deleted(true) {}
+    template<typename Iter>
+    DocRecord_Def(Iter b, Iter e) {
+        previous_id = Row::deserialize_item<DocID>(b, e);
+        deleted = document_is_deleted<_DocDef>(b, e);
+        if (b != e) {
+            content =  _DocDef::from_binary(b,e);
+        }
+    }
+
+};
+
+///Contains whole record from the storage
+/**
+ * This class is accessible from DocRecordT and from Storage::DocRecord. This
+ * struct is used when document type has no default constructor
+ *
+ * @tparam _DocDef Document definition struct
+ */
+template<typename _DocDef>
+struct DocRecord_Un {
+    using DocType = typename _DocDef::Type;
+    ///Contains document itself
+    /**
+     * @note If the document is erased, it can be still constructed, you need to
+     * check has_value before accessing the object
+     *
+     */
+    union {
+        DocType content;
+    };
+    ///Contains ID of a document which has been replaced
+    DocID previous_id = 0;
+    ///contains true, if the content contains a value, when false, do not access this variable
+    const bool has_value = false;
+    ///contains true, if the document is marked as deleted
+    bool erased = true;
+
+
+    DocRecord_Un(DocID previous_id):previous_id(previous_id)  {}
+    ~DocRecord_Un() {if (has_value) content.~DocType();}
+    template<typename Iter>
+    DocRecord_Un(Iter b, Iter e):has_value(load_info(b,e,previous_id)) {
+        erased = document_is_deleted<_DocDef>(b, e);
+        if (has_value) {
+            const_cast<bool &>(has_value) = true;
+            ::new(&content) DocType(_DocDef::from_binary(b,e));
+        }
+    }
+    DocRecord_Un(const DocRecord_Un &other)
+        :previous_id(other.previous_id),has_value(other.has_value), erased(other.erased) {
+        if (has_value) new(&content) DocType(other.content);
+    }
+    DocRecord_Un(DocRecord_Un &&other):previous_id(other.previous_id),has_value(other.has_value), erased(other.erased) {
+        if (has_value) new(&content) DocType(std::move(other.content));
+    }
+    DocRecord_Un &operator=(const DocRecord_Un &other) {
+        if (this != &other) {
+            this->~DocRecord_Un();
+            ::new(this) DocRecord_Un(other);
+        }
+        return *this;
+    }
+    DocRecord_Un &operator=(DocRecord_Un &&other) {
+        if (this != &other) {
+            this->~DocRecord_Un();
+            ::new(this) DocRecord_Un(std::move(other));
+        }
+        return *this;
+    }
+    template<typename Iter>
+    static bool load_info(Iter &b, Iter e, DocID &prvid) {
+        prvid = Row::deserialize_item<DocID>(b, e);
+        return b == e;
+
+    }
+
+};
+
+template<typename _DocDef>
+using DocRecordT = std::conditional_t<std::is_default_constructible_v<typename _DocDef::Type>,DocRecord_Def<_DocDef>,DocRecord_Un<_DocDef> >;
+
+template<typename _DocDef>
+struct DocRecordDef {
+    using Type = DocRecordT<_DocDef>;
+    template<typename Iter>
+    static Type from_binary(Iter b, Iter e) {
+        return Type(b,e);
+    }
+    template<typename Iter>
+    static Iter to_binary(const Type &type, Iter iter) {
+        Row::serialize_items(iter, type.previous_id);
+        if (type.deleted) return iter;
+        return _DocDef::to_binary(type.content, iter);
+    }
+
+};
+
+
 template<DocumentDef _DocDef = RowDocument>
 class StorageView {
 public:
@@ -23,40 +149,8 @@ public:
         return StorageView(_db, _kid, _dir, _db->make_snapshot());
     }
 
-    ///Contains a record read from the storage
-    struct DocRecord {
-        ///ID of document which has been replaced by this document (previous revision)
-        DocID previous_id;
-        ///Contains document itself. The value is not defined, if the ID contains a deleted document
-        std::optional<DocType> content;
-    };
+    using DocRecord = DocRecordT<_DocDef>;
 
-
-    template<typename Iter>
-    static bool is_deleted(Iter b, Iter e) {
-        if (b == e) return true;
-        if constexpr(DocumentCustomDeleted<_DocDef>) {
-            return _DocDef::is_deleted(b, e);
-        }
-        return false;
-    }
-
-    struct DocRecordDef {
-        using Type = DocRecord;
-        template<typename Iter>
-        static Type from_binary(Iter b, Iter e) {
-            Type out;
-            out.previous_id = Row::deserialize_item<DocID>(b, e);
-            if (is_deleted(b, e)) return out;
-            out.content.emplace(_DocDef::from_binary(b,e));
-            return out;
-        }
-        template<typename Iter>
-        static Iter to_binary(const Type &type, Iter iter) {
-            Row::serialize_items(iter, type.previous_id);
-            return _DocDef::to_binary(*type.content, iter);
-        }
-    };
 
     ///Access directly to document
     /**
@@ -79,14 +173,14 @@ public:
      * }
      *
      */
-    Document<DocRecordDef> operator[](DocID id) const {
-        return _db->get_as_document<Document<DocRecordDef> >(RawKey(_kid, id));
+    Document<DocRecordDef<_DocDef> > operator[](DocID id) const {
+        return _db->get_as_document<Document<DocRecordDef<_DocDef> > >(RawKey(_kid, id));
     }
 
     struct IteratorValueType: DocRecord {
         DocID id = 0;
         IteratorValueType(std::string_view raw_key, std::string_view raw_value)
-            :DocRecord(DocRecordDef::from_binary(raw_value.begin(),raw_value.end()))
+            :DocRecord(DocRecordDef<_DocDef>::from_binary(raw_value.begin(),raw_value.end()))
              {
                 Key k ((RowView(raw_key)));
                 id  = std::get<0>(k.get<DocID>());

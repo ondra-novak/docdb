@@ -78,7 +78,7 @@ public:
         RawKey k(system_table,system_table, id);
         std::string out;
         if (_dbinst->Get({}, k, &out).ok()) {
-            return out;
+            return out.substr(1);
         } else {
             return {};
         }
