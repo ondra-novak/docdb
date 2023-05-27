@@ -176,6 +176,8 @@ public:
     IndexViewGen(const PDatabase &db,KeyspaceID kid,Direction dir,const PSnapshot &snap, Args && ... baseArgs)
         :IndexBase(std::forward<Args>(baseArgs)...),_db(db),_kid(kid),_dir(dir),_snap(snap) {}
 
+
+    PDatabase get_db() const {return _db;}
     ///Retrieves exact row
     /**
      * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
@@ -304,6 +306,7 @@ public:
             }
         }
     }
+
 
 
 protected:

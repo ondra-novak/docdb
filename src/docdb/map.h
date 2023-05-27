@@ -11,6 +11,14 @@ namespace docdb {
 template<DocumentDef _ValueDef>
 using MapView = IndexViewGen<_ValueDef, IndexViewBaseEmpty>;
 
+
+///Map is simple key-value storage with support of transaction observers
+/**
+ * Map can be used instead the Storage if you want to manage a primary key. Note that map
+ * cannot be indexed using Indexer. However, Map can be aggregated by aggregator
+ *
+ * @tparam _ValueDef Document definition of value
+ */
 template<DocumentDef _ValueDef>
 class Map : public MapView<_ValueDef> {
 public:

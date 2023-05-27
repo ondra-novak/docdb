@@ -1,10 +1,9 @@
 #include "check.h"
-#include "../docdb/doc_storage.h"
-#include "../docdb/doc_index.h"
-#include "../docdb/aggregate.h"
-#include "../docdb/stats.h"
-
+#include "../docdb/storage.h"
+#include "../docdb/indexer.h"
+#include "../docdb/aggregator.h"
 #include "memdb.h"
+#include "../docdb/aggregated_functions.h"
 
 static std::pair<std::string_view,int> words[] = {
         {"feed",56},
@@ -39,55 +38,52 @@ static std::pair<std::string_view,int> words[] = {
         {"reward",99}
 };
 
-decltype(auto) operator<<(std::ostream &out, const docdb::StatData &data) {
-    return (out << "count=" << data.count << ", sum=" << data.sum
-               << ", sum^2=" << data.sum2 << ", min=" << data.min
-               << ", max=" << data.max) << ", avg=" << data.sum/data.count;
-}
+
 
 void test1() {
 
     auto ramdisk = newRamdisk();
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
-    using Storage = docdb::DocumentStorage<docdb::RowDocument>;
-    using Index = docdb::DocumentIndex<Storage>;
-    using SumAndCountAggr = docdb::AggregateIndex<Index, docdb::RowDocument>;
-
-    Storage storage(db, "test_storage");
-    Index index(storage, "test_index", 1, [](auto &emit, const docdb::Row &doc){
+    using Storage = docdb::Storage<docdb::RowDocument>;
+    using Index = docdb::Indexer<Storage, [](auto emit, const docdb::Row &doc){
         auto [text,number] = doc.get<std::string_view, int>();
         emit({text.length()},{number});
-    });
-    SumAndCountAggr aggr(index, "test_aggr", 1, docdb::KeyReduce<std::size_t>(), docdb::Stats());
+    },1,docdb::IndexType::multi, docdb::RowDocument>;
+    using StatsAggregator = docdb::Aggregator<Index,
+            docdb::reduceKey<std::size_t>(),
+            docdb::aggregate<docdb::Composite<int, docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int> > >(),1>;
+
+
+    Storage storage(db, "test_storage");
+    Index index(storage, "test_index");
+    StatsAggregator aggr(index, "test_aggr", true);
+
+
 
     for (auto c: words) {
         storage.put({c.first,c.second});
     }
 
+    aggr.sync();
 
-    {
-        auto s = aggr.scan();
-        while (s.next()) {
-            auto [v] = s.value().get<docdb::StatData>();
-            auto [k] = s.key().get<std::size_t>();
-            std::cout << k << ": " << v << std::endl;
-        }
+    for (const auto &x: aggr.select_all()) {
+        auto [k] = x.key.get<std::size_t>();
+        auto [count, sum, min, max] = x.value.get<int, int,int, int>();
+        std::cout << k << ": count=" << count << ", sum=" << sum  << ", max=" << max <<", min=" << min << std::endl;
     }
+
     storage.put(docdb::Row{"aaa",2});
-    auto g = index.lookup(13);
-    while (g.next()) {
-        storage.erase(g.id());
+    for (const auto &x:  index.lookup(std::size_t(13))) {
+        storage.erase(x.id);
     }
-    {
-        auto s = aggr.scan();
-        while (s.next()) {
-            auto [v] = s.value().get<docdb::StatData>();
-            auto [k] = s.key().get<std::size_t>();
-            std::cout << k << ": " << v << std::endl;
-        }
+    aggr.sync();
+    std::cout << "---------------" << std::endl;
+    for (const auto &x: aggr.select_all()) {
+        auto [k] = x.key.get<std::size_t>();
+        auto [count, sum, min, max] = x.value.get<int, int,int, int>();
+        std::cout << k << ": count=" << count << ", sum=" << sum  << ", max=" << max <<", min=" << min << std::endl;
     }
-
 
 
 

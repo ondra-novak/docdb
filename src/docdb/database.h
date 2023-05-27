@@ -6,17 +6,14 @@
 #include "batch.h"
 #include "key.h"
 #include "purpose.h"
+#include "task_thread.h"
 
-#include <memory>
 #include <leveldb/db.h>
-#include <limits>
 #include <string>
-#include <optional>
-#include <shared_mutex>
 #include <stack>
-#include <vector>
 #include <map>
 #include <mutex>
+#include <shared_mutex>
 #include <variant>
 
 
@@ -284,6 +281,22 @@ public:
         _dbinst->CompactRange(&f,&t);
     }
 
+    ///Start asynchronous task
+    /**
+     * Creates thread and starts task. If other task is already running, this task is queued
+     * and it is executed once previous task is done. So there is always maximum 1 thread which
+     * executing one task at background. Use this function to start short tasks at background,
+     * do not block the execution for long tasks
+     *
+     * @note This feature is used by aggregators
+     *
+     * @param fn function to executed
+     */
+    template<std::invocable<> Fn>
+    void run_async(Fn &&fn) {
+        _async.run(std::forward<Fn>(fn));
+    }
+
 protected:
     static constexpr KeyspaceID system_table = std::numeric_limits<KeyspaceID>::max();
 
@@ -294,32 +307,9 @@ protected:
     std::stack<KeyspaceID> _free_ids;
     KeyspaceID _min_free_id = 0;
     mutable std::shared_mutex _mx;
+    TaskThread _async;
 
 };
-///Base class for views
-class ViewBase {
-public:
-
-    ViewBase(const PDatabase &db, std::string_view name, Direction dir = Direction::forward, const PSnapshot &snap = {})
-        :_db(db),_snap(snap),_kid(_db->open_table(name, Purpose::undefined)), _dir(dir) {}
-    ViewBase(const PDatabase &db, KeyspaceID kid, Direction dir = Direction::forward, const PSnapshot &snap = {})
-        :_db(db), _snap(snap),_kid(kid), _dir(dir) {}
-
-    ///Get database
-    const PDatabase& get_db() const {return _db;}
-    ///Get Keyspace id
-    KeyspaceID get_kid() const {return _kid;}
-    ///Get current snapshot
-    const PSnapshot& get_snapshot() const {return _snap;}
-
-    Direction get_default_direction() const {return _dir;}
-protected:
-    PDatabase _db;
-    PSnapshot _snap;
-    KeyspaceID _kid;
-    Direction _dir;
-};
-
 
 }
 

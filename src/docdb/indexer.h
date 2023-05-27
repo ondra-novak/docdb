@@ -36,7 +36,7 @@ protected:
 };
 
 template<DocumentStorageType Storage, auto indexFn, IndexerRevision revision, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
-//CXX20_REQUIRES(std::invocable<decltype(indexFn), IndexerEmitTemplate<_ValueDef>, const typename Storage::DocType &>)
+CXX20_REQUIRES(std::invocable<decltype(indexFn), IndexerEmitTemplate<_ValueDef>, const typename Storage::DocType &>)
 class Indexer: public IndexView<Storage, _ValueDef, index_type> {
 public:
 
@@ -75,6 +75,17 @@ public:
         _tx_observers.push_back(std::move(obs));
     }
 
+    void rescan_for(TransactionObserver obs) {
+        Batch b;
+        for (const auto &x: this->select_all()) {
+            if (b.is_big()) {
+                this->_db->commit_batch(b);
+            }
+            obs(b, x.key, x.value, false);
+        }
+        this->_db->commit_batch(b);
+    }
+
 
     struct IndexedDoc {
         DocID cur_doc;
@@ -89,7 +100,7 @@ public:
         Emit(Indexer &owner, Batch &b, const IndexedDoc &docinfo)
             :_owner(owner), _b(b), _docinfo(docinfo) {}
 
-        void operator()(Key &&key, const ValueType &&value) {put(key, value);}
+        void operator()(Key &&key, const ValueType &value) {put(key, value);}
         void operator()(Key &key, const ValueType &value) {put(key, value);}
 
         DocID id() const {return _docinfo.cur_doc;}
