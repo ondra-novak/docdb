@@ -9,6 +9,7 @@ set(testFiles
     index.cpp
     index_unique_1.cpp
     row.cpp
+    map.cpp
 )
 
 link_libraries(

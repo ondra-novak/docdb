@@ -18,9 +18,12 @@ public:
         :Storage(db,db->open_table(name, Purpose::storage)) {}
 
     Storage(const PDatabase &db, KeyspaceID kid)
-        :StorageView<_DocDef>(db,kid, Direction::forward, {}) {
+        :StorageView<_DocDef>(db,kid, Direction::forward, {})
+        ,_cmt_obs(*this) {
         init_id();
     }
+    Storage(const Storage &) = delete;
+    Storage &operator=(const Storage &) = delete;
 
 
 
@@ -96,9 +99,7 @@ public:
      *
      */
     void register_commit_observer(CommitObserver obs) {
-        std::lock_guard _(_commit_observers_mx);
-        _commit_observers.push_back(std::move(obs));
-        _any_commit_observers = true;
+        _cmt_obs.reg_observer(std::move(obs));
     }
 
 
@@ -114,7 +115,7 @@ public:
         Batch b;
         DocID id = write(b, &doc, id_of_updated_document);
         this->_db->commit_batch(b);
-        notify_commit_observers(id);
+        _cmt_obs.notify_doc(id);
         return id;
     }
     ///Put document to the storage - batch update
@@ -130,7 +131,7 @@ public:
      */
     DocID put(Batch &b, const DocType &doc, DocID id_of_updated_document = 0) {
         DocID id = write(b, &doc, id_of_updated_document);
-        attach_notify_commit_to_batch(b, id);
+        _cmt_obs.reg_doc(b, id);
         return id;
     }
 
@@ -154,7 +155,7 @@ public:
         Batch b;
         DocID id = write(b, nullptr, del_id);
         this->_db->commit_batch(b);
-        notify_commit_observers(id);
+        _cmt_obs.notify_doc(id);
         return id;
     }
 
@@ -177,7 +178,7 @@ public:
      */
     DocID erase(Batch &b, DocID del_id) {
         DocID id = write(b, nullptr, del_id);
-        attach_notify_commit_to_batch(b, id);
+        _cmt_obs.reg_doc(b, id);
         return id;
     }
 
@@ -238,50 +239,68 @@ public:
 
 protected:
 
+
+    class CommitObservers: public AbstractBatchNotificationListener {
+    public:
+
+        CommitObservers(Storage &owner):_owner(owner) {}
+        virtual void after_commit(std::size_t rev) noexcept override {
+            std::lock_guard lk(_mx);
+            DocID db_rev = _owner.get_rev();
+            for (const auto &i: _pending_writes) {
+                if (i.first == rev) {
+                    notify_observers_lk(i.second, db_rev);
+                }
+            }
+        }
+        CommitObservers(const CommitObservers &) = delete;
+        CommitObservers &operator=(const CommitObservers &) = delete;
+
+        virtual void before_commit(docdb::Batch &b) override {}
+        virtual void after_rollback(std::size_t rev) noexcept override {}
+
+        void reg_observer(CommitObserver &obs) {
+            std::lock_guard lk(_mx);
+            _observers.emplace_back(std::move(obs));
+            _any_observers = true;
+        }
+
+        void reg_doc(Batch &b, DocID id) {
+            if (_any_observers) {
+                std::lock_guard lk(_mx);
+                b.add_listener(this);
+                _pending_writes.emplace_back(b.get_revision(), id);
+            }
+        }
+        void notify_doc(DocID id) {
+            if (_any_observers) {
+                std::lock_guard lk(_mx);
+                notify_observers_lk(id, _owner.get_rev());
+            }
+        }
+
+        void notify_observers_lk(DocID id, std::size_t db_rev) {
+            auto new_end = std::remove_if(_observers.begin(), _observers.end(), [&](const auto &c){
+                  return !c(db_rev, id);
+            });
+            _observers.erase(new_end, _observers.end());
+            _any_observers = !_observers.empty();
+        }
+
+        Storage &_owner;
+        std::vector<CommitObserver> _observers;
+        std::vector<std::pair<std::size_t, DocID> > _pending_writes;
+        std::mutex _mx;
+        bool _any_observers = false;
+    };
+
     std::vector<TransactionObserver> _transaction_observers;
-    std::vector<CommitObserver> _commit_observers;
-    std::mutex _commit_observers_mx;
     std::atomic<DocID> _next_id = 1;
-    bool _any_commit_observers = false;
+    CommitObservers _cmt_obs;
 
     void notify_observers(Batch &b, const Update &up) {
         for (const auto &x: _transaction_observers) {
             x(b, up);
-        }
-    }
-    void notify_commit_observers(DocID docId) {
-        if (_any_commit_observers) {
-            std::lock_guard _(_commit_observers_mx);
-            DocID rev = _next_id.load(std::memory_order_relaxed);
-            auto new_end = std::remove_if(_commit_observers.begin(), _commit_observers.end(), [&](const auto &c){
-               return !c(rev, docId);
-            });
-            _commit_observers.erase(new_end, _commit_observers.end());
-            _any_commit_observers = !_commit_observers.empty();
-        }
-    }
-
-    class BatchCommitInfo {
-    public:
-        void run(bool commit) {
-            if (commit) _owner.notify_commit_observers(_id);
-            delete this;
-        }
-        BatchCommitInfo(Storage &owner, DocID id):_owner(owner),_id(id) {}
-
-        static Batch::Hook createHook(Storage &owner, DocID id)  {
-            auto p = new BatchCommitInfo(owner, id);
-            return Batch::Hook::member_fn<&BatchCommitInfo::run>(p);
-        }
-
-    protected:
-        Storage &_owner;
-        DocID _id;
-    };
-
-    void attach_notify_commit_to_batch(Batch &b, DocID id) {
-        if (_any_commit_observers) {
-            b.add_hook(BatchCommitInfo::createHook(*this, id));
         }
     }
 
@@ -339,8 +358,6 @@ protected:
 };
 
 }
-
-
 
 
 #endif /* SRC_DOCDB_STORAGE_H_ */

@@ -258,11 +258,12 @@ public:
 
     ///Commits the batch and clear the batch
     void commit_batch(Batch &batch) {
+        batch.before_commit();
         auto st =_dbinst->Write(_write_opts, &batch);
         if (!st.ok()) {
             throw DatabaseError(st);
         }
-        batch.on_event(true);
+        batch.after_commit();
     }
 
 

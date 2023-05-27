@@ -89,7 +89,7 @@ public:
     };
 
     template<typename DocDef>
-    RecordSet<DocDef> create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSet<DocDef>::Config &&config) {
+    RecordSet<DocDef> create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSet<DocDef>::Config &&config) const {
         return RecordSet<DocDef>(std::move(iter), std::move(config));
     }
 
