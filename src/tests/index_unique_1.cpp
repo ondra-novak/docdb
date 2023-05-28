@@ -37,13 +37,21 @@ void test1() {
        fnd++;
     }
 
+    {
+        docdb::Batch b;
+        docdb::DocID x = storage.put(b,"HELLO", d1);
+        x = storage.put(b,"HELLO", x);
+        db->commit_batch(b);
+    }
+
+
     CHECK_EQUAL(fnd,1);
 
         {
             std::pair<std::string_view, std::size_t> results[] = {
                     {"bar",3},
                     {"foo",3},
-                    {"hello",5},
+                    {"HELLO",5},
                     {"world",5},
             };
             int r = 0;

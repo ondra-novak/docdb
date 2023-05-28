@@ -11,34 +11,32 @@ namespace docdb {
 enum class IndexType {
     ///unique index
     /**
-     * Unique index.
-     * It expects, that there is no duplicate keys, but
-     * it cannot enforce this. In case of failure of this rule,
-     * key is overwritten, so old document is dereferenced.
+     * Only unique keys are allowed. Attempt to place duplicated key
+     * causes exception and rollback of current batch
      *
-     * This index is the simplest and the most efficient
+     * @note performing check on keys can reduce performance. You can
+     * disable the check by using unique_no_check index type.
      */
     unique,
-    ///Unique index with enforcement
+    ///Unique index with no check
     /**
-     * Checks, whether keys are really unique. In case of failure of this
-     * rule, the transaction is rejected and exception is thrown
+     * Only unique keys. However, the duplication is not checked. Duplicated
+     * keys overwrites one over second, so only last document with duplicated
+     * key appear in the index.
      *
-     * This index can be slow, because it needs to search the database
-     * for every incoming record
+     * @note this index has better performance for writing new documents
+     *
      */
-    unique_enforced,
+    unique_no_check,
 
-    ///Unique index with enforcement but expect single thread insert
+    ///Unique index hiding duplicated keys
     /**
-     * This is little faster index in compare to unique_enforced, as it
-     * expects that only one thread is inserting. Failing this requirement
-     * can cause that duplicate key can be inserted during parallel insert (
-     * as the conflicting key is still in transaction, not in the database
-     * itself). This index type doesn't check for keys in transaction,
-     * so the implementation is less complicated
+     * Duplicated keys are indexed, but they are hidden in the recordset,
+     *
+     * @note this index is implemented as 'multi' with filter option in
+     * recordset
      */
-    unique_enforced_single_thread,
+    unique_hide_dup,
 
     ///Non-uniuqe, multivalue key
     /**
@@ -53,6 +51,7 @@ enum class IndexType {
      * retrieval function (get) needs whole key and document ID, otherwise
      * nothing is retrieved. Using a blob as key is undefined behavior.
      */
+
     multi,
 };
 
@@ -334,7 +333,7 @@ struct SkipDocIDDcument {
 
 template<DocumentStorageViewType _Storage, typename _ValueDef, IndexType index_type>
 using IndexView =
-        std::conditional_t<index_type == IndexType::multi,
+        std::conditional_t<index_type == IndexType::multi || index_type == IndexType::unique_hide_dup,
         IndexViewGen<_ValueDef,IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromKey> >,
         IndexViewGen<SkipDocIDDcument<_ValueDef>, IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromValue> > >;
 

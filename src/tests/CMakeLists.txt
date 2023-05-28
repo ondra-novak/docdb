@@ -8,7 +8,7 @@ set(testFiles
     storage.cpp
     buffer.cpp
     index.cpp
-    index_unique_1.cpp
+    index_unique.cpp
     row.cpp
     map.cpp
 )
