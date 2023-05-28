@@ -23,7 +23,7 @@ template<typename T>
 CXX20_CONCEPT(DocumentStorageType , requires(T x) {
     DocumentStorageViewType<T>;
     {x.register_transaction_observer(std::declval<std::function<void(Batch &, const typename T::Update &)> >())} -> std::same_as<void>;
-    {x.rescan_for(std::declval<SimpleFunction<bool, Batch &, const typename T::Update &> >())};
+    {x.rescan_for(std::declval<std::function<void(Batch &, const typename T::Update &)> >())};
     {T::Update::old_doc}->std::convertible_to<const typename T::DocType *>;
     {T::Update::new_doc}->std::convertible_to<const typename T::DocType *>;
     {T::Update::old_doc_id}->std::convertible_to<DocID>;

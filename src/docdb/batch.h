@@ -4,7 +4,6 @@
 
 #include <leveldb/write_batch.h>
 #include "buffer.h"
-#include "simple_function.h"
 
 #include <atomic>
 namespace docdb {
@@ -55,7 +54,6 @@ inline std::atomic<std::size_t> Revision::_cur_rev = {0};
 class Batch: public leveldb::WriteBatch {
 public:
     static std::size_t max_batch_size;
-    using Hook = SimpleFunction<void, bool>;
     using BufferType = Buffer<char, 32>;
     using NtfBuffer = Buffer<AbstractBatchNotificationListener *, 32>;
     using leveldb::WriteBatch::WriteBatch;
