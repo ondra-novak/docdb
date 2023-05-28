@@ -9,6 +9,7 @@ set(testFiles
     buffer.cpp
     index.cpp
     index_unique.cpp
+    index_unique_hide.cpp
     row.cpp
     map.cpp
 )

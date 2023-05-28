@@ -67,9 +67,9 @@ public:
     };
 
     template<typename DocDef>
-    class RecordSet : public RecordSetBase {
+    class RecordSet : public RecordSetBaseT<DocDef> {
     public:
-        using RecordSetBase::RecordSetBase;
+        using RecordSetBaseT<DocDef>::RecordSetBaseT;
 
         using Iterator = RecordSetIterator<RecordSet, IteratorValueType<DocDef> >;
 
@@ -94,7 +94,7 @@ public:
 
 };
 
-template<DocumentStorageViewType _Storage, typename DocIDExtract>
+template<DocumentStorageViewType _Storage, typename DocIDExtract, std::size_t hide_dup_sz = 0>
 class IndexViewBaseWithStorage {
 public:
 
@@ -111,10 +111,10 @@ public:
     };
 
     template<typename DocDef>
-    class RecordSet: public RecordSetBase {
+    class RecordSet: public RecordSetBaseT<DocDef> {
     public:
         RecordSet(_Storage &stor, std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSetBase::Config &&config)
-        :RecordSetBase(std::move(iter), std::move(config))
+        :RecordSetBaseT<DocDef>(std::move(iter), std::move(config))
         ,_storage(stor) {}
 
         using Iterator = RecordSetIterator<RecordSet, IteratorValueType<DocDef> >;
@@ -141,7 +141,17 @@ public:
     };
 
     template<typename DocDef>
-    RecordSet<DocDef> create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSetBase::Config &&config) const {
+    RecordSet<DocDef> create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, RecordSetBase::Config &&config) const {
+        if constexpr(hide_dup_sz > 0) {
+            config.filter = [prev = std::string()](const RecordSetBase &b) mutable {
+                std::string_view r = b.raw_key();
+                if (r.size() <= hide_dup_sz) return false;
+                r = r.substr(0, r.size()-hide_dup_sz);
+                if (prev == r) return false;
+                prev = r;
+                return true;
+            };
+        }
         return RecordSet<DocDef>(_storage, std::move(iter), std::move(config));
     }
 
@@ -334,7 +344,7 @@ struct SkipDocIDDcument {
 template<DocumentStorageViewType _Storage, typename _ValueDef, IndexType index_type>
 using IndexView =
         std::conditional_t<index_type == IndexType::multi || index_type == IndexType::unique_hide_dup,
-        IndexViewGen<_ValueDef,IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromKey> >,
+        IndexViewGen<_ValueDef,IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromKey, index_type==IndexType::unique_hide_dup?sizeof(DocID):0> >,
         IndexViewGen<SkipDocIDDcument<_ValueDef>, IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromValue> > >;
 
 }

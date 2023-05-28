@@ -136,23 +136,26 @@ class RecordSetBase {
 
 public:
 
+    ///Filter function - returns false to skip record
+    using Filter = std::function<bool(const RecordSetBase &)>;
 
     struct Config {
         std::string_view range_start;
         std::string_view range_end;
         FirstRecord first_record;
         LastRecord last_record;
+        Filter filter;
     };
 
-    RecordSetBase(std::unique_ptr<leveldb::Iterator> &&iter, Config &&config)
-        : RecordSetBase(std::move(iter), config) {}
-    RecordSetBase(std::unique_ptr<leveldb::Iterator> &&iter, Config &config)
+    RecordSetBase(std::unique_ptr<leveldb::Iterator> &&iter, const Config &config)
         :_iter(std::move(iter))
         ,_range_beg(config.range_start)
         ,_range_end(config.range_end)
         ,_direction(config.range_start <= config.range_end?Direction::forward:Direction::backward)
         ,_first_record(config.first_record)
-        ,_last_record(config.last_record) {
+        ,_last_record(config.last_record)
+        ,_filter(config.filter)
+    {
 
         reset();
 
@@ -191,8 +194,7 @@ public:
                     check_end_bw(_range_end, _last_record);
             };
             if (_is_at_end) return false;
-//            if (!_filter || _filter->filter(*this)) return true;
-            return true;
+            if (!_filter || _filter(*this)) return true;
         } while (true);
     }
 
@@ -216,8 +218,7 @@ public:
                     break;
             };
             if (_is_at_end) return false;
-//            if (!_filter || _filter->filter(*this)) return true;
-            return true;
+            if (!_filter || _filter(*this)) return true;
         } while (true);
 
     }
@@ -247,8 +248,23 @@ public:
             default:
                 throw;
         }
+        if (!_is_at_end && _filter && !_filter(*this)) {
+            return next();
+        }
         return !_is_at_end;
 
+    }
+
+    template<typename Fn>
+    CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, const RecordSetBase &>, bool>)
+    void add_filter(Fn &&fn) {
+        if (_filter) {
+            _filter = [a = std::move(_filter), b = std::move(fn)](const RecordSetBase &rc){
+                return a(rc) && b(rc);
+            };
+        } else {
+            _filter = fn;
+        }
     }
 
 protected:
@@ -280,10 +296,34 @@ protected:
     Direction _direction;
     FirstRecord _first_record;
     LastRecord _last_record;
+    Filter _filter;
     bool _is_at_end = false;
 
 };
 
+template<typename _DocDef>
+class RecordSetBaseT: public RecordSetBase {
+public:
+
+    using RecordSetBase::RecordSetBase;
+
+    template<typename Fn>
+    CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, Key, const typename _DocDef::Type &>, bool>)
+    void add_filter(Fn &&fn) {
+        RecordSetBase::add_filter([fn = std::move(fn)](RecordSetBase &rc){
+            auto s = rc.raw_value();
+            return fn(Key(RowView(rc.raw_key())), _DocDef::from_binary(s.begin(), s.end()));
+        });
+    }
+    template<typename Fn>
+    CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, Key>, bool>)
+    void add_filter(Fn &&fn) {
+        RecordSetBase::add_filter([fn = std::move(fn)](RecordSetBase &rc){
+            return fn(Key(RowView(rc.raw_key())));
+        });
+    }
+
+};
 
 
 

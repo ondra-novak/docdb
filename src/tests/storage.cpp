@@ -42,14 +42,13 @@ void test1() {
         CHECK_EQUAL(d->content,"baz");
         CHECK_EQUAL(d->previous_id,d3);
 
-#if 0
         storage.compact();
-        d = storage.get(d3);
+        d = storage[d3];
         CHECK(!d.has_value());
 
         struct Res {
-            Storage::DocID id;
-            Storage::DocID prevId;
+            docdb::DocID id;
+            docdb::DocID prevId;
             std::string_view text;
         };
 
@@ -60,27 +59,19 @@ void test1() {
                 {5,3,"baz"}
         };
 
+        const Res *pt = res;
+        for (const auto &row: storage.select_from(d1))
         {
-            Storage::Iterator iter = storage.scan_from(d1);
-            const Res *pt = res;
-            while (iter.next()) {
-                auto doc = iter.value();
-                auto id = iter.id();
-                auto prev_id = iter.prev_id();
-                CHECK_EQUAL(id, pt->id);
-                CHECK_EQUAL(prev_id, pt->prevId);
-                CHECK_EQUAL(*doc, pt->text);
-                pt++;
-            }
+            CHECK_EQUAL(row.id, pt->id);
+            CHECK_EQUAL(row.previous_id, pt->prevId);
+            CHECK_EQUAL(row.content, pt->text);
+            pt++;
         }
-#endif
+
     }
     {
         Storage storage(db, "test_storage");
         CHECK_EQUAL(storage.get_rev(), 6);
-        for (auto x: storage.select_range(3,1,docdb::LastRecord::included)) {
-            std::cout << x.id << std::endl;
-        }
     }
 
 

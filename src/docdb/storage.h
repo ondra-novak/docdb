@@ -6,6 +6,18 @@
 
 namespace docdb {
 
+class ReferencedDocumentNotFoundException : public std::exception {
+public:
+    ReferencedDocumentNotFoundException(DocID id)
+        :_id(id), _msg("Referenced document not found: ") {
+        _msg.append(std::to_string(id));
+    }
+    DocID get_id() const {return _id;}
+    const char *what() const noexcept override {return _msg.c_str();}
+protected:
+    DocID _id;
+    std::string _msg;
+};
 
 template<DocumentDef _DocDef = RowDocument>
 class Storage: public StorageView<_DocDef> {
@@ -235,6 +247,62 @@ public:
         return _next_id.load(std::memory_order_relaxed);
     }
 
+    ///Remove old revisions and deleted documents
+    /**
+     * @param count of updates to keep in history. Default value 0 removes
+     * any historical document. Set 1 to keep one historical document,
+     * 2 to two, etc.
+     *
+     * @param deleted set true to remove all deleted documents including history
+     * Documents must be deleted by function erase().
+     *
+     * No indexes are affected, no notification is generated
+     *
+     * @note the function never removes the very recent document
+     */
+    void compact(std::size_t n=0, bool deleted = false) {
+        Batch b;
+        std::unordered_map<DocID, std::size_t> refs;
+        RecordSetBase rs(this->_db->make_iterator(false,{}), {
+                RawKey(this->_kid+1),
+                RawKey(this->_kid),
+                FirstRecord::excluded,
+                LastRecord::excluded
+        });
+        bool first_processed = false;
+        bool changes = false;
+        if (!rs.is_at_end()) {
+            do {
+                Key k(RowView(rs.raw_key()));
+                Row v(RowView(rs.raw_value()));
+                auto [cur_doc] = k.get<DocID>();
+                auto [prev_doc, doc] = v.get<DocID, Blob>();
+
+                auto iter = refs.find(cur_doc);
+                std::size_t level = -1;
+                if (iter != refs.end()) {
+                    level = iter->second;
+                    if (level >= n) {
+                        b.Delete(to_slice(rs.raw_key()));
+                        changes = true;
+                    }
+                    refs.erase(iter);
+                } else if (deleted && doc.empty() && first_processed) {
+                        b.Delete(to_slice(rs.raw_key()));
+                        level = n;
+                        changes = true;
+
+                }
+                if (prev_doc) {
+                    refs.emplace(prev_doc, level+1);
+                }
+            } while (rs.next());
+        }
+        if (changes) {
+            this->_db->commit_batch(b);
+            this->_db->compact_range(RawKey(this->_kid), RawKey(this->_kid+1));
+        }
+    }
 
 
 protected:
@@ -331,6 +399,8 @@ protected:
                 }
                 notify_observers(b, Update{doc,nullptr,id,update_id,old_old_doc_id});
                 return id;
+            } else {
+                throw ReferencedDocumentNotFoundException(update_id);
             }
         }
         notify_observers( b, Update{doc,nullptr,id,update_id,0});

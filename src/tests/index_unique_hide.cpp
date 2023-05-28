@@ -4,6 +4,7 @@
 #include "../docdb/storage.h"
 #include "../docdb/indexer.h"
 
+
 template<typename Index, std::size_t N>
 void check_result(const Index &index, const std::pair<std::string_view, int> (&vals)[N]) {
     std::size_t i = 0;
@@ -19,8 +20,6 @@ void check_result(const Index &index, const std::pair<std::string_view, int> (&v
 }
 
 
-
-
 void test1() {
 
 
@@ -31,28 +30,33 @@ void test1() {
     using Index = docdb::Indexer<Storage, [](auto emit, const auto &doc) {
             auto [txt, val] = doc.get();
             emit(txt,val);
-        },1,docdb::IndexType::unique,docdb::FixedRowDocument<int> >;
+        },1,docdb::IndexType::unique_hide_dup,docdb::FixedRowDocument<int> >;
 
     Storage storage(db, "test_storage");
     Index index(storage, "test_index");
 
     docdb::DocID id = storage.put({"aaa", 5});
     storage.put({"bbb", 3});
-    CHECK_EXCEPTION(docdb::DuplicateKeyException, storage.put({"aaa", 2}));
+    storage.put({"aaa", 2});
     id = storage.put({"aaa", 12}, id);
-
-    check_result(index, {
-            {"aaa",12},
-            {"bbb",3}
-    });
 
 
 
     {
         docdb::Batch b;
         storage.put(b, {"aaa", 13}, id);
-        CHECK_EXCEPTION(docdb::DuplicateKeyException, storage.put(b, {"aaa", 70}, id));
+        storage.put(b, {"aaa", 20}, id);
+        storage.put(b, {"aaa", 70}, id);
         db->commit_batch(b);
+    }
+
+    check_result(index, {
+            {"aaa",2},
+            {"bbb",3}
+    });
+
+    for (auto row: index.lookup("aaa")) {
+        storage.erase(row.id);
     }
 
     check_result(index, {
@@ -61,6 +65,14 @@ void test1() {
     });
 
 
+    for (auto row: index.lookup("aaa")) {
+        storage.erase(row.id);
+    }
+
+    check_result(index, {
+            {"aaa",20},
+            {"bbb",3}
+    });
 }
 
 
