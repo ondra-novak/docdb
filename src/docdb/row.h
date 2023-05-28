@@ -405,27 +405,61 @@ protected:
 };
 
 
-struct RowDocument {
-    using Type = Row;
+
+
+template<typename T, typename ... Args>
+class FixedT: public T {
+public:
+
+    FixedT() = default;
+    FixedT(const RowView &view):T(view) {}
+    FixedT(const Args & ... args): T(args...) {}
+
+    auto get() const {
+        return T::template get<Args...>();
+    }
+
+    template<std::size_t n>
+    auto getN() const {
+        using TType = decltype(
+           ([]<std::size_t ... Is>(std::index_sequence<Is...>) {
+                return std::make_tuple(std::declval<typename std::tuple_element<Is, T>::type>()...);
+            })(std::make_index_sequence<n>{})
+        );
+        return T::template get<TType>();
+    }
+};
+
+template<typename ... Args>
+using FixedRow = FixedT<Row, Args...>;
+
+
+template<typename T>
+struct _TRowDocument {
+    using Type = T;
     template<typename Iter>
-    static Row from_binary(Iter beg, Iter end) {
+    static T from_binary(Iter beg, Iter end) {
         if constexpr(std::is_convertible_v<Iter, const char *>) {
             const char *bptr = beg;
             const char *eptr = end;
             return RowView(bptr, eptr-bptr);
         } else {
-            Row out;
+            T out;
             auto &buf = out.mutable_buffer();
             std::copy(beg, end, std::back_inserter(buf));
             return out;
         }
     }
     template<typename Iter>
-    static auto to_binary(const Row &row, Iter iter) {
+    static auto to_binary(const T &row, Iter iter) {
         return std::copy(row.begin(), row.end(), iter);
     }
 };
 
+using RowDocument = _TRowDocument<Row>;
+
+template<typename ... Args>
+using FixedRowDocument = _TRowDocument<FixedRow<Args...> >;
 
 
 }

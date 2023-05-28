@@ -123,6 +123,9 @@ public:
     Key(const RowView &other):RawKey(other) {}
 };
 
+template<typename ... Args>
+using FixedKey = FixedT<Key, Args...>;
+
 
 
 }

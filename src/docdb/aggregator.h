@@ -77,9 +77,25 @@ public:
 
 };
 
+///Defines update mode for the aggregation
+enum class UpdateMode {
+    /**
+     * Update must be performed by calling a function update()
+     */
+    manual,
+     /**
+      * Update is automatic by starting background task, when one
+      * or many keys are invalidated.
+      *
+      * You can still run manual update by calling function update() if you
+      * need to ensure, that all calculations are done in time
+      */
+    automatic
+};
+
 
 template<typename MapSrc, auto keyReduceFn, auto aggregatorFn,
-                AggregatorRevision revision, typename _ValueDef = RowDocument>
+                AggregatorRevision revision, UpdateMode update_mode, typename _ValueDef = RowDocument>
 class Aggregator: public AggregatorView<_ValueDef> {
 public:
 
@@ -94,13 +110,12 @@ public:
      * need manually call update() to finish pending aggregations
      *
      */
-    Aggregator(MapSrc &source, std::string_view name, bool manual_update = false)
-        :Aggregator(source, source.get_db()->open_table(name, Purpose::aggregation), manual_update) {}
-    Aggregator(MapSrc &source, KeyspaceID kid, bool manual_update = false)
+    Aggregator(MapSrc &source, std::string_view name)
+        :Aggregator(source, source.get_db()->open_table(name, Purpose::aggregation)) {}
+    Aggregator(MapSrc &source, KeyspaceID kid)
         :AggregatorView<_ValueDef>(source.get_db(), kid, Direction::forward, {})
         ,_source(source)
-        ,_tcontrol(*this)
-        ,_manual_update(manual_update){
+        ,_tcontrol(*this){
 
         if (get_revision() != revision) {
             rebuild();
@@ -152,24 +167,35 @@ public:
 
 
     ~Aggregator() {
-        _tcontrol.sync();
+        join();
     }
 
     ///Perform manual update
+    /**Manual update still is possible in automatic mode.
+     */
     void update() {
-        _tcontrol.update();
-        _tcontrol.sync();
+        _source.update();
+        this->do_update();
     }
 
-    ///Synchronize with background task
+    ///Synchronizes current thread with finishing of background tasks
     /**
-     * Block thread until any background task currently pending is finished.
+     * It is used in destructor, but you can use it anywhere you need. This
+     * blocks current thread until background update is finished. Note that
+     * function works with automatic background updates, not updates called
+     * manually by the update() function.
      *
-     * Call this function after insert if you need to retrieve result of aggregation
+     * @note If many records are being inserted which triggers more and
+     * more updates, the function cannot unblock. You need to stop pushing
+     * new updates.
      */
-    void sync() {
-        if (_manual_update) update();
-        else _tcontrol.sync();
+    void join() {
+        int v;
+        v = _pending.load(std::memory_order_relaxed);
+        while (v) {
+            _pending.wait(v, std::memory_order_relaxed);
+            v = _pending.load(std::memory_order_relaxed);
+        }
     }
 
 protected:
@@ -181,7 +207,22 @@ protected:
         TaskControl &operator=(const TaskControl &owner) = delete;
 
         virtual void after_commit(std::size_t) noexcept override {
-            update();
+            if (_owner.mark_dirty()) {
+                if constexpr(update_mode == UpdateMode::automatic) {
+                    ++_owner._pending;
+                    _owner._db->run_async([this] {
+                        try {
+                            _owner.run_aggregation();
+                        } catch (...) {
+                            _e = std::current_exception();
+                        }
+                        auto &ref = _owner._pending;
+                        if (--ref == 0) {
+                            ref.notify_all();
+                        }
+                    });
+                }
+            }
         }
         virtual void before_commit(Batch &b) override {
             if (_e) {
@@ -190,49 +231,40 @@ protected:
             }
         }
         virtual void after_rollback(std::size_t rev) noexcept override {}
-        std::size_t get_pending_counter() const {
-            return _pending_counter;
-        }
-        void update() {
-            if (!_active.test_and_set(std::memory_order_relaxed)) {
-                ++_pending_counter;
-                _owner._db->run_async([this] {
-                    _active.clear();
-                    try {
-                        _owner.run_aggregation();
-                        ++_done_counter;
-                        _done_counter.notify_all();
-                    } catch (...) {
-                        _e = std::current_exception();
-                    }
-                });
-            }
-        }
-
-        void sync() {
-            std::size_t r = _pending_counter.load(std::memory_order_relaxed);
-            std::size_t cr = _done_counter.load(std::memory_order_relaxed);
-            while (r > cr) {
-                _done_counter.wait(cr, std::memory_order_relaxed);
-                cr = _done_counter.load(std::memory_order_relaxed);
-            }
-        }
 
 
 
 
     protected:
         Aggregator &_owner;
-        std::atomic_flag _active;
-        std::atomic<std::size_t> _pending_counter = 0;
-        std::atomic<std::size_t> _done_counter = {};
         std::exception_ptr _e;
     };
 
     MapSrc &_source;
     std::vector<TransactionObserver> _tx_observers;
     TaskControl _tcontrol;
-    bool _manual_update;
+    //object has been market dirty, must be updated
+    //in automatic mode, this also indicates, that background thread is scheduled
+    std::atomic<bool> _dirty = {true};
+    //count of pending background requests. It is possible to have 2 of them, one processing, other pending
+    std::atomic<int> _pending = {0};
+    //locks aggregation to be procesed one thread at time
+    std::mutex _mx;
+
+    bool mark_dirty() {
+        bool need = false;
+        return _dirty.compare_exchange_strong(need, true,std::memory_order_relaxed);
+    }
+
+    bool do_update() {
+        std::lock_guard _(_mx);
+        bool need = true;
+        if (!_dirty.compare_exchange_strong(need, false, std::memory_order_relaxed)) {
+            return false;
+        }
+        run_aggregation();
+        return true;
+    }
 
 
     void run_aggregation() {
@@ -286,9 +318,7 @@ protected:
              } else {
                  keyReduceFn(Emit<false>(*this, b), Key(RowView(k)), value);
              }
-             if (!_manual_update) {
-                 b.add_listener(&_tcontrol);
-             }
+             b.add_listener(&_tcontrol);
          };
      }
     void update_revision() {

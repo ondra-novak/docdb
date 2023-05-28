@@ -42,22 +42,28 @@ static std::pair<std::string_view,int> words[] = {
 
 void test1() {
 
+    using DocumentDef = docdb::FixedRowDocument<std::string_view, int>;
+    using Document = typename DocumentDef::Type;
+    using IndexDef = docdb::FixedRowDocument<int>;
+
     auto ramdisk = newRamdisk();
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
-    using Storage = docdb::Storage<docdb::RowDocument>;
-    using Index = docdb::Indexer<Storage, [](auto emit, const docdb::Row &doc){
-        auto [text,number] = doc.get<std::string_view, int>();
+    using Storage = docdb::Storage<DocumentDef>;
+    using Index = docdb::Indexer<Storage, [](auto emit, const auto &doc){
+        auto [text,number] = doc.get();
         emit({text.length()},{number});
-    },1,docdb::IndexType::multi, docdb::RowDocument>;
+    },1,docdb::IndexType::multi, IndexDef>;
     using StatsAggregator = docdb::Aggregator<Index,
             docdb::reduceKey<std::size_t>(),
-            docdb::aggregate<docdb::Composite<int, docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int> > >(),1>;
+            docdb::aggregate<docdb::Composite<int,
+                    docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int>
+                > >(),1, docdb::UpdateMode::manual>;
 
 
     Storage storage(db, "test_storage");
     Index index(storage, "test_index");
-    StatsAggregator aggr(index, "test_aggr", true);
+    StatsAggregator aggr(index, "test_aggr");
 
 
 
@@ -65,7 +71,7 @@ void test1() {
         storage.put({c.first,c.second});
     }
 
-    aggr.sync();
+    aggr.update();
 
     for (const auto &x: aggr.select_all()) {
         auto [k] = x.key.get<std::size_t>();
@@ -73,11 +79,11 @@ void test1() {
         std::cout << k << ": count=" << count << ", sum=" << sum  << ", max=" << max <<", min=" << min << std::endl;
     }
 
-    storage.put(docdb::Row{"aaa",2});
+    storage.put({"aaa",2});
     for (const auto &x:  index.lookup(std::size_t(13))) {
         storage.erase(x.id);
     }
-    aggr.sync();
+    aggr.update();
     std::cout << "---------------" << std::endl;
     for (const auto &x: aggr.select_all()) {
         auto [k] = x.key.get<std::size_t>();

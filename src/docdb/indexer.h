@@ -140,6 +140,9 @@ public:
     };
 
 
+    void update() {
+        //empty, as the index don't need update, but some object may try to call it
+    }
 
 protected:
     std::vector<TransactionObserver> _tx_observers;
