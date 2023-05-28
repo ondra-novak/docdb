@@ -20,11 +20,11 @@ namespace docdb {
 */
 
 #if defined( __CDT_PARSER__)
-#define CXX20_REQUIRES(...)
-#define CXX20_CONCEPT(type, ...) struct type {}
+#define DOCDB_CXX20_REQUIRES(...)
+#define DOCDB_CXX20_CONCEPT(type, ...) struct type {}
 #else
-#define CXX20_REQUIRES(...) requires (__VA_ARGS__)
-#define CXX20_CONCEPT(type, ...) concept type = __VA_ARGS__
+#define DOCDB_CXX20_REQUIRES(...) requires (__VA_ARGS__)
+#define DOCDB_CXX20_CONCEPT(type, ...) concept type = __VA_ARGS__
 #endif
 
 template<typename T, typename U>
@@ -44,33 +44,33 @@ struct ReadIteratorConcept {
 
 
 template<typename T>
-CXX20_CONCEPT(ToBinaryConvertible, requires(const typename T::Type& val, WriteIteratorConcept iter) {
+DOCDB_CXX20_CONCEPT(ToBinaryConvertible, requires(const typename T::Type& val, WriteIteratorConcept iter) {
     { T::to_binary(val, iter) } -> std::same_as<WriteIteratorConcept>;
 });
 
 template<typename T>
-CXX20_CONCEPT(FromBinaryConvertible,requires(ReadIteratorConcept b, ReadIteratorConcept e) {
+DOCDB_CXX20_CONCEPT(FromBinaryConvertible,requires(ReadIteratorConcept b, ReadIteratorConcept e) {
     { T::from_binary(b, e) } -> std::same_as<typename T::Type>;
 });
 
 template<typename T>
-CXX20_CONCEPT(DocumentDef,ToBinaryConvertible<T> && FromBinaryConvertible<T>);
+DOCDB_CXX20_CONCEPT(DocumentDef,ToBinaryConvertible<T> && FromBinaryConvertible<T>);
 
 template<typename T>
-CXX20_CONCEPT(DocumentCustomDeleted, requires(ReadIteratorConcept b, ReadIteratorConcept e){
+DOCDB_CXX20_CONCEPT(DocumentCustomDeleted, requires(ReadIteratorConcept b, ReadIteratorConcept e){
     {T::is_deleted(b, e)} -> std::convertible_to<bool>;
 });
 
 
 
 template<typename T>
-CXX20_CONCEPT(IsTuple, requires {
+DOCDB_CXX20_CONCEPT(IsTuple, requires {
   typename std::tuple_size<T>::type;
   typename std::tuple_element<0, T>::type;
 });
 
 template<typename T>
-CXX20_CONCEPT(IsVariant,requires {
+DOCDB_CXX20_CONCEPT(IsVariant,requires {
     typename std::variant_size<T>::type;
 });
 ///DocumentWrapper
@@ -83,11 +83,11 @@ CXX20_CONCEPT(IsVariant,requires {
  * @tparam T
  */
 template<typename T>
-CXX20_CONCEPT(DocumentWrapper, std::is_constructible_v<T, decltype([](std::string &)->bool{return true;})>);
+DOCDB_CXX20_CONCEPT(DocumentWrapper, std::is_constructible_v<T, decltype([](std::string &)->bool{return true;})>);
 
 
 template<typename T>
-CXX20_CONCEPT(DocumentDefHasConstructType, requires {
+DOCDB_CXX20_CONCEPT(DocumentDefHasConstructType, requires {
     typename T::ConstructType;
 });
 

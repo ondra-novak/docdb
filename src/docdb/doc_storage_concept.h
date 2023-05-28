@@ -12,7 +12,7 @@ namespace docdb {
 using DocID = std::uint64_t;
 
 template<typename T>
-CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
+DOCDB_CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
     {x.get_db() } -> std::convertible_to<PDatabase>;
     {x[std::declval<DocID>()]->content } -> std::same_as<const typename T::DocType &>;
     {x.select_all()} -> std::derived_from<RecordSetBase>;
@@ -20,7 +20,7 @@ CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
 });
 
 template<typename T>
-CXX20_CONCEPT(DocumentStorageType , requires(T x) {
+DOCDB_CXX20_CONCEPT(DocumentStorageType , requires(T x) {
     DocumentStorageViewType<T>;
     {x.register_transaction_observer(std::declval<std::function<void(Batch &, const typename T::Update &)> >())} -> std::same_as<void>;
     {x.rescan_for(std::declval<std::function<void(Batch &, const typename T::Update &)> >())};

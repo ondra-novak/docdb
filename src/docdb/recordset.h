@@ -256,7 +256,7 @@ public:
     }
 
     template<typename Fn>
-    CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, const RecordSetBase &>, bool>)
+    DOCDB_CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, const RecordSetBase &>, bool>)
     void add_filter(Fn &&fn) {
         if (_filter) {
             _filter = [a = std::move(_filter), b = std::move(fn)](const RecordSetBase &rc){
@@ -308,7 +308,7 @@ public:
     using RecordSetBase::RecordSetBase;
 
     template<typename Fn>
-    CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, Key, const typename _DocDef::Type &>, bool>)
+    DOCDB_CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, Key, const typename _DocDef::Type &>, bool>)
     void add_filter(Fn &&fn) {
         RecordSetBase::add_filter([fn = std::move(fn)](RecordSetBase &rc){
             auto s = rc.raw_value();
@@ -316,7 +316,7 @@ public:
         });
     }
     template<typename Fn>
-    CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, Key>, bool>)
+    DOCDB_CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, Key>, bool>)
     void add_filter(Fn &&fn) {
         RecordSetBase::add_filter([fn = std::move(fn)](RecordSetBase &rc){
             return fn(Key(RowView(rc.raw_key())));
