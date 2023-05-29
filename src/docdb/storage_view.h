@@ -190,9 +190,9 @@ public:
 
 
     ///Iterator
-    class RecordSet: public RecordSetBaseT<DocRecordDef<_DocDef> > {
+    class RecordSet: public RecordSetBase {
     public:
-        using RecordSetBaseT<DocRecordDef<_DocDef> >::RecordSetBaseT;
+        using RecordSetBase::RecordSetBase;
 
         using Iterator = RecordSetIterator<RecordSet, IteratorValueType>;
 

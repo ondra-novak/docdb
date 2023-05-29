@@ -67,9 +67,9 @@ public:
     };
 
     template<typename DocDef>
-    class RecordSet : public RecordSetBaseT<DocDef> {
+    class RecordSet : public RecordSetBase {
     public:
-        using RecordSetBaseT<DocDef>::RecordSetBaseT;
+        using RecordSetBase::RecordSetBase;
 
         using Iterator = RecordSetIterator<RecordSet, IteratorValueType<DocDef> >;
 
@@ -111,10 +111,10 @@ public:
     };
 
     template<typename DocDef>
-    class RecordSet: public RecordSetBaseT<DocDef> {
+    class RecordSet: public RecordSetBase {
     public:
         RecordSet(_Storage &stor, std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSetBase::Config &&config)
-        :RecordSetBaseT<DocDef>(std::move(iter), std::move(config))
+        :RecordSetBase(std::move(iter), std::move(config))
         ,_storage(stor) {}
 
         using Iterator = RecordSetIterator<RecordSet, IteratorValueType<DocDef> >;
@@ -125,8 +125,8 @@ public:
             auto rv = this->raw_value();
             auto id = _extract(rk, rv);
             return {
-                Key(RowView(rk)),
-                DocDef::from_binary(rv.begin(), rv.end()),
+                {Key(RowView(rk)),
+                DocDef::from_binary(rv.begin(), rv.end())},
                 id,
                 &_storage
             };

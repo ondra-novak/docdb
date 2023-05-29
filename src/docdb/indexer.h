@@ -71,7 +71,7 @@ public:
         else return 0;
     }
 
-    using TransactionObserver = std::function<void(Batch &b, const Key& key, const ValueType &value, bool erase)>;
+    using TransactionObserver = std::function<void(Batch &b, const Key& key, const ValueType &value, DocID docId, bool erase)>;
 
     void register_transaction_observer(TransactionObserver obs) {
         _tx_observers.push_back(std::move(obs));
@@ -83,7 +83,7 @@ public:
             if (b.is_big()) {
                 this->_db->commit_batch(b);
             }
-            obs(b, x.key, x.value, false);
+            obs(b, x.key, x.value, x.id, false);
         }
         this->_db->commit_batch(b);
     }
@@ -149,7 +149,7 @@ public:
             } else {
                 _b.Put(key, buffer);
             }
-            _owner.notify_tx_observers(_b, key, value, deleting);
+            _owner.notify_tx_observers(_b, key, value, _docinfo.cur_doc, deleting);
         }
     };
 
@@ -222,9 +222,9 @@ protected:
         update_revision();
     }
 
-    void notify_tx_observers(Batch &b, const Key &key, const ValueType &value, bool erase) {
+    void notify_tx_observers(Batch &b, const Key &key, const ValueType &value, DocID id, bool erase) {
         for (const auto &f: _tx_observers) {
-            f(b, key, value, erase);
+            f(b, key, value, id, erase);
         }
     }
 

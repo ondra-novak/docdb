@@ -3,7 +3,8 @@
 #include "../docdb/indexer.h"
 #include "../docdb/aggregator.h"
 #include "memdb.h"
-#include "../docdb/aggregated_functions.h"
+
+#include "../docdb/aggregate_rows.h"
 
 static std::pair<std::string_view,int> words[] = {
         {"feed",56},
@@ -43,7 +44,6 @@ static std::pair<std::string_view,int> words[] = {
 void test1() {
 
     using DocumentDef = docdb::FixedRowDocument<std::string_view, int>;
-    using Document = typename DocumentDef::Type;
     using IndexDef = docdb::FixedRowDocument<int>;
 
     auto ramdisk = newRamdisk();
@@ -56,9 +56,9 @@ void test1() {
     },1,docdb::IndexType::multi, IndexDef>;
     using StatsAggregator = docdb::Aggregator<Index,
             docdb::reduceKey<std::size_t>(),
-            docdb::aggregate<docdb::Composite<int,
+            docdb::aggregate_rows<docdb::Composite<int,
                     docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int>
-                > >(),1, docdb::UpdateMode::manual>;
+                > >,1, docdb::UpdateMode::manual>;
 
 
     Storage storage(db, "test_storage");
@@ -90,15 +90,9 @@ void test1() {
         auto [count, sum, min, max] = x.value.get<int, int,int, int>();
         std::cout << k << ": count=" << count << ", sum=" << sum  << ", max=" << max <<", min=" << min << std::endl;
     }
-
-
-
-
-
-
 }
-
-
 int main() {
+
+
     test1();
 }

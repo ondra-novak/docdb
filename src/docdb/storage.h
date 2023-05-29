@@ -230,13 +230,13 @@ public:
     ///Replay all documents to a observer
       void rescan_for(const TransactionObserver &observer) {
           Batch b;
-          bool rep = true;
           for (const auto &vdoc: this->select_all()) {
               const DocType *doc =  vdoc.deleted?nullptr:&vdoc.content;
               if constexpr(std::is_void_v<decltype(update_for(observer, b, vdoc.id, doc, vdoc.previous_id))>) {
                   update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
               } else {
-                  rep = update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
+                  bool rep = update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
+                  if (!rep) break;
               }
               this->_db->commit_batch(b);
           }
@@ -271,7 +271,7 @@ public:
         });
         bool first_processed = false;
         bool changes = false;
-        if (!rs.is_at_end()) {
+        if (!rs.empty()) {
             do {
                 Key k(RowView(rs.raw_key()));
                 Row v(RowView(rs.raw_value()));

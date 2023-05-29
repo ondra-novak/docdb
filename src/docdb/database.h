@@ -246,6 +246,9 @@ public:
     }
 
     std::uint64_t get_index_size(std::string_view key1, std::string_view key2) {
+        if (key1 > key2) return get_index_size(key2, key1);
+        if (key1 == key2) return 0;
+
         leveldb::Range ranges[1];
         ranges[0] = leveldb::Range(to_slice(key1),to_slice(key2));
         std::uint64_t r[1];

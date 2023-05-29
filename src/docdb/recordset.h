@@ -36,6 +36,8 @@ enum class LastRecord {
 using FirstRecord =  LastRecord;
 
 
+
+
 static constexpr Direction changeDirection(Direction initial, Direction change) {
     switch (initial) {
         case Direction::forward: switch (change) {
@@ -82,7 +84,7 @@ public:
 
 
     RecordSetIterator () = default;
-    RecordSetIterator (RecordSet *coll, bool is_end):_coll(coll), _is_end(is_end || _coll->is_at_end()) {}
+    RecordSetIterator (RecordSet *coll, bool is_end):_coll(coll), _is_end(is_end || _coll->empty()) {}
     RecordSetIterator (const RecordSetIterator &other):_coll(other._coll),_is_end(other._is_end) {}
     RecordSetIterator &operator=(const RecordSetIterator &other) {
         if (this != &other) {
@@ -172,9 +174,16 @@ public:
         return to_string(_iter->value());
     }
 
-    bool is_at_end() const {
-        return _is_at_end;
-    }
+
+    ///Returns true, if recordset is empty
+    /**
+     * @retval true recordset is empty
+     * @retval false recordset contains values
+     *
+     * @note the function returns state relative to current reading position.
+     * You need to call reset() to restore recordset state
+     */
+    bool empty() const {return _is_at_end;}
 
     ///move to next item
     /** @retval true next item is available
@@ -223,6 +232,12 @@ public:
 
     }
 
+    ///Resets recordsed state
+    /**
+     * Moves cursor to the first record allowing to read the recordset again
+     *
+     * @return returns same value as empty() called after reset();
+     */
     bool reset() {
         _iter->Seek(_range_beg);
 
@@ -255,6 +270,16 @@ public:
 
     }
 
+    ///Add the record filter
+    /**
+     *
+     * @note this function adds filter which must be able to read raw versions of keys and values.
+     * @param fn filter function, it receives reference to instance to recordset, which's cursor
+     * is set to current record, and function must return true, to allow the record, or false to
+     * move to next record;
+     *
+     * More filters can be added
+     */
     template<typename Fn>
     DOCDB_CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, const RecordSetBase &>, bool>)
     void add_filter(Fn &&fn) {
@@ -265,6 +290,79 @@ public:
         } else {
             _filter = fn;
         }
+    }
+
+
+    ///calculates count of remaining items
+    /**
+     * @return count of remainig items
+     * @note function seeks back to current position, once the count is calculated
+     *
+     * @note function calculates the count by moving the cursor until end of the recordset is
+     * reached
+     */
+    std::size_t count()  {
+        if (this->_is_at_end) return 0;
+        std::string cur_key (raw_key());
+        std::size_t n = 0;
+        while (!this->_is_at_end) {
+            n++;
+            next();
+        }
+        _iter->Seek(cur_key);
+        _is_at_end = false;
+        return n;
+    }
+
+    ///calculates aproximate count of records
+    /**
+     * @param db database object - the function needs database object to calculate aproximation
+     * @param limit maximum count of rows to be calculate accurately. If there is more
+     * rows, the function calculates an aproximation.
+     * The function counts records and when the counter reaches a specified limit, it
+     * aproximates count of records. The result don't need to be accurate.
+     * @return count of records aproximated
+     */
+    template<typename PDatabase>
+    std::size_t count_aprox(const PDatabase &db, std::size_t limit=30) {
+        if (this->_is_at_end) return 0;
+        std::uint64_t sz_bytes = db->get_index_size(raw_key(), _range_end);;
+        if (sz_bytes == 0) return count();
+
+        std::string cur_key (raw_key());
+        std::size_t n = 0;
+        std::size_t step = limit;
+        while (!this->_is_at_end) {
+            if (n >= limit) {
+                std::uint64_t sz_range = db->get_index_size(cur_key, raw_key());
+                //returned range must be more then 0 (it is still aproximation)
+                //and must be less than total size (otherwise range is small and can be calculated)
+                if (sz_range > 0 && sz_range < sz_bytes) {
+                    //n * sz_range / sz_butes
+                    n =  static_cast<std::size_t>(
+                            static_cast<double>(n) * sz_bytes / sz_range);
+                    break;
+                }
+                limit = limit + step;
+            }
+            n++;
+            next();
+        }
+        _iter->Seek(cur_key);
+        _is_at_end = false;
+        return n;
+    }
+
+    ///Calculate aproximate size of the recordset in bytes.
+    /** This function can be used to determine index size for comparison, but not count of
+     * records. For example, if you need to know, which recordset is larger then other
+     *
+     * @param db database object
+     * @return aproximation size in bytes
+     */
+    template<typename PDatabase>
+    std::uint64_t aprox_size_in_bytes(const PDatabase &db)  const{
+        return db->get_index_size(_range_beg, _range_end);
     }
 
 protected:
@@ -301,29 +399,6 @@ protected:
 
 };
 
-template<typename _DocDef>
-class RecordSetBaseT: public RecordSetBase {
-public:
-
-    using RecordSetBase::RecordSetBase;
-
-    template<typename Fn>
-    DOCDB_CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, Key, const typename _DocDef::Type &>, bool>)
-    void add_filter(Fn &&fn) {
-        RecordSetBase::add_filter([fn = std::move(fn)](RecordSetBase &rc){
-            auto s = rc.raw_value();
-            return fn(Key(RowView(rc.raw_key())), _DocDef::from_binary(s.begin(), s.end()));
-        });
-    }
-    template<typename Fn>
-    DOCDB_CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, Key>, bool>)
-    void add_filter(Fn &&fn) {
-        RecordSetBase::add_filter([fn = std::move(fn)](RecordSetBase &rc){
-            return fn(Key(RowView(rc.raw_key())));
-        });
-    }
-
-};
 
 
 

@@ -1,9 +1,9 @@
 #pragma once
 #ifndef SRC_DOCDB_AGGREGATOR_H_
 #define SRC_DOCDB_AGGREGATOR_H_
+#include "aggregrator_source_concept.h"
 #include "database.h"
 #include "index_view.h"
-
 #include <atomic>
 
 namespace docdb {
@@ -94,7 +94,7 @@ enum class UpdateMode {
 };
 
 
-template<typename MapSrc, auto keyReduceFn, auto aggregatorFn,
+template<AggregatorSource MapSrc, auto keyReduceFn, auto aggregatorFn,
                 AggregatorRevision revision, UpdateMode update_mode, typename _ValueDef = RowDocument>
 class Aggregator: public AggregatorView<_ValueDef> {
 public:
@@ -278,7 +278,7 @@ protected:
 
         RawKey prev_key((RowView()));
 
-        while (!rs.is_at_end()) {
+        while (!rs.empty()) {
             std::string_view keydata = rs.raw_key();
             std::string_view valuedata = rs.raw_value();
             keydata = keydata.substr(sizeof(KeyspaceID), keydata.length()-sizeof(KeyspaceID)- sizeof(std::size_t));
@@ -311,12 +311,26 @@ protected:
 
     }
 
+    template<typename ... Args>
+    void call_emit(bool erase, Batch &b, const Key &k, Args  ... args) {
+        if (erase) {
+            keyReduceFn(Emit<true>(*this, b), Key(RowView(k)), args...);
+        } else {
+            keyReduceFn(Emit<false>(*this, b), Key(RowView(k)), args...);
+        }
+    }
+
     auto make_observer() {
-         return [&](Batch &b, const Key &k, const DocType &value, bool erase) {
-             if (erase) {
-                 keyReduceFn(Emit<true>(*this, b), Key(RowView(k)), value);
+         return [&](Batch &b, const Key &k, const DocType &value, DocID docid, bool erase) {
+             if constexpr(std::invocable<decltype(keyReduceFn), Emit<false>, Key>) {
+                 call_emit(erase, b, k);
+             }else if constexpr(std::invocable<decltype(keyReduceFn), Emit<false>, Key, const DocType &>) {
+                 call_emit(erase, b, k, value);
+             }else if constexpr(std::invocable<decltype(keyReduceFn), Emit<false>, Key, const DocType &, DocID>) {
+                 call_emit(erase, b, k, value, docid);
              } else {
-                 keyReduceFn(Emit<false>(*this, b), Key(RowView(k)), value);
+                 struct X{};
+                 static_assert(defer_false<X>, "Key reduce function has unsupported prototype");
              }
              b.add_listener(&_tcontrol);
          };

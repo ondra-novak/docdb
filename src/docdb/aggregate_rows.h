@@ -1,6 +1,6 @@
 #pragma once
-#ifndef SRC_DOCDB_AGGREGATED_FUNCTIONS_H_
-#define SRC_DOCDB_AGGREGATED_FUNCTIONS_H_
+#ifndef SRC_DOCDB_AGGREGATE_ROWS_H_
+#define SRC_DOCDB_AGGREGATE_ROWS_H_
 
 #include "serialize.h"
 
@@ -40,10 +40,31 @@ struct AggregateState{
     States _state;
 };
 
-template<typename ... ArgTypes>
-constexpr auto aggregate() {
-    return [](const auto &index, Key key) -> AggregatedResult<Row> {
+template<typename X>
+DOCDB_CXX20_CONCEPT(RowAggregateFunction, requires (X fn) {
+    typename X::ValueType;
+    {fn.add(std::declval<typename X::ValueType>())} ->std::same_as<void>;
+    {fn.get_result()}->std::convertible_to<Row>;
+});
+
+///Aggregate rows into single Row object
+/**
+ * The function expects that that index returns values in type Row;
+ *
+ * @tparam AgrTypes list of aggregation function to execute on each column. For example
+ * Sum<type>, Count<type>, etc. Each type means one columnt (expect Count<type>, which
+ * doesn't consume any column). If you need multiple aggregations for a single column, use
+ * Composite aggregation.
+ *
+ * @param index source index where search values to aggregate
+ * @param key contains prefix key to aggregate
+ * @return Row object containing aggregated result
+ */
+template<RowAggregateFunction ... ArgTypes>
+constexpr auto aggregate_rows =  [](const auto &index, Key key) -> AggregatedResult<Row> {
         auto rs = index.select_prefix(key);
+        static_assert(std::is_convertible_v<decltype(*rs.begin()), const Row &>,
+                "The function 'aggregate_rows' supports values returned as the type Row");
         if (rs.begin() == rs.end()) return {};
         AggregateState<ArgTypes ...> _state;
 
@@ -54,7 +75,7 @@ constexpr auto aggregate() {
         _state.build_result(out);
         return out;
     };
-}
+
 
 template<typename Type = double>
 struct Count {
@@ -217,4 +238,4 @@ struct Composite {
 }
 
 
-#endif /* SRC_DOCDB_AGGREGATED_FUNCTIONS_H_ */
+#endif /* SRC_DOCDB_AGGREGATE_ROWS_H_ */
