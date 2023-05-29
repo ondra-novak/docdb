@@ -31,12 +31,6 @@ struct StringDocument {
 
 static_assert(DocumentDef<StringDocument>);
 
-template<typename T>
-union BinHelper {
-    T val;
-    char bin[sizeof(T)];
-
-};
 
 
 template<typename T>
@@ -63,7 +57,7 @@ protected:
 class Blob: public std::string_view {
 public:
     using std::string_view::string_view;
-    Blob(const std::string_view &other):std::string_view(other) {}
+    constexpr Blob(const std::string_view &other):std::string_view(other) {}
 };
 
 
@@ -85,7 +79,21 @@ public:
     }
 };
 
+///Converts string to prefix searchable string for a Key
+/**
+ * Allows to search all string strarting with the specified prefix. To successfuly
+ * search for prefix, the string must be last column in the Key.
+ * @param prefix prefix to search.
+ * @return Return value is Blob as the Blob can be used only for prefix search of binary string. You
+ * need to pass this value to Key constructor
+ *
+ */
+constexpr Blob prefix(const std::string_view &prefix) {return Blob(prefix);}
 
+Blob prefix(const std::wstring_view &prefix) {
+    std::string_view binary(reinterpret_cast<const char *>(prefix.data()), prefix.size()*sizeof(wchar_t));
+    return Blob(binary);
+}
 
 ///Retrieved value
 /**
@@ -116,18 +124,26 @@ public:
     DOCDB_CXX20_REQUIRES(std::same_as<decltype(std::declval<Rtv>()(std::declval<Buffer &>())), bool>)
     Document(Rtv &&rt) {
         _found = rt(_buff);
+        init_if_found();
+
     }
 
     ///Creates empty value
     Document():_found(false) {}
 
     ///Serializes document into buffer
-    Document(const ValueType &val):_found(true) {
+    Document(const ValueType &val):_found(true),_inited(true),_storage(val) {
+        _ValueDef::to_binary(val, std::back_inserter(_buff));
+    }
+    ///Serializes document into buffer
+    Document(ValueType &&val):_found(true),_inited(true),_storage(std::move(val)) {
         _ValueDef::to_binary(val, std::back_inserter(_buff));
     }
 
-    Document(const Document &other):_found(other.found), _buff(other.buff) {}
-    Document(Document &&other):_found(other.found), _buff(std::move(other.buff)) {
+    Document(const Document &other):_found(other._found), _buff(other._buff) {
+        init_if_found();
+    }
+    Document(Document &&other):_found(other._found), _buff(std::move(other._buff)) {
         if (other._inited) {
             ::new(&_storage) ValueType(std::move(other._storage));
             _inited = true;
@@ -136,26 +152,14 @@ public:
 
     Document &operator=(const Document &other) {
         if (this != &other) {
-            _found = other._found;
-            _buff = other._buff;
-            if (_inited) {
-                _storage.~ValueType();
-                _inited =false;
-            }
+            this->~Document();
+            ::new(this) Document(other);
         }
     }
     Document &operator=(Document &&other) {
         if (this != &other) {
-            _found = other._found;
-            _buff = std::move(other._buff);
-            if (_inited) {
-                _storage.~ValueType();
-                _inited =false;
-            }
-            if (other._inited) {
-                ::new(&_storage) ValueType(std::move(other._storage));
-                _inited = true;
-            }
+            this->~Document();
+            ::new(this) Document(std::move(other));
         }
         return *this;
     }
@@ -166,7 +170,7 @@ public:
 
     ///Deserialized the document
     const ValueType &operator*() const {
-        return get_parse();
+        return _storage;
     }
     ///Tests whether value has been set
     bool has_value() const {
@@ -178,7 +182,7 @@ public:
     const Buffer &get_serialized() const {return _buff;}
 
     const ValueType *operator->() const {
-        return &get_parse();
+        return &_storage;
     }
 
 protected:
@@ -186,16 +190,14 @@ protected:
     mutable bool _inited =false;
     Buffer _buff;
     union {
-        mutable ValueType _storage;
+        ValueType _storage;
     };
 
-    ValueType &get_parse() const {
-        if (!_inited) {
+    void init_if_found() {
+        if (_found) {
             ::new(&_storage) ValueType(_ValueDef::from_binary(_buff.begin(), _buff.end()));
             _inited =true;
         }
-
-        return _storage;
     }
 
 };

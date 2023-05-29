@@ -11,7 +11,7 @@ DOCDB_CXX20_CONCEPT(AggregatorSource, requires(T x) {
     {x.get_db()} -> std::convertible_to<PDatabase>;
     {x.register_transaction_observer([](Batch &b, const Key& key, const typename T::ValueType &value, DocID docId, bool erase){})};
     {x.rescan_for([](Batch &b, const Key& key, const typename T::ValueType &value, DocID docId, bool erase){})};
-    {x.select_prefix(std::declval<Key>()) } -> std::derived_from<RecordSetBase>;
+    {x.select(std::declval<Key>()) } -> std::derived_from<RecordSetBase>;
     {x.update() };
 });
 

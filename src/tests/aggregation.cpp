@@ -80,7 +80,7 @@ void test1() {
     }
 
     storage.put({"aaa",2});
-    for (const auto &x:  index.lookup(std::size_t(13))) {
+    for (const auto &x:  index.select(std::size_t(13))) {
         storage.erase(x.id);
     }
     aggr.update();

@@ -104,10 +104,6 @@ public:
     template<typename DocDef>
     struct IteratorValueType: IndexViewBaseEmpty::IteratorValueType<DocDef> {
         DocID id;
-        _Storage *storage = nullptr;
-        auto document() const {
-            return (*storage)[id];
-        }
     };
 
     template<typename DocDef>
@@ -128,7 +124,6 @@ public:
                 {Key(RowView(rk)),
                 DocDef::from_binary(rv.begin(), rv.end())},
                 id,
-                &_storage
             };
         }
 
@@ -153,6 +148,15 @@ public:
             };
         }
         return RecordSet<DocDef>(_storage, std::move(iter), std::move(config));
+    }
+
+    _Storage &get_storage() const {
+        return _storage;
+    }
+
+    template<typename DocDef>
+    auto get_document(const IteratorValueType<DocDef> &x) const {
+        return _storage[x.id];
     }
 
 protected:
@@ -235,9 +239,6 @@ public:
         }
     }
 
-    RecordSet lookup(Key &key) const {return select_prefix(key);}
-    RecordSet lookup(Key &&key) const {return select_prefix(key);}
-
     RecordSet select_from(Key &&key, Direction dir = Direction::normal) {return select_from(key,dir);}
     RecordSet select_from(Key &key, Direction dir = Direction::normal) {
         key.change_kid(_kid);
@@ -256,8 +257,8 @@ public:
             });
         }
     }
-    RecordSet select_prefix(Key &&key, Direction dir = Direction::normal) const {return select_prefix(key,dir);}
-    RecordSet select_prefix(Key &key, Direction dir = Direction::normal) const {
+    RecordSet select(Key &&key, Direction dir = Direction::normal) const {return select(key,dir);}
+    RecordSet select(Key &key, Direction dir = Direction::normal) const {
         key.change_kid(_kid);
         if (isForward(_dir)) {
             return IndexBase::template create_recordset<_ValueDef>(

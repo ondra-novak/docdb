@@ -33,24 +33,24 @@ void test1() {
     CHECK_EQUAL(d4,4);
 
     int fnd = 0;
-    for(const auto &x: index1.lookup({"world"})) {
+    for(const auto &x: index1.select({"world"})) {
        CHECK_EQUAL(x.id, 2);
        auto [v] = x.value.get<std::size_t>();
        CHECK_EQUAL(v, 5);
-       CHECK_EQUAL(x.document()->content, "world");
+       CHECK_EQUAL(index1.get_document(x)->content, "world");
        fnd++;
     }
 
     CHECK_EQUAL(fnd,1);
 
         {
-            auto recordset = index2.lookup({std::size_t(3)});
+            auto recordset = index2.select({std::size_t(3)});
             auto iter = recordset.begin();
             CHECK(iter != recordset.end());
             {
                 auto &x = *iter;
                 CHECK_EQUAL(x.id,3);
-                auto docref = x.document();
+                auto docref = index2.get_document(x);
                 CHECK_EQUAL(docref->content, "bar");
             }
             ++iter;
@@ -58,7 +58,7 @@ void test1() {
             {
                 auto &x = *iter;
                 CHECK_EQUAL(x.id,4);
-                auto docref = x.document();
+                auto docref = index2.get_document(x);
                 CHECK_EQUAL(docref->content, "foo");
             }
             ++iter;
@@ -73,9 +73,9 @@ void test1() {
         }
         storage.put("world2",d2);
         {
-            auto rs1 = index1.lookup("world");
+            auto rs1 = index1.select("world");
             CHECK(rs1.begin() == rs1.end());
-            auto rs2 = index1.lookup("world2");
+            auto rs2 = index1.select("world2");
             CHECK(rs2.begin() != rs2.end());
         }
 

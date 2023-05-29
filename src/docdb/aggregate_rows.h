@@ -62,7 +62,7 @@ DOCDB_CXX20_CONCEPT(RowAggregateFunction, requires (X fn) {
  */
 template<RowAggregateFunction ... ArgTypes>
 constexpr auto aggregate_rows =  [](const auto &index, Key key) -> AggregatedResult<Row> {
-        auto rs = index.select_prefix(key);
+        auto rs = index.select(key);
         static_assert(std::is_convertible_v<decltype(*rs.begin()), const Row &>,
                 "The function 'aggregate_rows' supports values returned as the type Row");
         if (rs.begin() == rs.end()) return {};

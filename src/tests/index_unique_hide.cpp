@@ -55,7 +55,7 @@ void test1() {
             {"bbb",3}
     });
 
-    for (auto row: index.lookup("aaa")) {
+    for (auto row: index.select("aaa")) {
         storage.erase(row.id);
     }
 
@@ -65,7 +65,7 @@ void test1() {
     });
 
 
-    for (auto row: index.lookup("aaa")) {
+    for (auto row: index.select("aaa")) {
         storage.erase(row.id);
     }
 
