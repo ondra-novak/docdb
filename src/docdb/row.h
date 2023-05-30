@@ -228,6 +228,14 @@ public:
         } else if constexpr(std::is_convertible_v<X, std::wstring_view>) {
             for (auto c: val) iter = serialize_items(iter, c);
             serialize_items(iter, wchar_t(0));
+        } else if constexpr(IsContainer<X>) {
+            std::uint16_t count = std::min<std::size_t>(0xFFFF,std::distance(val.begin(), val.end()));
+            iter =serialize_items(iter, count);
+            auto x = val.begin();
+            for (std::uint16_t i = 0; i < count; ++i) {
+                iter = serialize_items(iter, *x);
+                std::advance(x,1);
+            }
         } else {
             iter = CustomSerializer<X>::serialize(val, iter);
         }
@@ -351,7 +359,18 @@ public:
                  z = deserialize_item<wchar_t>(at, end);
              }
              return out;
-         } else {
+
+         }  else if constexpr(IsContainer<T>) {
+             std::uint16_t count = deserialize_item<std::uint16_t>(at, end);
+             T out;
+             if constexpr(HasReserveFunction<T>) {
+                 out.reserve(count);
+             }
+             for (std::uint16_t i = 0; i < count; ++i) {
+                 out.push_back(deserialize_item<typename T::value_type>(at,end));
+             }
+             return out;
+         }else {
              return CustomSerializer<T>::deserialize(at, end);
          }
      }

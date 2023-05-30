@@ -1,0 +1,542 @@
+#include <docdb/database.h>
+#include <docdb/storage.h>
+
+#include <cmath>
+#include <cstdio>
+#include <iostream>
+#include <iomanip>
+#include <leveldb/env.h>
+#include <sstream>
+#include "ReadLine.h"
+
+#include "parse_line.h"
+
+#include <bits/getopt_core.h>
+class Logger: public leveldb::Logger {
+public:
+    virtual void Logv(const char* format, std::va_list ap) override {
+        vsnprintf(buff,sizeof(buff), format, ap);
+        std::cerr << buff << std::endl;
+    }
+protected:
+    char buff[1024];
+};
+class EmptyLogger: public leveldb::Logger {
+public:
+    virtual void Logv(const char* format, std::va_list ap) override {
+    }
+};
+
+static Logger logger;
+static EmptyLogger empty_logger;
+
+static docdb::PDatabase open_db(std::string path, bool create_flag, bool verbose_mode) {
+    leveldb::Options opts;
+    opts.info_log = verbose_mode?static_cast<leveldb::Logger *>(&logger):static_cast<leveldb::Logger *>(&empty_logger);
+    opts.create_if_missing = create_flag;
+    opts.reuse_logs  = true;
+    leveldb::DB *out;
+    auto st = leveldb::DB::Open(opts, path, &out);
+    if (!st.ok()) throw docdb::DatabaseError(st);
+    return docdb::Database::create(out);
+}
+
+std::string convertNumberToString(std::uint64_t number, int width)
+{
+    std::string_view unit;
+
+    if (number >= 10000000000ULL)
+    {
+        number /= 1000000000;
+        unit = "G";
+    }
+    else if (number >= 10000000ULL)
+    {
+        number /= 1000000;
+        unit = "M";
+    }
+    else if (number >= 10000ULL)
+    {
+        number /= 1000;
+        unit = "k";
+    } else {
+        unit = " ";
+    }
+
+    std::ostringstream buff;
+    buff << std::setw(width) << std::setfill(' ') << std::right << number << unit;
+    return buff.str();
+}
+
+constexpr std::string_view purposeToText(docdb::Purpose x) {
+    switch (x) {
+        case docdb::Purpose::aggregation: return "Aggregation";
+        case docdb::Purpose::index: return "Index";
+        case docdb::Purpose::unique_index: return "Unique index";
+        case docdb::Purpose::map: return "Map";
+        case docdb::Purpose::storage: return "Storage";
+        case docdb::Purpose::undefined: return "Undefined";
+        default: return {};
+    }
+}
+
+static void print_list_tables(const docdb::PDatabase &db) {
+    auto l = db->list();
+    int counter = 0;
+    std::cout << "KID Type     Aprx.records    Size Name" << std::endl;
+    std::cout << "--------------------------------------------------------" <<std::endl;
+
+    std::string buff;
+    for (const auto &row: l) {
+        counter++;
+        auto purpose_text = purposeToText(row.second.second);
+        if (purpose_text.empty())  {
+            buff = "Unknown '";
+            buff.push_back(static_cast<char>(row.second.second));
+            buff.append("'");
+            purpose_text = buff;
+        }
+        int kid = row.second.first;
+        docdb::RecordSetBase rc(db->make_iterator(false),{
+                docdb::RawKey(kid),
+                docdb::RawKey(kid+1),
+                docdb::FirstRecord::included,
+                docdb::FirstRecord::excluded,
+        });
+        std::size_t count_rc  = rc.count_aprox(db,1000);
+        std::size_t aprox_div = static_cast<std::size_t>(std::pow(10,std::floor(std::log10(count_rc))-1));
+        count_rc = aprox_div?((count_rc + aprox_div/2) / aprox_div) * aprox_div:count_rc;
+        std::size_t size = db->get_index_size(docdb::RawKey(kid), docdb::RawKey(kid+1));
+        std::cout << std::setw(3) << std::right << kid << " "
+                  << std::setw(13) << std::left << purpose_text << " "
+                  << convertNumberToString(count_rc, 6) << " "
+                  << convertNumberToString(size, 6) << " "
+                  << row.first << std::endl;
+    }
+    std::cout << std::endl<< "Count collections: " << counter << std::endl;
+}
+
+static void print_db_info(const docdb::PDatabase &db) {
+    auto &ldb = db->get_level_db();
+    std::string out;
+    std::string line;
+    ldb.GetProperty("leveldb.sstables", &out);
+    std::cout << "Level    Size Files" <<std::endl;
+    std::cout << "-------------------" <<std::endl;
+    std::istringstream input(out);
+    std::size_t prev_level = -1;
+    std::size_t prev_level_size = 0;
+    std::size_t prev_level_count = 0;
+    auto flush_out = [&] {
+        if (prev_level != -1) {
+            std::cout << " " <<prev_level << " "
+                    << convertNumberToString(prev_level_size, 10) << " "
+                    << std::setw(4) << std::right << prev_level_count << std::endl;
+        }
+    };
+    while (true) {
+        std::getline(input, line);
+        if (line.empty()) break;
+        if (line.compare(0,10,"--- level ") == 0) {
+            flush_out();
+            prev_level = std::strtoul(line.data()+10,nullptr,10);
+            prev_level_size = 0;
+            prev_level_count = 0;
+        } else {
+            auto sep1 = line.find(':');
+            if (sep1 != line.npos) {
+                prev_level_size += std::strtoul(line.data()+sep1+1,nullptr,10);
+            }
+            ++prev_level_count;
+        }
+    }
+    flush_out();
+    std::cout << std::endl;
+}
+
+struct Command {
+    std::string name;
+    void (*exec)(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args);
+    void (*completion)(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb);
+};
+
+static bool exit_flag = false;
+
+static void command_compact(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    db->compact();
+}
+
+static void command_quit(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    exit_flag= true;
+}
+
+static void command_use(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    //empty
+}
+
+static void command_levels(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    print_db_info(db);
+}
+
+static void command_list(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    print_list_tables(db);
+}
+
+auto get_kid(const docdb::PDatabase &db,const std::string &name) {
+    auto tst = db->get_table_info(name);
+    if (!tst.has_value()) throw std::runtime_error("Collection doesn't exists: " + name);
+    return *tst;
+
+}
+
+static void command_erase(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size() != 2) throw std::invalid_argument("Requires name of collection to erase");
+    get_kid(db, args[1]);
+    std::cout << "Do you really wish to erase collection: " << args[1] << std::endl;
+    std::cout << "Please answer \"yes\": " <<  std::endl;
+    std::string answer;
+    std::getline(std::cin, answer);
+    if (answer == "yes") {
+        db->delete_table(args[1]);
+    }
+
+}
+
+static void command_create(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size() != 3) {
+        throw std::invalid_argument("create <type> <name>");
+    }
+    for (char c = 32; c<=127; c++) {
+        auto p = static_cast<docdb::Purpose>(c);
+        if (purposeToText(p) == args[1]) {
+            docdb::KeyspaceID id = db->open_table(args[2], p);
+            std::cout << "Collection keyspace is: " << static_cast<int>(id)<< std::endl;
+            return;
+        }
+    }
+    throw std::invalid_argument("Unknown type");
+}
+
+
+
+static void empty_completion(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+
+}
+
+static void purpose_completion(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+    for (char c = ' '; c < 127; c++) {
+        auto str = purposeToText(static_cast<docdb::Purpose>(c));
+        if(!str.empty()) {
+            std::string s("\""+std::string(str)+"\"");
+            if (s.compare(0, word_size, word) == 0) cb(s);
+            c++;
+        }
+    }
+}
+
+static void list_of_tables(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+    auto l = db->list();
+    std::string buff;
+    for (const auto &x: l) {
+        buff.clear();
+        buff.push_back('"');
+        buff.append(x.first);
+        buff.push_back('"');
+        if (buff.compare(0,word_size,word) == 0) {
+            cb(buff);
+        }
+    }
+}
+
+struct Columns {
+    std::string id;
+    std::string key;
+    std::string val;
+};
+
+struct ColumnSizes {
+    std::size_t id = 0;
+    std::size_t key = 0;
+    std::size_t val = 0;;
+};
+
+template<typename Iter>
+ColumnSizes calculate_sizes(Iter f, Iter t) {
+    ColumnSizes s;
+    while (f != t) {
+        s.id = std::max(s.id,f->id.size());
+        s.key = std::max(s.key,f->key.size());
+        s.val = std::max(s.val,f->val.size());
+        ++f;
+    }
+    return s;
+}
+
+void tabulize(std::string &s, std::size_t size, bool align_right) {
+    if (s.length() <= size ) {
+        if (align_right) {
+            std::string tmp(size - s.length(), ' ');
+            s.insert(0, tmp);
+        } else {
+            while (s.length()<size) s.push_back(' ');
+        }
+    } else {
+        s.resize(size-3);
+        s.append("...");
+    }
+}
+
+template<typename Iter>
+void makeShorter(const ColumnSizes &sz, const ColumnSizes &align, Iter f, Iter t) {
+    while (f != t) {
+        tabulize(f->id, sz.id, align.id != 0);
+        tabulize(f->key, sz.key, align.key!= 0);
+        tabulize(f->val, sz.val, align.val!= 0);
+        ++f;
+    }
+}
+
+
+std::string make_printable(const std::string_view &s) {
+    std::string out;
+    for (signed char c: s) {
+        switch (c) {
+            case '\n': out.append("\\n");break;
+            case '\r': out.append("\\r");break;
+            case '\\': out.append("\\\\");break;
+            case '\"': out.append("\\\"");break;
+            case 0: out.append("\\0");break;
+            default:
+                if (c >= 32) out.push_back(c);
+                else {
+                    out.append("\\x00");
+                    snprintf(out.data()+out.size()-2,2,"%02X", static_cast<unsigned char>(c));
+                }
+        }
+    }
+    return out;
+}
+
+struct RecordsetList {
+    RecordsetList(docdb::PDatabase db, docdb::KeyspaceID id, docdb::Purpose p, docdb::Direction dir)
+        :rc(db->make_iterator(false), {
+                docdb::RawKey(docdb::isForward(dir)?id:id+1),
+                docdb::RawKey(docdb::isForward(dir)?id+1:id),
+                docdb::isForward(dir)?docdb::FirstRecord::included:docdb::FirstRecord::excluded,
+                docdb::isForward(dir)?docdb::LastRecord::excluded:docdb::LastRecord::included
+        }), p(p) {}
+    docdb::RecordSetBase rc;
+    docdb::Purpose p;
+
+    void print_page() {
+        std::size_t count = 25;
+        std::vector<Columns> _cols;
+
+        while (!rc.empty() && count>0) {
+            --count;
+            switch (p) {
+                case docdb::Purpose::storage: {
+                    docdb::Key k((docdb::RowView(rc.raw_key())));
+                    auto v = rc.raw_value();
+                    auto [id] = k.get<docdb::DocID>();
+                    auto [prev_id, doc] = docdb::Row::extract<docdb::DocID, docdb::Blob>(v);
+                    _cols.push_back({
+                        std::to_string(id),
+                        std::to_string(prev_id),
+                        make_printable(doc),
+                    });
+                }break;;
+                case docdb::Purpose::index: {
+                    auto rw = rc.raw_key();
+                    auto docidstr = rw.substr(rw.length()-sizeof(docdb::DocID));
+                    auto [id] = docdb::Row::extract<docdb::DocID>(docidstr);
+                    docdb::Key k(docdb::RowView(rw.substr(0, rw.size()-docidstr.size())));
+                    auto val = rc.raw_value();
+                    auto [key] = k.get<docdb::Blob>();
+                    _cols.push_back({
+                        std::to_string(id),
+                        make_printable(key),
+                        make_printable(val)
+                    });
+                } break;
+                case docdb::Purpose::unique_index: {
+                    docdb::Key k((docdb::RowView(rc.raw_key())));
+                    auto [key] = k.get<docdb::Blob>();
+                    auto v = rc.raw_value();
+                    auto [id, doc] = docdb::Row::extract<docdb::DocID, docdb::Blob>(v);
+                    _cols.push_back({
+                        std::to_string(id),
+                        make_printable(key),
+                        make_printable(doc),
+                    });
+                }break;;
+                default: {
+                    docdb::Key k((docdb::RowView(rc.raw_key())));
+                    auto [key] = k.get<docdb::Blob>();
+                    auto v = rc.raw_value();
+                    _cols.push_back({
+                        std::string(),
+                        make_printable(key),
+                        make_printable(v),
+                    });
+                } break;
+            }
+
+            rc.next();
+        }
+        ColumnSizes szs = calculate_sizes(_cols.begin(), _cols.end());
+        if (szs.key + szs.val + szs.id > 78) {
+            auto remain = 78-szs.id;
+            auto half = remain / 2;
+            if (szs.key < half) {
+                szs.val = remain - szs.key;
+            } else if (szs.val < half) {
+                szs.key = remain - szs.val;
+            } else {
+                szs.key = half;
+                szs.val = remain - szs.key;
+            }
+        }
+        ColumnSizes align;
+        switch (p) {
+            case docdb::Purpose::storage: align.id = 1; align.key = 1;break;
+            default: align.id = 1;
+        }
+        makeShorter(szs, align, _cols.begin(), _cols.end());
+        for (const auto &rw: _cols) {
+            std::cout << rw.id << " " << rw.key << " " << rw.val << std::endl;
+        }
+    }
+};
+
+static std::unique_ptr<RecordsetList> cur_recordset;
+
+static void check_table_selected(const std::string_view &name) {
+    if (name.empty()) throw std::runtime_error("No collection selected. Use command 'use <collection>'");
+}
+
+static void command_iterate_from_first(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    check_table_selected(name);
+    auto kid = get_kid(db, name);
+    cur_recordset = std::make_unique<RecordsetList>(db, kid.first, kid.second, docdb::Direction::forward);
+    cur_recordset->print_page();
+}
+
+static void command_iterate_from_last(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    check_table_selected(name);
+    auto kid = get_kid(db, name);
+    cur_recordset = std::make_unique<RecordsetList>(db, kid.first, kid.second, docdb::Direction::backward);
+    cur_recordset->print_page();
+}
+
+static Command commands[] = {
+        {"compact", command_compact, empty_completion},
+        {"levels", command_levels, empty_completion},
+        {"list", command_list, empty_completion},
+        {"quit", command_quit, empty_completion},
+        {"use", command_use, list_of_tables},
+        {"erase", command_erase, list_of_tables},
+        {"create", command_create,purpose_completion},
+        {"first", command_iterate_from_first,empty_completion},
+        {"last", command_iterate_from_last,empty_completion}
+
+};
+
+
+ReadLine::CompletionList genCompletionList(docdb::PDatabase db) {
+    ReadLine::CompletionList out;
+    for (const auto &c : commands) {
+        out.push_back({ReadLine::Pattern(c.name+" (.*)"), ReadLine::HintGenerator([db, &c](const char *word, std::size_t word_size ,const std::cmatch &m, const ReadLine::HintCallback &cb) {
+            c.completion(db, word, word_size,  cb);
+        })});
+    }
+    out.push_back({"([a-zA-Z0-9]*)", [](const char *word, std::size_t word_size ,const std::cmatch &m, const ReadLine::HintCallback &cb){
+        for (const auto &c : commands) {
+            if (c.name.compare(0,word_size,word) == 0) cb(c.name);
+        }
+    }});
+    return out;
+}
+
+void print_help(const char *arg0) {
+    std::cout << "Usage: " << arg0 << " -hcd <database_path>\n\n"
+            "-h           show help\n"
+            "-c           create database if missing\n"
+            "-d           show debug messages\n";
+
+}
+
+
+int main(int argc, char **argv) {
+
+    bool create_flag = false;
+    bool debug_mode = false;
+    int opt;
+    while ((opt = getopt(argc, argv, "hcd")) != -1) {
+        switch (opt) {
+            case 'h': print_help(argv[0]);
+                      exit(0);
+                      break;
+            case 'c': create_flag = true;
+                      break;
+            case 'd': debug_mode = true;
+                      break;
+            default:
+                      std::cerr << "Unknown option, use -h for help" << std::endl;
+                      return 1;
+        }
+    }
+    if (optind == argc) {
+        std::cerr << "Missing name of database, use -h for help" << std::endl;
+        return 1;
+    }
+    docdb::PDatabase db = open_db(argv[optind], create_flag, debug_mode);
+
+    print_db_info(db);
+    print_list_tables(db);
+    std::string cur_table;
+
+    ReadLine rl({"docdb:> ",0," \t\n\\'`@$><=;|&{("});
+    rl.setCompletionList(genCompletionList(db));
+    std::string line;
+    while (!exit_flag && rl.read(line)) {
+        std::istringstream ln(line);
+        auto args = generateWordVector(ln);
+        if (!args.empty()) {
+            auto citer = std::find_if(std::begin(commands), std::end(commands), [&](const auto &cmd) {
+                return cmd.name == args[0];
+            });
+            try {
+                if (citer == std::end(commands)) {
+                    std::cerr << "Unknown command: " << args[0] << std::endl;
+                } else if (citer->name == "use") {
+                    if (args.size() != 2) {
+                        throw std::invalid_argument("use <collection_name>");
+                    } else {
+                        auto tbl = db->find_table(args[1]);
+                        if (tbl.has_value()) {
+                            cur_table = args[1];
+                            rl.setPrompt("docdb:/"+cur_table+"> ");
+                            cur_recordset.reset();
+                        } else {
+                            throw std::runtime_error("Collection doesn't exists: " + args[1]);
+                        }
+                    }
+                } else {
+                    citer->exec(db, cur_table, args);
+                }
+            } catch (std::invalid_argument &e) {
+                std::cerr << "? " << e.what() << std::endl;
+            } catch (std::exception &e) {
+                std::cerr << "ERROR: " << e.what() << std::endl;
+            }
+        } else {
+            if (cur_recordset) {
+                cur_recordset->print_page();
+            }
+        }
+    }
+    cur_recordset.reset();
+
+
+}

@@ -189,6 +189,20 @@ void test_document() {
     }
 }
 
+void test_container () {
+
+    static_assert(docdb::IsContainer<std::vector<int> >);
+
+    std::vector<int> x = {10,20,30,40};
+    docdb::Row rw(x);
+
+    auto [z] = rw.get<std::vector<int> >();
+    CHECK_EQUAL(z.size(),4);
+    for (int i = 0; i < 4; i++) {
+        CHECK_EQUAL((i+1)*10, z[i]);
+    }
+}
+
 int main() {
     test_basics();
     test_wide_chars();
@@ -196,5 +210,6 @@ int main() {
     test_subrow();
     test_keys();
     test_document();
+    test_container();
 
 }

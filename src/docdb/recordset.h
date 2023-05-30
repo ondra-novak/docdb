@@ -79,9 +79,14 @@ static constexpr bool isForward(Direction dir) {
 
 
 template<typename RecordSet, typename ValueType>
-class RecordSetIterator: public std::iterator<std::forward_iterator_tag, ValueType> {
+class RecordSetIterator{
 public:
 
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = ValueType; // crap
+    using difference_type = ptrdiff_t;
+    using pointer = void;
+    using reference = void;
 
     RecordSetIterator () = default;
     RecordSetIterator (RecordSet *coll, bool is_end):_coll(coll), _is_end(is_end || _coll->empty()) {}

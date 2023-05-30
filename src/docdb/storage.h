@@ -423,7 +423,7 @@ protected:
                   return fn(b, Update{doc,nullptr,id,prev_id,old_old_doc_id});
               }
           }
-          return fn(b, Update{nullptr, doc, 0, prev_id, id});
+          return fn(b, Update{doc, nullptr,id, prev_id, 0});
     }
 };
 

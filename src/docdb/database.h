@@ -66,6 +66,15 @@ public:
         if (iter == _table_map.end()) return {};
         else return iter->second.first;
     }
+
+    auto get_table_info(std::string_view v) const {
+        std::shared_lock lk(_mx);
+        auto iter = _table_map.find(v);
+        using Ret = std::optional<decltype(iter->second)>;
+        if (iter == _table_map.end()) return Ret{};
+        else return Ret(iter->second);
+    }
+
     ///Retrieves name of the table from the id
     /**
      * @param id keyspace id
@@ -153,9 +162,9 @@ public:
         RawKey endKey(private_area?system_table:id+1);
         if (private_area) {
             iter2->Seek(RawKey(system_table, id));
+            endKey.append(id+1);
         } else {
             iter2->Seek(RawKey(id));
-            endKey.append(id+1);
         }
         while (iter2->Valid()) {
             auto k = iter2->key();
@@ -300,8 +309,11 @@ public:
         _async.run(std::forward<Fn>(fn));
     }
 
-protected:
+    leveldb::DB& get_level_db() const {return *_dbinst;}
+
     static constexpr KeyspaceID system_table = std::numeric_limits<KeyspaceID>::max();
+
+protected:
 
     std::unique_ptr<leveldb::DB> _dbinst;
     leveldb::WriteOptions _write_opts;

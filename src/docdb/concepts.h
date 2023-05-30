@@ -70,6 +70,20 @@ DOCDB_CXX20_CONCEPT(IsTuple, requires {
 });
 
 template<typename T>
+DOCDB_CXX20_CONCEPT(IsContainer, requires(T x) {
+  typename T::value_type;
+  {x.begin() } -> std::input_iterator;
+  {x.end() } -> std::input_iterator;
+  {x.push_back(std::declval<typename T::value_type>())};
+});
+
+template<typename T>
+DOCDB_CXX20_CONCEPT(HasReserveFunction, requires(T x) {
+    {x.reserve(std::declval<std::size_t>())};
+});
+
+
+template<typename T>
 DOCDB_CXX20_CONCEPT(IsVariant,requires {
     typename std::variant_size<T>::type;
 });
