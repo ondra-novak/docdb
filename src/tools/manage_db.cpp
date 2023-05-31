@@ -160,6 +160,29 @@ struct Command {
     void (*completion)(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb);
 };
 
+std::string make_printable(const std::string_view &s, bool space) {
+    std::string out;
+    for (signed char c: s) {
+        switch (c) {
+            case '\n': out.append("\\n");break;
+            case '\r': out.append("\\r");break;
+            case '\\': out.append("\\\\");break;
+            case '\"': out.append("\\\"");break;
+            case ' ': if (space) out.append("\\ "); else out.push_back(c);break;
+            case 0: out.append("\\0");break;
+            default:
+                if (c >= 32) out.push_back(c);
+                else {
+                    out.append("\\x00");
+                    snprintf(out.data()+out.size()-2,3,"%02X", static_cast<unsigned char>(c));
+                }
+        }
+    }
+    return out;
+}
+
+
+
 static bool exit_flag = false;
 
 static void command_compact(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
@@ -206,7 +229,7 @@ static void command_create(const docdb::PDatabase &db, std::string name, const s
     if (args.size() != 3) {
         throw std::invalid_argument("create <type> <name>");
     }
-    for (char c = 32; c<=127; c++) {
+    for (unsigned char c = 32; c<=127; c++) {
         auto p = static_cast<docdb::Purpose>(c);
         if (purposeToText(p) == args[1]) {
             docdb::KeyspaceID id = db->open_table(args[2], p);
@@ -227,7 +250,7 @@ static void purpose_completion(const docdb::PDatabase &db, const char *word, std
     for (char c = ' '; c < 127; c++) {
         auto str = purposeToText(static_cast<docdb::Purpose>(c));
         if(!str.empty()) {
-            std::string s("\""+std::string(str)+"\"");
+            std::string s = make_printable(str, true);
             if (s.compare(0, word_size, word) == 0) cb(s);
             c++;
         }
@@ -238,10 +261,7 @@ static void list_of_tables(const docdb::PDatabase &db, const char *word, std::si
     auto l = db->list();
     std::string buff;
     for (const auto &x: l) {
-        buff.clear();
-        buff.push_back('"');
-        buff.append(x.first);
-        buff.push_back('"');
+        std::string buff = make_printable(x.first, true);
         if (buff.compare(0,word_size,word) == 0) {
             cb(buff);
         }
@@ -297,26 +317,6 @@ void makeShorter(const ColumnSizes &sz, const ColumnSizes &align, Iter f, Iter t
 }
 
 
-std::string make_printable(const std::string_view &s) {
-    std::string out;
-    for (signed char c: s) {
-        switch (c) {
-            case '\n': out.append("\\n");break;
-            case '\r': out.append("\\r");break;
-            case '\\': out.append("\\\\");break;
-            case '\"': out.append("\\\"");break;
-            case 0: out.append("\\0");break;
-            default:
-                if (c >= 32) out.push_back(c);
-                else {
-                    out.append("\\x00");
-                    snprintf(out.data()+out.size()-2,2,"%02X", static_cast<unsigned char>(c));
-                }
-        }
-    }
-    return out;
-}
-
 struct RecordsetList {
     RecordsetList(docdb::PDatabase db, docdb::KeyspaceID id, docdb::Purpose p, docdb::Direction dir)
         :rc(db->make_iterator(false), {
@@ -324,13 +324,29 @@ struct RecordsetList {
                 docdb::RawKey(docdb::isForward(dir)?id+1:id),
                 docdb::isForward(dir)?docdb::FirstRecord::included:docdb::FirstRecord::excluded,
                 docdb::isForward(dir)?docdb::LastRecord::excluded:docdb::LastRecord::included
-        }), p(p) {}
+        }), p(p), db(db), _dir(dir) {}
+    RecordsetList(docdb::PDatabase db, docdb::KeyspaceID id, docdb::Purpose p, docdb::Direction dir, docdb::Row key)
+        :rc(db->make_iterator(false), {
+                docdb::RawKey(id, key),
+                docdb::RawKey(docdb::isForward(dir)?id+1:id),
+                docdb::FirstRecord::included,
+                docdb::isForward(dir)?docdb::LastRecord::excluded:docdb::LastRecord::included
+        }), p(p), db(db), _dir(dir) {}
+    RecordsetList(docdb::PDatabase db, docdb::Purpose p,  docdb::RawKey from, docdb::RawKey to)
+        :rc(db->make_iterator(false), {
+                from, to,docdb::FirstRecord::included,docdb::LastRecord::excluded
+        }), p(p), db(db), _dir(docdb::Direction::forward) {}
+
     docdb::RecordSetBase rc;
     docdb::Purpose p;
+    docdb::PDatabase db;
 
     void print_page() {
         std::size_t count = 25;
         std::vector<Columns> _cols;
+
+        list_ids.clear();
+        list_keys.clear();
 
         while (!rc.empty() && count>0) {
             --count;
@@ -343,8 +359,11 @@ struct RecordsetList {
                     _cols.push_back({
                         std::to_string(id),
                         std::to_string(prev_id),
-                        make_printable(doc),
+                        make_printable(doc,false),
                     });
+                    list_ids.push_back(id);
+                    list_ids.push_back(prev_id);
+
                 }break;;
                 case docdb::Purpose::index: {
                     auto rw = rc.raw_key();
@@ -355,9 +374,11 @@ struct RecordsetList {
                     auto [key] = k.get<docdb::Blob>();
                     _cols.push_back({
                         std::to_string(id),
-                        make_printable(key),
-                        make_printable(val)
+                        make_printable(key,false),
+                        make_printable(val,false)
                     });
+                    list_ids.push_back(id);
+                    list_keys.push_back(std::string(key));
                 } break;
                 case docdb::Purpose::unique_index: {
                     docdb::Key k((docdb::RowView(rc.raw_key())));
@@ -366,9 +387,11 @@ struct RecordsetList {
                     auto [id, doc] = docdb::Row::extract<docdb::DocID, docdb::Blob>(v);
                     _cols.push_back({
                         std::to_string(id),
-                        make_printable(key),
-                        make_printable(doc),
+                        make_printable(key,false),
+                        make_printable(doc,false),
                     });
+                    list_ids.push_back(id);
+                    list_keys.push_back(std::string(key));
                 }break;;
                 default: {
                     docdb::Key k((docdb::RowView(rc.raw_key())));
@@ -376,9 +399,10 @@ struct RecordsetList {
                     auto v = rc.raw_value();
                     _cols.push_back({
                         std::string(),
-                        make_printable(key),
-                        make_printable(v),
+                        make_printable(key,false),
+                        make_printable(v,false),
                     });
+                    list_keys.push_back(std::string(key));
                 } break;
             }
 
@@ -406,7 +430,15 @@ struct RecordsetList {
         for (const auto &rw: _cols) {
             std::cout << rw.id << " " << rw.key << " " << rw.val << std::endl;
         }
+        if (!rc.empty()) {
+            std::size_t aprx = rc.count_aprox(db);
+            std::cout << "... aprx. " << aprx << " record(s) follows. Press enter to load more." << std::endl;
+        }
     }
+
+    std::vector<docdb::DocID> list_ids;
+    std::vector<std::string> list_keys;
+    docdb::Direction _dir;
 };
 
 static std::unique_ptr<RecordsetList> cur_recordset;
@@ -429,6 +461,95 @@ static void command_iterate_from_last(const docdb::PDatabase &db, std::string na
     cur_recordset->print_page();
 }
 
+static void command_document(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size() != 2) throw std::invalid_argument("Usage: 'document <id>' - where id is document number");
+    docdb::DocID id = std::strtoull(args[1].c_str(),nullptr,10);
+    if (id == 0) throw std::invalid_argument("The document ID must be number greater than zero");
+    auto list = db->list();
+    auto iter = list.find(name);
+    if (iter == list.end() || iter->second.second != docdb::Purpose::storage) {
+        bool found = false;
+        for (const auto &x: list) {
+            if (x.second.second == docdb::Purpose::storage) {
+                auto r =db->get_as_document<docdb::Document<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(x.second.first, id),{});
+                if (r) {
+                    found = true;
+                    std::cerr << "Document from collection '" << x.first << "':" << std::endl<<std::endl;
+                    std::cout << make_printable(r->content,false) << std::endl;
+                    std::cerr << std::endl;
+                }
+            }
+        }
+        if (!found) std::cerr << "No document found" << std::endl;
+    } else {
+        auto r =db->get_as_document<docdb::Document<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(iter->second.first, id),{});
+        if (r) {
+            std::cout << make_printable(r->content,false) << std::endl;
+        } else {
+            std::cerr << "Document was not found in the collection: " << name << std::endl;
+        }
+    }
+}
+
+static void completion_current_ids(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+    if (cur_recordset) {
+        for (const auto &c: cur_recordset->list_ids) {
+            std::string s= std::to_string(c);
+            if (s.compare(0, word_size, word) == 0) cb(s);
+        }
+    }
+}
+
+static void completion_current_keys(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+    if (cur_recordset) {
+        if (cur_recordset->p == docdb::Purpose::storage) {
+            for (const auto &c: cur_recordset->list_ids) {
+                std::string s= std::to_string(c);
+                if (s.compare(0, word_size, word) == 0) cb(s);
+            }
+        } else {
+            for (const auto &c: cur_recordset->list_keys) {
+                std::string s = make_printable(c, true);
+                if (s.compare(0, word_size, word) == 0) cb(s);
+            }
+        }
+    }
+}
+
+static void command_seek(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size() !=2) {
+        throw std::invalid_argument("Usage: seek <key|document_id>");
+    }
+    auto nfo = get_kid(db, name);
+    docdb::Direction dir = cur_recordset?cur_recordset->_dir:docdb::Direction::forward;
+    if (nfo.second == docdb::Purpose::storage) {
+        docdb::DocID id = std::strtoull(args[1].c_str(),nullptr,10);
+        if (id == 0) throw std::invalid_argument("The document ID must be number greater than zero");
+        cur_recordset = std::make_unique<RecordsetList>(db, nfo.first, nfo.second, dir, docdb::Row(id));
+    } else {
+        cur_recordset = std::make_unique<RecordsetList>(db, nfo.first, nfo.second, dir, docdb::RowView(args[1]));
+    }
+
+    cur_recordset->print_page();
+
+
+
+}
+
+static void command_select(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size() !=2) {
+        throw std::invalid_argument("Usage: select <prefix>");
+    }
+    auto nfo = get_kid(db, name);
+    if (nfo.second == docdb::Purpose::storage) {
+        throw std::runtime_error("The command select cannot be used for Storage collection");
+    }
+    docdb::RawKey k(nfo.first,docdb::Blob(args[1]));
+    cur_recordset = std::make_unique<RecordsetList>(db, nfo.second, k, k.prefix_end());
+    cur_recordset->print_page();
+}
+
+
 static Command commands[] = {
         {"compact", command_compact, empty_completion},
         {"levels", command_levels, empty_completion},
@@ -438,7 +559,10 @@ static Command commands[] = {
         {"erase", command_erase, list_of_tables},
         {"create", command_create,purpose_completion},
         {"first", command_iterate_from_first,empty_completion},
-        {"last", command_iterate_from_last,empty_completion}
+        {"last", command_iterate_from_last,empty_completion},
+        {"document", command_document,completion_current_ids},
+        {"seek", command_seek,completion_current_keys},
+        {"select", command_select,completion_current_keys}
 
 };
 
@@ -496,7 +620,7 @@ int main(int argc, char **argv) {
     print_list_tables(db);
     std::string cur_table;
 
-    ReadLine rl({"docdb:> ",0," \t\n\\'`@$><=;|&{("});
+    ReadLine rl({"docdb:> ",0," "});
     rl.setCompletionList(genCompletionList(db));
     std::string line;
     while (!exit_flag && rl.read(line)) {

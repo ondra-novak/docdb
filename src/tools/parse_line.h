@@ -32,6 +32,8 @@ std::vector<std::string> generateWordVector(std::istream& input) {
                 word += '\\';
             } else if (c == '\"') {
                 word += '\"';
+            } else if (c == '0') {
+                word += '\0';
             } else if (c == 'x') {
                 // Read the hex byte
                 std::string hexByte;
@@ -42,8 +44,6 @@ std::vector<std::string> generateWordVector(std::istream& input) {
                     word += static_cast<char>(byteValue);
                 }
             } else {
-                // Unrecognized escape sequence, treat as a regular character
-                word += '\\';
                 word += c;
             }
         } else if (c == '\\') {
