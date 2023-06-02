@@ -1,19 +1,23 @@
 #pragma once
 #ifndef SRC_DOCDB_VIEWBASE_H_
 #define SRC_DOCDB_VIEWBASE_H_
+#include "exceptions.h"
 #include "database.h"
 
 namespace docdb {
 
 
-///Retrieved value
+///Found record
 /**
- * Value cannot be retrieved directly, you still need to test whether
- * the key realy exists in the database. You also need to keep internal
- * serialized data as the some document still may reffer to serialized
- * area. This helps to speed-up deserialization, but the document cannot
- * be separated from its serialized version. So to access the document
- * you need to keep this structure.
+ * Anything found using directly calling find() function on the ViewBase,
+ * you receive this object as result. This object works similar as a std::optional
+ * or as a smart pointer. It holds the found record (document, value) with
+ * necessary memory allocated for it. The object can be converted to bool
+ * to test, whether it contains anything (because if nothing found, you receive
+ * empty instance). Then you can access the content by dereference * or
+ * by operator ->.
+ *
+ * The object can be moved, but not copied. It can be used ast std::unique_ptr.
  *
  * @tparam _ValueDef Defines format of value/document
  * @tparam Buffer type of buffer
@@ -36,7 +40,6 @@ public:
     FoundRecord(Rtv &&rt) {
         _found = rt(_buff);
         init_if_found();
-
     }
 
     ///Creates empty value
@@ -51,9 +54,6 @@ public:
         _ValueDef::to_binary(val, std::back_inserter(_buff));
     }
 
-    FoundRecord(const FoundRecord &other):_found(other._found), _buff(other._buff) {
-        init_if_found();
-    }
     FoundRecord(FoundRecord &&other):_found(other._found), _buff(std::move(other._buff)) {
         if (other._inited) {
             ::new(&_storage) ValueType(std::move(other._storage));
@@ -61,12 +61,6 @@ public:
         }
     }
 
-    FoundRecord &operator=(const FoundRecord &other) {
-        if (this != &other) {
-            this->~FoundRecord();
-            ::new(this) FoundRecord(other);
-        }
-    }
     FoundRecord &operator=(FoundRecord &&other) {
         if (this != &other) {
             this->~FoundRecord();
@@ -78,11 +72,6 @@ public:
     ~FoundRecord() {
         if (_inited) _storage.~ValueType();
     }
-
-    ///Deserialized the document
-    const ValueType &operator*() const {
-        return _storage;
-    }
     ///Tests whether value has been set
     bool has_value() const {
         return _found;
@@ -90,10 +79,22 @@ public:
 
     operator bool() const {return has_value();}
 
-    const Buffer &get_serialized() const {return _buff;}
+
+    ///Deserialized the document
+    const ValueType &operator*() const {
+        if (!_found) [[unlikely]] throw RecordNotFound();
+        return _storage;
+    }
+
 
     const ValueType *operator->() const {
+        if (!_found) [[unlikely]] throw RecordNotFound();
         return &_storage;
+    }
+
+    const Buffer &get_serialized() const {
+        if (!_found) [[unlikely]] throw RecordNotFound();
+        return _buff;
     }
 
 protected:

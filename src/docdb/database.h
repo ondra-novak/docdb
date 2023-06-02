@@ -7,6 +7,7 @@
 #include "key.h"
 #include "purpose.h"
 #include "task_thread.h"
+#include "exceptions.h"
 
 #include <leveldb/db.h>
 #include <string>
@@ -26,20 +27,6 @@ using PDatabase = std::shared_ptr<Database>;
 using PSnapshot = std::shared_ptr<const leveldb::Snapshot>;
 
 
-
-class DatabaseError: public std::exception {
-public:
-
-    DatabaseError(leveldb::Status st)
-    :_st(std::move(st)),_msg(_st.ToString()) {}
-
-    const leveldb::Status &get_status() {return _st;}
-    const char *what() const noexcept override {return _msg.c_str();}
-protected:
-    leveldb::Status _st;
-    std::string _msg;
-
-};
 
 
 

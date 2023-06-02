@@ -2,22 +2,10 @@
 #ifndef SRC_DOCDB_STORAGE_H_
 #define SRC_DOCDB_STORAGE_H_
 
+#include "exceptions.h"
 #include "storage_view.h"
 
 namespace docdb {
-
-class ReferencedDocumentNotFoundException : public std::exception {
-public:
-    ReferencedDocumentNotFoundException(DocID id)
-        :_id(id), _msg("Referenced document not found: ") {
-        _msg.append(std::to_string(id));
-    }
-    DocID get_id() const {return _id;}
-    const char *what() const noexcept override {return _msg.c_str();}
-protected:
-    DocID _id;
-    std::string _msg;
-};
 
 template<DocumentDef _DocDef = RowDocument>
 class Storage: public StorageView<_DocDef> {

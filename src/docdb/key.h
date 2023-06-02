@@ -9,11 +9,12 @@
 #define SRC_DOCDB_KEY_H_
 #include "serialize.h"
 #include "row.h"
+#include "types.h"
 
 
 namespace docdb {
 
-using KeyspaceID = std::uint8_t;
+
 
 
 

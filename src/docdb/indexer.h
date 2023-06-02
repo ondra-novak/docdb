@@ -5,6 +5,7 @@
 #include "concepts.h"
 #include "database.h"
 #include "keylock.h"
+#include "exceptions.h"
 
 #include "index_view.h"
 namespace docdb {
@@ -18,7 +19,9 @@ struct IndexerEmitTemplate {
     static constexpr bool erase = false;
     DocID id() const;
     DocID prev_id() const;
+
 };
+#if 0
 class DuplicateKeyException: public std::exception {
 public:
     DuplicateKeyException(Key key, const PDatabase &db, DocID incoming, DocID stored)
@@ -35,6 +38,7 @@ protected:
     std::string _message;
 
 };
+#endif
 
 template<DocumentStorageType Storage, auto indexFn, IndexerRevision revision, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
 DOCDB_CXX20_REQUIRES(std::invocable<decltype(indexFn), IndexerEmitTemplate<_ValueDef>, const typename Storage::DocType &>)
@@ -120,14 +124,14 @@ public:
             if constexpr(index_type == IndexType::unique && !deleting) {
                auto st =  _owner._locker.lock_key(_b.get_revision(), key, _docinfo.cur_doc, _docinfo.prev_doc);
                if (!st.locked) {
-                   throw DuplicateKeyException(key, _owner._db, _docinfo.cur_doc, st.locked_for);
+                   throw make_exception(key, _owner._db, _docinfo.cur_doc, st.locked_for);
                }
                if (!st.replaced) {
                    std::string tmp;
                    if (_owner._db->get(key, tmp)) {
                        auto [r] = Row::extract<DocID>(tmp);
                        if (r != _docinfo.prev_doc) {
-                           throw DuplicateKeyException(key, _owner._db, _docinfo.cur_doc, r);
+                           throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
                        }
                    }
                }
@@ -236,6 +240,16 @@ protected:
                 throw DuplicateKeyException(key, this->_db, cur_doc, srcid);
             }
         }
+    }
+
+    static DuplicateKeyException make_exception(Key key, const PDatabase &db, DocID incoming, DocID stored) {
+        std::string message("Duplicate key found in index: ");
+        auto name = db->name_from_id(key.get_kid());
+        if (name.has_value()) message.append(*name);
+        else message.append("Unknown table KID ").append(std::to_string(static_cast<int>(key.get_kid())));
+        message.append(". Conflicting document: ").append(std::to_string(stored));
+        return DuplicateKeyException(std::string(std::string_view(key)), std::move(message));
+
     }
 };
 
