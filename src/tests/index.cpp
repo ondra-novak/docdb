@@ -66,9 +66,9 @@ void test1() {
         }
         {
             docdb::DocID id = 2;
-            auto lk = index1[{"world",id}];
+            auto lk = index1.find({"world",id});
             CHECK(lk);
-            auto docref = storage[id];
+            auto docref = storage.find(id);
             CHECK_EQUAL(docref->content, "world");
         }
         storage.put("world2",d2);

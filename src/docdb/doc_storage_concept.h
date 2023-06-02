@@ -14,7 +14,8 @@ using DocID = std::uint64_t;
 template<typename T>
 DOCDB_CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
     {x.get_db() } -> std::convertible_to<PDatabase>;
-    {x[std::declval<DocID>()]->content } -> std::convertible_to<const typename T::DocType &>;
+    {x.find(std::declval<DocID>())->content } -> std::convertible_to<const typename T::DocType &>;
+    {x.find(std::declval<DocID>()) } -> std::convertible_to<bool>;
     {x.select_all()} -> std::derived_from<RecordSetBase>;
     {x.select_from(std::declval<DocID>())} -> std::derived_from<RecordSetBase>;
 });

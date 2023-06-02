@@ -21,7 +21,16 @@ enum class Purpose: char {
     ///Keyspace is materialized aggregation
     aggregation = 'A',  ///< aggregation
     ///Keyspace has no defined purpose - created by user
-    undefined = '?'
+    undefined = '?',
+    ///Can't be used for collections, but any private area has hardcoded this purpose
+    /**
+     * It specifies how data in private area are stored. There is always two kids
+     * in the key, where first is always system_table and second is kid of collectin
+     * which private area is explored
+     */
+    private_area = '\x80'
+
+
 };
 
 }

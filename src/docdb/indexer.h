@@ -51,7 +51,7 @@ public:
         :Indexer(storage, storage.get_db()->open_table(name, _purpose)) {}
 
     Indexer(Storage &storage, KeyspaceID kid)
-        :IndexView<Storage, _ValueDef, index_type>(storage.get_db(), kid, Direction::forward, {}, storage)
+        :IndexView<Storage, _ValueDef, index_type>(storage.get_db(), kid, Direction::forward, {}, false,storage)
          ,_unlocker(this)
     {
         if (get_revision() != revision) {
@@ -63,7 +63,7 @@ public:
 
     IndexerRevision get_revision() const {
         auto k = this->_db->get_private_area_key(this->_kid);
-        auto doc = this->_db->template get_as_document<Document<RowDocument> >(k);
+        auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
         if (doc.has_value()) {
             auto [cur_rev] = doc->template get<IndexerRevision>();
             return cur_rev;

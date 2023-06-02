@@ -45,10 +45,10 @@ int main() {
     called = false;
 
     {
-        auto doc1 = m.get({std::size_t(42)});
+        auto doc1 = m.find({std::size_t(42)});
         CHECK(doc1.has_value());
         CHECK_EQUAL(*doc1, "Hello");
-        auto doc2 = m.get({std::size_t(56)});
+        auto doc2 = m.find({std::size_t(56)});
         CHECK(doc2.has_value());
         CHECK_EQUAL(*doc2, "World");
     }
@@ -75,9 +75,9 @@ int main() {
     CHECK(called);
 
     {
-        auto doc1 = m.get({std::size_t(42)});
+        auto doc1 = m.find({std::size_t(42)});
         CHECK(!doc1.has_value());
-        auto doc2 = m.get({std::size_t(56)});
+        auto doc2 = m.find({std::size_t(56)});
         CHECK(doc2.has_value());
         CHECK_EQUAL(*doc2, "World");
     }

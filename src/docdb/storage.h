@@ -30,7 +30,7 @@ public:
         :Storage(db,db->open_table(name, Purpose::storage)) {}
 
     Storage(const PDatabase &db, KeyspaceID kid)
-        :StorageView<_DocDef>(db,kid, Direction::forward, {})
+        :StorageView<_DocDef>(db,kid, Direction::forward, {},false)
         ,_cmt_obs(*this) {
         init_id();
     }
@@ -263,7 +263,7 @@ public:
     void compact(std::size_t n=0, bool deleted = false) {
         Batch b;
         std::unordered_map<DocID, std::size_t> refs;
-        RecordSetBase rs(this->_db->make_iterator(false,{}), {
+        RecordSetBase rs(this->_db->make_iterator({},true), {
                 RawKey(this->_kid+1),
                 RawKey(this->_kid),
                 FirstRecord::excluded,

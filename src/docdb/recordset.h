@@ -197,6 +197,7 @@ public:
     bool next() {
         if (_is_at_end) return false;
         do {
+            ++_count;
             switch(_direction) {
                 default:
                 case Direction::forward:
@@ -220,6 +221,7 @@ public:
     bool previous() {
         if (!_iter->Valid()) return false;
         do {
+            --_count;
             switch(_direction) {
                 default:
                 case Direction::forward:
@@ -245,6 +247,7 @@ public:
      */
     bool reset() {
         _iter->Seek(_range_beg);
+        _count = 0;
 
         switch (_direction) {
             case Direction::forward:
@@ -308,6 +311,7 @@ public:
      */
     std::size_t count()  {
         if (this->_is_at_end) return 0;
+        auto c = _count;
         std::string cur_key (raw_key());
         std::size_t n = 0;
         while (!this->_is_at_end) {
@@ -316,6 +320,7 @@ public:
         }
         _iter->Seek(cur_key);
         _is_at_end = false;
+        _count = c;
         return n;
     }
 
@@ -331,6 +336,7 @@ public:
     template<typename PDatabase>
     std::size_t count_aprox(const PDatabase &db, std::size_t limit=30) {
         if (this->_is_at_end) return 0;
+        auto c = _count;
         std::uint64_t sz_bytes = db->get_index_size(raw_key(), _range_end);;
         if (sz_bytes == 0) return count();
 
@@ -354,6 +360,7 @@ public:
             next();
         }
         _iter->Seek(cur_key);
+        _count = c;
         _is_at_end = false;
         return n;
     }
@@ -368,6 +375,30 @@ public:
     template<typename PDatabase>
     std::uint64_t aprox_size_in_bytes(const PDatabase &db)  const{
         return db->get_index_size(_range_beg, _range_end);
+    }
+
+    ///Calculate aproximate size of the recordset in bytes.
+    /** This function can be used to determine index size for comparison, but not count of
+     * records. For example, if you need to know, which recordset is larger then other
+     *
+     * @param db database object
+     * @return aproximation size in bytes
+     */
+    template<typename PDatabase>
+    std::uint64_t aprox_procesed_bytes(const PDatabase &db)  const{
+        if (_is_at_end) return aprox_size_in_bytes(db);
+        else return db->get_index_size(_range_beg, to_string(_iter->key()));
+    }
+
+    template<typename PDatabase>
+    std::uint64_t aprox_remain_bytes(const PDatabase &db)  const{
+        if (_is_at_end) return aprox_size_in_bytes(db);
+        else return db->get_index_size(to_string(_iter->key()),_range_end);
+    }
+
+    ///Current record offset
+    auto get_offset() const {
+        return _count;
     }
 
 protected:
@@ -400,6 +431,7 @@ protected:
     FirstRecord _first_record;
     LastRecord _last_record;
     Filter _filter;
+    std::size_t _count = 0;
     bool _is_at_end = false;
 
 };

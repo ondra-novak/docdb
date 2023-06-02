@@ -225,10 +225,10 @@ public:
      * @param snap use snapshot
      * @return iterator
      */
-    std::unique_ptr<leveldb::Iterator>  make_iterator(bool cache, const PSnapshot &snap = {}) {
+    std::unique_ptr<leveldb::Iterator>  make_iterator(const PSnapshot &snap = {}, bool no_cache = false) {
         leveldb::ReadOptions opts;
         opts.snapshot = snap.get();
-        opts.fill_cache = cache;
+        opts.fill_cache = !no_cache;
         return std::unique_ptr<leveldb::Iterator>(_dbinst->NewIterator(opts));
     }
 

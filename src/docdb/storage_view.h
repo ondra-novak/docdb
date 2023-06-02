@@ -3,6 +3,7 @@
 #define SRC_DOCDB_STORAGE_VIEW_H_
 #include "database.h"
 
+#include "viewbase.h"
 namespace docdb {
 
 ///Type of document ID
@@ -136,46 +137,26 @@ struct DocRecordDef {
 
 
 template<DocumentDef _DocDef = RowDocument>
-class StorageView {
+class StorageView: public ViewBase<DocRecordDef<_DocDef> > {
 public:
 
     using DocType = typename _DocDef::Type;
 
-    StorageView(const PDatabase &db, KeyspaceID kid, Direction dir, const PSnapshot &snap)
-        :_db(db),_snap(snap), _kid(kid),_dir(dir) {}
+    StorageView(const PDatabase &db, KeyspaceID kid, Direction dir, const PSnapshot &snap, bool no_cache)
+        :ViewBase<DocRecordDef<_DocDef> >(db,kid,dir,snap,no_cache) {}
 
-    StorageView get_snapshot() {
-        if (_snap) return *this;
-        return StorageView(_db, _kid, _dir, _db->make_snapshot());
+    StorageView get_snapshot(bool no_cache = true) const {
+        if (this->_snap) return *this;
+        return StorageView(this->_db, this->_kid, this->_dir, this->_db->make_snapshot(), no_cache);
     }
+
+    StorageView reverse() const {
+        return StorageView(this->_db, this->_kid, isForward(this->_dir)?Direction::backward:Direction::forward, this->_snap, this->_no_cache);
+    }
+
 
     using DocRecord = DocRecordT<_DocDef>;
 
-
-    ///Access directly to document
-    /**
-     * @param id id of document
-     * @return Document proxy, which cotains document. This also reports whether the document
-     * is found or not. To access the document, use -> or *. Note that you can access DocRecord
-     * which is still proxy object through "document" variable
-     *
-     * @code
-     * auto doc_proxy = _storage[id];
-     * if (doc_proxy) { //found
-     *     if (doc_proxy->document.has_value()) { //not deleted
-     *          DocType doc = *doc_proxy->document
-     *          //use doc
-     *     } else {
-     *        //found, but deleted
-     *     }
-     * }  else {
-     *     //not found
-     * }
-     *
-     */
-    Document<DocRecordDef<_DocDef> > operator[](DocID id) const {
-        return _db->get_as_document<Document<DocRecordDef<_DocDef> > >(RawKey(_kid, id));
-    }
 
     struct IteratorValueType: DocRecord {
         DocID id = 0;
@@ -212,14 +193,14 @@ public:
 
     ///Scan whole storage
     RecordSet select_all(Direction dir=Direction::normal) const {
-        if (isForward(changeDirection(_dir, dir))) {
-            return RecordSet(_db->make_iterator(false,_snap),{
-                    RawKey(_kid),RawKey(_kid+1),
+        if (isForward(changeDirection(this->_dir, dir))) {
+            return RecordSet(this->_db->make_iterator(this->_snap, this->_no_cache),{
+                    RawKey(this->_kid),RawKey(this->_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
-            return RecordSet(_db->make_iterator(false,_snap),{
-                    RawKey(_kid+1),RawKey(_kid),
+            return RecordSet(this->_db->make_iterator(this->_snap, this->_no_cache),{
+                    RawKey(this->_kid+1),RawKey(this->_kid),
                     FirstRecord::excluded, LastRecord::included
             });
         }
@@ -227,14 +208,14 @@ public:
 
     ///Scan from given document for given direction
     RecordSet select_from(DocID start_pt, Direction dir = Direction::normal) const {
-        if (isForward(changeDirection(_dir, dir))) {
-            return RecordSet(_db->make_iterator(false,_snap),{
-                    RawKey(_kid, start_pt),RawKey(_kid+1),
+        if (isForward(changeDirection(this->_dir, dir))) {
+            return RecordSet(this->_db->make_iterator(this->_snap, this->_no_cache),{
+                    RawKey(this->_kid, start_pt),RawKey(this->_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
-            return RecordSet(_db->make_iterator(false,_snap),{
-                    RawKey(_kid, start_pt),RawKey(_kid),
+            return RecordSet(this->_db->make_iterator(this->_snap, this->_no_cache),{
+                    RawKey(this->_kid, start_pt),RawKey(this->_kid),
                     FirstRecord::included, LastRecord::excluded
             });
         }
@@ -242,8 +223,8 @@ public:
 
     ///Scan for range
     RecordSet select_range(DocID start_id, DocID end_id, LastRecord last_record = LastRecord::excluded) const {
-        return RecordSet(_db->make_iterator(false,_snap),{
-                RawKey(_kid, start_id),RawKey(_kid, end_id),
+        return RecordSet(this->_db->make_iterator(false,this->_snap),{
+                RawKey(this->_kid, start_id),RawKey(this->_kid, end_id),
                 FirstRecord::included, last_record
         });
     }
@@ -258,15 +239,6 @@ public:
         if (beg == rs.end()) return 0;
         return beg->id;
     }
-
-
-    const PDatabase &get_db() const {return _db;}
-
-protected:
-    PDatabase _db;
-    PSnapshot _snap;
-    KeyspaceID _kid;
-    Direction _dir;
 
 };
 

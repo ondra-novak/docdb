@@ -80,6 +80,14 @@ constexpr std::string_view purposeToText(docdb::Purpose x) {
     }
 }
 
+static std::size_t round_aprox(std::size_t count) {
+    std::size_t aprox_div = static_cast<std::size_t>(std::pow(10,std::floor(std::log10(count))-1));
+    if (aprox_div < 1) aprox_div = 1;
+    count = aprox_div?((count + aprox_div/2) / aprox_div) * aprox_div:count;
+    return count;
+
+}
+
 static void print_list_tables(const docdb::PDatabase &db) {
     auto l = db->list();
     int counter = 0;
@@ -97,19 +105,17 @@ static void print_list_tables(const docdb::PDatabase &db) {
             purpose_text = buff;
         }
         int kid = row.second.first;
-        docdb::RecordSetBase rc(db->make_iterator(false),{
+        docdb::RecordSetBase rc(db->make_iterator(),{
                 docdb::RawKey(kid),
                 docdb::RawKey(kid+1),
                 docdb::FirstRecord::included,
                 docdb::FirstRecord::excluded,
         });
         std::size_t count_rc  = rc.count_aprox(db,1000);
-        std::size_t aprox_div = static_cast<std::size_t>(std::pow(10,std::floor(std::log10(count_rc))-1));
-        count_rc = aprox_div?((count_rc + aprox_div/2) / aprox_div) * aprox_div:count_rc;
         std::size_t size = db->get_index_size(docdb::RawKey(kid), docdb::RawKey(kid+1));
         std::cout << std::setw(3) << std::right << kid << " "
                   << std::setw(13) << std::left << purpose_text << " "
-                  << convertNumberToString(count_rc, 6) << " "
+                  << convertNumberToString(round_aprox(count_rc), 6) << " "
                   << convertNumberToString(size, 6) << " "
                   << row.first << std::endl;
     }
@@ -207,6 +213,7 @@ static void command_list(const docdb::PDatabase &db, std::string name, const std
 
 auto get_kid(const docdb::PDatabase &db,const std::string &name) {
     auto tst = db->get_table_info(name);
+    if (name.empty()) throw std::invalid_argument("No active collection. Type the command: 'use <collection>'");
     if (!tst.has_value()) throw std::runtime_error("Collection doesn't exists: " + name);
     return *tst;
 
@@ -319,21 +326,21 @@ void makeShorter(const ColumnSizes &sz, const ColumnSizes &align, Iter f, Iter t
 
 struct RecordsetList {
     RecordsetList(docdb::PDatabase db, docdb::KeyspaceID id, docdb::Purpose p, docdb::Direction dir)
-        :rc(db->make_iterator(false), {
+        :rc(db->make_iterator(), {
                 docdb::RawKey(docdb::isForward(dir)?id:id+1),
                 docdb::RawKey(docdb::isForward(dir)?id+1:id),
                 docdb::isForward(dir)?docdb::FirstRecord::included:docdb::FirstRecord::excluded,
                 docdb::isForward(dir)?docdb::LastRecord::excluded:docdb::LastRecord::included
         }), p(p), db(db), _dir(dir) {}
     RecordsetList(docdb::PDatabase db, docdb::KeyspaceID id, docdb::Purpose p, docdb::Direction dir, docdb::Row key)
-        :rc(db->make_iterator(false), {
+        :rc(db->make_iterator(), {
                 docdb::RawKey(id, key),
                 docdb::RawKey(docdb::isForward(dir)?id+1:id),
                 docdb::FirstRecord::included,
                 docdb::isForward(dir)?docdb::LastRecord::excluded:docdb::LastRecord::included
         }), p(p), db(db), _dir(dir) {}
     RecordsetList(docdb::PDatabase db, docdb::Purpose p,  docdb::RawKey from, docdb::RawKey to)
-        :rc(db->make_iterator(false), {
+        :rc(db->make_iterator(), {
                 from, to,docdb::FirstRecord::included,docdb::LastRecord::excluded
         }), p(p), db(db), _dir(docdb::Direction::forward) {}
 
@@ -393,6 +400,17 @@ struct RecordsetList {
                     list_ids.push_back(id);
                     list_keys.push_back(std::string(key));
                 }break;;
+                case docdb::Purpose::private_area: {
+                    docdb::Key k((docdb::RowView(rc.raw_key())));
+                    auto [dummy, key] = k.get<docdb::KeyspaceID, docdb::Blob>();
+                    auto v = rc.raw_value();
+                    _cols.push_back({
+                        std::string(),
+                        make_printable(key,false),
+                        make_printable(v,false),
+                    });
+                    list_keys.push_back(std::string(key));
+                } break;
                 default: {
                     docdb::Key k((docdb::RowView(rc.raw_key())));
                     auto [key] = k.get<docdb::Blob>();
@@ -431,8 +449,26 @@ struct RecordsetList {
             std::cout << rw.id << " " << rw.key << " " << rw.val << std::endl;
         }
         if (!rc.empty()) {
-            std::size_t aprx = rc.count_aprox(db);
-            std::cout << "... aprx. " << aprx << " record(s) follows. Press enter to load more." << std::endl;
+            std::size_t n;
+            auto ccount = rc.get_offset(); // @suppress("Symbol shadowing")
+            auto total = rc.aprox_size_in_bytes(db);
+            auto processed1 = std::min(rc.aprox_procesed_bytes(db),total);
+            auto processed2 = total - std::min(rc.aprox_remain_bytes(db), total);
+            auto processed = (processed1+processed2)>>1;
+
+            if (ccount < 1000 || total == 0 || processed == 0) {
+                n = round_aprox(rc.count_aprox(db, 1000));
+            } else{
+                n =  static_cast<std::size_t>(static_cast<double>(ccount) * total / processed);
+                if (n<ccount+1000 || total == 0) {
+                    n = round_aprox(rc.count_aprox(db, 1000));
+                } else {
+                    n = round_aprox(n - ccount);
+                }
+            }
+
+
+            std::cout << "... aprx. " << n << " record(s) follows. Press enter to load more." << std::endl;
         }
     }
 
@@ -471,7 +507,7 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
         bool found = false;
         for (const auto &x: list) {
             if (x.second.second == docdb::Purpose::storage) {
-                auto r =db->get_as_document<docdb::Document<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(x.second.first, id),{});
+                auto r =db->get_as_document<docdb::FoundRecord<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(x.second.first, id),{});
                 if (r) {
                     found = true;
                     std::cerr << "Document from collection '" << x.first << "':" << std::endl<<std::endl;
@@ -482,7 +518,7 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
         }
         if (!found) std::cerr << "No document found" << std::endl;
     } else {
-        auto r =db->get_as_document<docdb::Document<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(iter->second.first, id),{});
+        auto r =db->get_as_document<docdb::FoundRecord<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(iter->second.first, id),{});
         if (r) {
             std::cout << make_printable(r->content,false) << std::endl;
         } else {
@@ -549,6 +585,49 @@ static void command_select(const docdb::PDatabase &db, std::string name, const s
     cur_recordset->print_page();
 }
 
+static void command_rewind(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (cur_recordset) {
+        cur_recordset->rc.reset();
+        cur_recordset->print_page();
+    } else {
+        throw std::runtime_error("There is no opened recordset. Use first/last/seek/select command");
+    }
+}
+
+static void command_backup(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size() != 3) throw std::invalid_argument("Usafe: backup <DocID-from> <filename>");
+    auto info = get_kid(db, name);
+    if (info.second != docdb::Purpose::storage) throw std::runtime_error("Only Storage can be backed up");
+    docdb::DocID id = std::strtoull(args[1].c_str(),nullptr,10);
+    docdb::StorageView<docdb::StringDocument> storage(db,info.first,docdb::Direction::forward, {}, true);
+    docdb::DocID ref = storage.get_last_document_id()+1;
+    std::string fname = args[2] + "_" + std::to_string(ref);
+    std::cout << "Backup_file: " << fname << std::endl;
+    std::ofstream outf(fname, std::ios::out|std::ios::trunc|std::ios::binary);
+    docdb::Row buffer;
+    docdb::Row buffer_size;
+    for (const auto &row : storage.select_from(id, docdb::Direction::forward)) {
+        buffer.clear();
+        buffer.append(row.id, row.previous_id, docdb::Blob(row.content));
+        buffer_size.clear();
+        buffer_size.append(buffer.size());
+        std::string_view b(buffer);
+        std::string_view bs(buffer_size);
+        outf.write(bs.data(), bs.size());
+        outf.write(b.data(), b.size());
+    }
+}
+
+static void command_private(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    auto nfo = get_kid(db, name);
+    std::cout << "Table's private area" << std::endl;
+    cur_recordset = std::make_unique<RecordsetList>(db, docdb::Purpose::private_area,
+            docdb::RawKey(docdb::Database::system_table, nfo.first),
+            docdb::RawKey(docdb::Database::system_table, static_cast<docdb::KeyspaceID>(nfo.first+1))),
+    cur_recordset->print_page();
+
+}
+
 
 static Command commands[] = {
         {"compact", command_compact, empty_completion},
@@ -562,7 +641,10 @@ static Command commands[] = {
         {"last", command_iterate_from_last,empty_completion},
         {"document", command_document,completion_current_ids},
         {"seek", command_seek,completion_current_keys},
-        {"select", command_select,completion_current_keys}
+        {"select", command_select,completion_current_keys},
+        {"rewind", command_rewind,empty_completion},
+        {"backup", command_backup,completion_current_ids},
+        {"private", command_private,completion_current_keys}
 
 };
 

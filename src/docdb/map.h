@@ -32,7 +32,7 @@ public:
         :Map(db, db->open_table(name, _purpose)) {}
 
     Map(const PDatabase &db, KeyspaceID kid)
-        :MapView< _ValueDef>(db, kid, Direction::forward, {})
+        :MapView< _ValueDef>(db, kid, Direction::forward, {}, false)
     {}
 
 
@@ -85,7 +85,7 @@ protected:
             return;
         }
         //we need to pickup value from the map to be send to the observer
-        auto lkp = this->get(key);
+        auto lkp = this->find(key);
         //if not found, nothing to delete
         if (lkp.has_value()) {
             //delete key

@@ -26,24 +26,24 @@ void test1() {
 
         auto view = storage.get_snapshot();
 
-        auto d = view[d2];
+        auto d = view.find(d1);
         CHECK(d.has_value());
         CHECK_EQUAL(d->content,"world");
-        d = view[d4];
+        d = view.find(d4);
         CHECK(d.has_value());
         CHECK_EQUAL(d->content,"foo");
-        d =view[d3];
+        d =view.find(d3);
         CHECK(d.has_value());
         CHECK_EQUAL(d->content,"bar");
 
         auto d3_new = storage.put("baz", d3);
-        d = view[d3_new];
+        d = view.find(d3_new);
         CHECK(d.has_value());
         CHECK_EQUAL(d->content,"baz");
         CHECK_EQUAL(d->previous_id,d3);
 
         storage.compact();
-        d = storage[d3];
+        d = storage.find(d3);
         CHECK(!d.has_value());
 
         struct Res {

@@ -113,7 +113,7 @@ public:
     Aggregator(MapSrc &source, std::string_view name)
         :Aggregator(source, source.get_db()->open_table(name, Purpose::aggregation)) {}
     Aggregator(MapSrc &source, KeyspaceID kid)
-        :AggregatorView<_ValueDef>(source.get_db(), kid, Direction::forward, {})
+        :AggregatorView<_ValueDef>(source.get_db(), kid, Direction::forward, {}, false)
         ,_source(source)
         ,_tcontrol(*this){
 
@@ -125,7 +125,7 @@ public:
 
     AggregatorRevision get_revision() const {
         auto k = this->_db->get_private_area_key(this->_kid);
-        auto doc = this->_db->template get_as_document<Document<RowDocument> >(k);
+        auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
         if (doc.has_value()) {
             auto [cur_rev] = doc->template get<AggregatorRevision>();
             return cur_rev;
@@ -269,7 +269,7 @@ protected:
 
     void run_aggregation() {
         Batch b;
-        RecordSetBase rs(this->_db->make_iterator(false, {}), {
+        RecordSetBase rs(this->_db->make_iterator({}, this->_no_cache), {
                 Database::get_private_area_key(this->_kid),
                 Database::get_private_area_key(this->_kid+1),
                 FirstRecord::excluded,
@@ -296,7 +296,7 @@ protected:
                     if (_tx_observers.empty()) {
                         b.Delete(nk);
                     } else {
-                        auto prev = this->get(nk);
+                        auto prev = this->find(nk);
                         if (prev.has_value()) {
                             b.Delete(nk);
                             notify_tx_observers(b, nk, *prev, true);

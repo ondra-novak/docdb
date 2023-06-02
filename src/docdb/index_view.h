@@ -2,10 +2,12 @@
 #ifndef SRC_DOCDB_INDEX_VIEW_H_
 #define SRC_DOCDB_INDEX_VIEW_H_
 
+#include "viewbase.h"
 #include "recordset.h"
 #include "row.h"
 
 #include "doc_storage_concept.h"
+
 namespace docdb {
 
 enum class IndexType {
@@ -156,7 +158,7 @@ public:
 
     template<typename DocDef>
     auto get_document(const IteratorValueType<DocDef> &x) const {
-        return _storage[x.id];
+        return _storage.find(x.id);
     }
 
 protected:
@@ -180,60 +182,38 @@ struct ExtractDocumentIDFromValue {
 
 
 template<typename _ValueDef, typename IndexBase>
-class IndexViewGen: public IndexBase {
+class IndexViewGen: public ViewBase<_ValueDef>, public IndexBase {
 public:
 
     using RecordSet = typename IndexBase::template RecordSet<_ValueDef>;
 
     template<typename ... Args>
-    IndexViewGen(const PDatabase &db,KeyspaceID kid,Direction dir,const PSnapshot &snap, Args && ... baseArgs)
-        :IndexBase(std::forward<Args>(baseArgs)...),_db(db),_kid(kid),_dir(dir),_snap(snap) {}
+    IndexViewGen(const PDatabase &db,KeyspaceID kid,Direction dir,const PSnapshot &snap, bool no_cache, Args && ... baseArgs)
+        :ViewBase<_ValueDef>(db,kid,dir,snap,no_cache)
+        ,IndexBase(std::forward<Args>(baseArgs)...) {}
 
 
-    PDatabase get_db() const {return _db;}
-    ///Retrieves exact row
-    /**
-     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
-     * part of the key, otherwise, the function cannot find anything
-     * @return
-     */
-    Document<_ValueDef> get(Key &key) const {
-        key.change_kid(_kid);
-        return _db->get_as_document< Document<_ValueDef> >(key, _snap);
+
+    IndexViewGen get_snapshot(bool no_cache = true) const {
+        if (this->_snap) return *this;
+        return IndexViewGen(this->_db, this->_kid, this->_dir, this->_db->make_snapshot(), true, static_cast<const IndexBase &>(*this));
     }
-    ///Retrieves exact row
-    /**
-     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
-     * part of the key, otherwise, the function cannot find anything
-     * @return
-     */
-    Document<_ValueDef> get(Key &&key) const {return get(key);}
-    ///Retrieves exact row
-    /**
-     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
-     * part of the key, otherwise, the function cannot find anything
-     * @return
-     */
-    Document<_ValueDef> operator[](Key &key) const {return get(key);}
-    ///Retrieves exact row
-    /**
-     * @param key key to search. Rememeber, you also need to append document id at the end, because it is also
-     * part of the key, otherwise, the function cannot find anything
-     * @return
-     */
-    Document<_ValueDef> operator[](Key &&key) const {return get(key);}
+
+    IndexViewGen reverse() const {
+        return IndexViewGen(this->_db, this->_kid, isForward(this->_dir)?Direction::backward:Direction::forward, this->_snap, this->_no_cache, static_cast<const IndexBase &>(*this));
+    }
 
     RecordSet select_all(Direction dir = Direction::normal)const  {
-        if (isForward(_dir)) {
+        if (isForward(this->_dir)) {
             return IndexBase::template create_recordset<_ValueDef>(
-                    _db->make_iterator(false,_snap),{
-                    RawKey(_kid),RawKey(_kid+1),
+                    this->_db->make_iterator(this->_snap,this->_no_cache),{
+                    RawKey(this->_kid),RawKey(this->_kid+1),
                     FirstRecord::excluded, LastRecord::excluded
             });
         } else {
             return IndexBase::template create_recordset<_ValueDef>(
-                    _db->make_iterator(false,_snap),{
-                    RawKey(_kid+1),RawKey(_kid),
+                    this->_db->make_iterator(this->_snap,this->_no_cache),{
+                    RawKey(this->_kid+1),RawKey(this->_kid),
                     FirstRecord::excluded, LastRecord::excluded
             });
         }
@@ -241,34 +221,34 @@ public:
 
     RecordSet select_from(Key &&key, Direction dir = Direction::normal) {return select_from(key,dir);}
     RecordSet select_from(Key &key, Direction dir = Direction::normal) {
-        key.change_kid(_kid);
-        if (isForward(_dir)) {
+        key.change_kid(this->_kid);
+        if (isForward(this->_dir)) {
             return IndexBase::template create_recordset<_ValueDef>(
-                    _db->make_iterator(false,_snap),{
-                    key,RawKey(_kid+1),
+                    this->_db->make_iterator(false,this->_snap),{
+                    key,RawKey(this->_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
             Key pfx = key.prefix_end();
             return IndexBase::template create_recordset<_ValueDef>(
-                    _db->make_iterator(false,_snap),{
-                    pfx,RawKey(_kid),
+                    this->_db->make_iterator(false,this->_snap),{
+                    pfx,RawKey(this->_kid),
                     FirstRecord::excluded, LastRecord::included
             });
         }
     }
     RecordSet select(Key &&key, Direction dir = Direction::normal) const {return select(key,dir);}
     RecordSet select(Key &key, Direction dir = Direction::normal) const {
-        key.change_kid(_kid);
-        if (isForward(_dir)) {
+        key.change_kid(this->_kid);
+        if (isForward(this->_dir)) {
             return IndexBase::template create_recordset<_ValueDef>(
-                    _db->make_iterator(false,_snap),{
+                    this->_db->make_iterator(this->_snap,this->_no_cache),{
                     key,key.prefix_end(),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
             return IndexBase::template create_recordset<_ValueDef>(
-                    _db->make_iterator(false,_snap),{
+                    this->_db->make_iterator(this->_snap,this->_no_cache),{
                     key.prefix_end(),key,
                     FirstRecord::excluded, LastRecord::included
             });
@@ -280,19 +260,19 @@ public:
     RecordSet select_range(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) const {return select_range(from, to, last_record);}
     RecordSet select_range(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) const {return select_range(from, to, last_record);}
     RecordSet select_range(Key &from, Key &to, LastRecord last_record = LastRecord::excluded)const  {
-        from.change_kid(_kid);
-        to.change_kid(_kid);
+        from.change_kid(this->_kid);
+        to.change_kid(this->_kid);
         if (from <= to) {
             if (last_record == LastRecord::included) {
                 Key pfx = from.prefix_end();
                 return IndexBase::template create_recordset<_ValueDef>(
-                        _db->make_iterator(false,_snap),{
+                        this->_db->make_iterator(false,this->_snap),{
                         from,pfx,
                         FirstRecord::included, LastRecord::excluded
                 });
             } else {
                 return IndexBase::template create_recordset<_ValueDef>(
-                        _db->make_iterator(false,_snap),{
+                        this->_db->make_iterator(false,this->_snap),{
                         from,to,
                         FirstRecord::included, LastRecord::excluded
                 });
@@ -302,14 +282,14 @@ public:
             Key xfrom = from.prefix_end();
             if (last_record == LastRecord::included) {
                 return IndexBase::template create_recordset<_ValueDef>(
-                        _db->make_iterator(false,_snap),{
+                        this->_db->make_iterator(this->_snap,this->_no_cache),{
                         xfrom,to,
                         FirstRecord::excluded, LastRecord::included
                 });
             } else {
                 Key xto = to.prefix_end();
                 return IndexBase::template create_recordset<_ValueDef>(
-                        _db->make_iterator(false,_snap),{
+                        this->_db->make_iterator(this->_snap,this->_no_cache),{
                         xfrom,xto,
                         FirstRecord::excluded, LastRecord::included
                 });
@@ -319,11 +299,6 @@ public:
 
 
 
-protected:
-    PDatabase _db;
-    KeyspaceID _kid;
-    Direction _dir;
-    PSnapshot _snap;
 };
 
 template<typename _DocDef>
