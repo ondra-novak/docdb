@@ -8,10 +8,15 @@
 #include <leveldb/env.h>
 #include <sstream>
 #include "ReadLine.h"
+#include <readline/readline.h>
 
 #include "parse_line.h"
 
 #include <bits/getopt_core.h>
+
+extern int _rl_screenwidth, _rl_screenheight;
+
+
 class Logger: public leveldb::Logger {
 public:
     virtual void Logv(const char* format, std::va_list ap) override {
@@ -91,6 +96,7 @@ static std::size_t round_aprox(std::size_t count) {
 static void print_list_tables(const docdb::PDatabase &db) {
     auto l = db->list();
     int counter = 0;
+
     std::cout << "KID Type     Aprx.records    Size Name" << std::endl;
     std::cout << "--------------------------------------------------------" <<std::endl;
 
@@ -349,8 +355,11 @@ struct RecordsetList {
     docdb::PDatabase db;
 
     void print_page() {
-        std::size_t count = 25;
         std::vector<Columns> _cols;
+
+        std::size_t width = std::max(40,_rl_screenwidth)-2;
+        std::size_t height = std::max(20,_rl_screenheight)-3;
+        std::size_t count = height;
 
         list_ids.clear();
         list_keys.clear();
@@ -427,8 +436,8 @@ struct RecordsetList {
             rc.next();
         }
         ColumnSizes szs = calculate_sizes(_cols.begin(), _cols.end());
-        if (szs.key + szs.val + szs.id > 78) {
-            auto remain = 78-szs.id;
+        if (szs.key + szs.val + szs.id > width) {
+            auto remain = width-szs.id;
             auto half = remain / 2;
             if (szs.key < half) {
                 szs.val = remain - szs.key;
@@ -595,27 +604,55 @@ static void command_rewind(const docdb::PDatabase &db, std::string name, const s
 }
 
 static void command_backup(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
-    if (args.size() != 3) throw std::invalid_argument("Usafe: backup <DocID-from> <filename>");
+    if (args.size() < 2) throw std::invalid_argument("Usafe: backup <DocID-from> [<filename>]");
     auto info = get_kid(db, name);
+    std::string fbasename = args.size()>2?args[2]:name;
     if (info.second != docdb::Purpose::storage) throw std::runtime_error("Only Storage can be backed up");
     docdb::DocID id = std::strtoull(args[1].c_str(),nullptr,10);
     docdb::StorageView<docdb::StringDocument> storage(db,info.first,docdb::Direction::forward, {}, true);
     docdb::DocID ref = storage.get_last_document_id()+1;
-    std::string fname = args[2] + "_" + std::to_string(ref);
+    std::string fname = fbasename + "_" + std::to_string(ref);
     std::cout << "Backup_file: " << fname << std::endl;
     std::ofstream outf(fname, std::ios::out|std::ios::trunc|std::ios::binary);
+    auto rc = storage.select_from(id, docdb::Direction::forward);
     docdb::Row buffer;
-    docdb::Row buffer_size;
-    for (const auto &row : storage.select_from(id, docdb::Direction::forward)) {
-        buffer.clear();
-        buffer.append(row.id, row.previous_id, docdb::Blob(row.content));
-        buffer_size.clear();
-        buffer_size.append(buffer.size());
+    storage.export_documents(rc, [&](const docdb::ExportedDocument &edoc){
+        buffer.append(std::uint64_t(edoc.id));
+        buffer.append(std::uint32_t(edoc.data.size()));
         std::string_view b(buffer);
-        std::string_view bs(buffer_size);
-        outf.write(bs.data(), bs.size());
         outf.write(b.data(), b.size());
+        outf.write(edoc.data.data(), edoc.data.size());
+        buffer.clear();
+    });
+}
+
+
+static void command_restore(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size() != 2) throw std::invalid_argument("Usafe: restore <filename>");
+    auto info = get_kid(db, name);
+    if (info.second != docdb::Purpose::storage) throw std::runtime_error("You can only restore to a collection of the \"Storage\" type");
+    docdb::Storage<docdb::StringDocument> storage(db, name);
+    std::ifstream inf(args[1], std::ios::in|std::ios::binary);
+    if (!inf) throw std::runtime_error("Unable to open file: " + args[1]);
+    char buffer[12];
+    docdb::ExportedDocument edoc = {};
+    std::size_t cnt = 0;
+    docdb::Batch b;
+    while (!!inf) {
+        inf.read(buffer,12);
+        if (inf.gcount() == 0) break;
+        if (inf.gcount() != 12) throw std::runtime_error("Failed to read record header after a record: " + std::to_string(edoc.id));
+        auto [docid, size] = docdb::Row::extract<std::uint64_t, std::uint32_t>(std::string_view(buffer,sizeof(buffer)));
+        edoc.id = docid;
+        edoc.data.resize(size);
+        inf.read(edoc.data.data(), edoc.data.size());
+        if (inf.gcount() != edoc.data.size()) throw std::runtime_error("Failed to read record: " + std::to_string(docid));
+        storage.import_document(b, edoc);
+        cnt++;
+        db->commit_batch(b);
     }
+    std::cout << "Imported " << cnt << " record(s). Last document had ID: " << edoc.id << std::endl;
+
 }
 
 static void command_private(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
@@ -626,6 +663,22 @@ static void command_private(const docdb::PDatabase &db, std::string name, const 
             docdb::RawKey(docdb::Database::system_table, static_cast<docdb::KeyspaceID>(nfo.first+1))),
     cur_recordset->print_page();
 
+}
+
+static void completion_files(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+    auto lkp = ReadLine::fileLookup(".");
+    const char *b = rl_line_buffer;
+    while (*b && std::isspace(*b)) b++;
+    const char *bb = strchr(b, ' ');
+    if (!bb) bb = ""; else bb+=1;
+    auto len = std::strlen(bb);
+    std::istringstream k(std::string("\"").append(bb, len).append("\""));
+    auto wvect = generateWordVector(k);
+    lkp(wvect[0].data(),wvect[0].size(), std::cmatch(), [&](const std::string &str){
+        auto s = make_printable(str, true);
+        auto p =  s.find(word, 0, word_size);
+        if (p != s.npos) cb(s.substr(p));
+    });
 }
 
 
@@ -644,7 +697,8 @@ static Command commands[] = {
         {"select", command_select,completion_current_keys},
         {"rewind", command_rewind,empty_completion},
         {"backup", command_backup,completion_current_ids},
-        {"private", command_private,completion_current_keys}
+        {"restore", command_restore,completion_files},
+        {"private", command_private,empty_completion}
 
 };
 
@@ -703,6 +757,7 @@ int main(int argc, char **argv) {
     std::string cur_table;
 
     ReadLine rl({"docdb:> ",0," "});
+    rl.setAppName("docdb_manager");
     rl.setCompletionList(genCompletionList(db));
     std::string line;
     while (!exit_flag && rl.read(line)) {

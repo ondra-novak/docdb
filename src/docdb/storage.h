@@ -215,10 +215,29 @@ public:
 
     }
 
+    ///Import document which has been exported by function export_documents
+    /**
+     * This feature is intended to support backup and restore and also incremental
+     * backup and restore. You can export subset of documents and store them elsewhere.
+     * If you need to restore documents, just load documents through the ExportedDocument
+     * structure and import them using this function. Index functions are called as well
+     *
+     * @param b
+     * @param docrow
+     */
+    void import_document(Batch &b, const ExportedDocument &docrow) {
+        auto cur = _next_id.load(std::memory_order_relaxed);
+        auto next = docrow.id+1;
+        while (cur < next && !_next_id.compare_exchange_weak(cur, next, std::memory_order_relaxed));
+        DocRecordT<_DocDef> d = DocRecordDef<_DocDef>::from_binary(docrow.data.data(), docrow.data.data()+docrow.data.size());
+        const DocType *doc = d.has_value?&d.content:nullptr;
+        write(docrow.id, b, doc, d.previous_id);
+    }
+
     ///Replay all documents to a observer
-      void rescan_for(const TransactionObserver &observer) {
+      void rescan_for(const TransactionObserver &observer, DocID start_doc = 0) {
           Batch b;
-          for (const auto &vdoc: this->select_all()) {
+          for (const auto &vdoc: this->select_from(start_doc, Direction::forward)) {
               const DocType *doc =  vdoc.deleted?nullptr:&vdoc.content;
               if constexpr(std::is_void_v<decltype(update_for(observer, b, vdoc.id, doc, vdoc.previous_id))>) {
                   update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
@@ -366,52 +385,49 @@ protected:
 
     DocID write(Batch &b, const DocType *doc, DocID update_id) {
         DocID id = _next_id.fetch_add(1, std::memory_order_relaxed);
+        write(id, b, doc, update_id);
+        return id;
+    }
+
+    void write(DocID id, Batch &b, const DocType *doc, DocID prev_id) {
         auto buff = b.get_buffer();
         auto iter = std::back_inserter(buff);
-        Row::serialize_items(iter, update_id);
+        Row::serialize_items(iter, prev_id);
         if (doc) {
             _DocDef::to_binary(*doc, iter);
-        }
-        b.Put(RawKey(this->_kid, id), buff);
-        if (update_id) {
-            std::string tmp;
-            if (this->_db->get(RawKey(this->_kid, update_id), tmp)) {
-                Row rw((RowView(tmp)));
-                auto [old_old_doc_id, bin] = rw.get<DocID, Blob>();
-                auto beg = bin.begin();
-                auto end = bin.end();
-                if (!document_is_deleted<_DocDef>(beg, end)) {
-                    auto old_doc = _DocDef::from_binary(beg, end);
-                    notify_observers(b, Update {doc,&old_doc,id,update_id,old_old_doc_id});
-                    return id;
-                }
-                notify_observers(b, Update{doc,nullptr,id,update_id,old_old_doc_id});
-                return id;
-            } else {
-                throw ReferencedDocumentNotFoundException(update_id);
+            if (document_is_deleted<_DocDef>(*doc)) {
+                doc = nullptr;
             }
         }
-        notify_observers( b, Update{doc,nullptr,id,update_id,0});
-        return id;
+        b.Put(RawKey(this->_kid, id), buff);
+        update_for([&](auto &b, const auto &update){
+            notify_observers(b, update);
+        }, b, id, doc, prev_id);
     }
 
     template<typename Fn>
     auto update_for(Fn &&fn, Batch &b, DocID id, const DocType *doc, DocID prev_id) {
-          if (prev_id) {
-              std::string tmp;
-              if (this->_db->get(RawKey(this->_kid, prev_id), tmp)) {
-                  Row rw((RowView(tmp)));
-                  auto [old_old_doc_id, bin] = rw.get<DocID, Blob>();
-                  auto beg = bin.begin();
-                  auto end = bin.end();
-                  if (!document_is_deleted<_DocDef>(beg, end)) {
-                      auto old_doc = _DocDef::from_binary(beg, end);
-                      return fn(b, Update {doc,&old_doc,id,prev_id,old_old_doc_id});
-                  }
-                  return fn(b, Update{doc,nullptr,id,prev_id,old_old_doc_id});
-              }
-          }
-          return fn(b, Update{doc, nullptr,id, prev_id, 0});
+        if (prev_id) {
+            std::string tmp;
+            if (this->_db->get(RawKey(this->_kid, prev_id), tmp)) {
+                Row rw((RowView(tmp)));
+                auto [old_old_doc_id, bin] = rw.get<DocID, Blob>();
+                auto beg = bin.begin();
+                auto end = bin.end();
+                if (beg != end) {
+                    auto old_doc = _DocDef::from_binary(beg, end);
+                    if (!document_is_deleted<_DocDef>(old_doc)) {
+                        fn(b, Update {doc,&old_doc,id,prev_id,old_old_doc_id});
+                        return;
+                    }
+                }
+                fn(b, Update{doc,nullptr,id,prev_id,old_old_doc_id});
+                return;
+            } else {
+                throw ReferencedDocumentNotFoundException(prev_id);
+            }
+        }
+        fn( b, Update{doc,nullptr,id,prev_id,0});
     }
 };
 

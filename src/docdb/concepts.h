@@ -57,8 +57,8 @@ template<typename T>
 DOCDB_CXX20_CONCEPT(DocumentDef,ToBinaryConvertible<T> && FromBinaryConvertible<T>);
 
 template<typename T>
-DOCDB_CXX20_CONCEPT(DocumentCustomDeleted, requires(ReadIteratorConcept b, ReadIteratorConcept e){
-    {T::is_deleted(b, e)} -> std::convertible_to<bool>;
+DOCDB_CXX20_CONCEPT(DocumentCustomDeleted, requires(const typename T::Type &x){
+    {T::is_deleted(x)} -> std::convertible_to<bool>;
 });
 
 

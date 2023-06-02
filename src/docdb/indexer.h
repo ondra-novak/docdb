@@ -11,6 +11,10 @@
 namespace docdb {
 
 using IndexerRevision = std::size_t;
+struct IndexerState  {
+        IndexerRevision indexer_revision;
+        DocID storage_revision;
+};
 
 
 template<DocumentDef _ValueDef>
@@ -56,23 +60,27 @@ public:
 
     Indexer(Storage &storage, KeyspaceID kid)
         :IndexView<Storage, _ValueDef, index_type>(storage.get_db(), kid, Direction::forward, {}, false,storage)
-         ,_unlocker(this)
+         ,_listener(this)
     {
-        if (get_revision() != revision) {
+        auto stored_state = get_stored_state();
+        _last_written_rev = stored_state.storage_revision;
+        if (stored_state.indexer_revision != revision) {
             reindex();
+        } else {
+            reindex_from(stored_state.storage_revision);
         }
         this->_storage.register_transaction_observer(make_observer());
     }
 
 
-    IndexerRevision get_revision() const {
+    IndexerState get_stored_state() const {
         auto k = this->_db->get_private_area_key(this->_kid);
         auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
         if (doc.has_value()) {
-            auto [cur_rev] = doc->template get<IndexerRevision>();
-            return cur_rev;
+            auto [cur_rev, stor_rev] = doc->template get<IndexerRevision, DocID>();
+            return {cur_rev,stor_rev};
         }
-        else return 0;
+        else return {0,0};
     }
 
     using TransactionObserver = std::function<void(Batch &b, const Key& key, const ValueType &value, DocID docId, bool erase)>;
@@ -164,11 +172,13 @@ public:
 
 protected:
 
-    class Unlocker:public AbstractBatchNotificationListener {
+    class Listener:public AbstractBatchNotificationListener { // @suppress("Miss copy constructor or assignment operator")
     public:
         Indexer *owner = nullptr;
-        Unlocker(Indexer *owner):owner(owner) {}
-        virtual void before_commit(Batch &b) override {}
+        Listener(Indexer *owner):owner(owner) {}
+        virtual void before_commit(Batch &b) override {
+            owner->close_pending_rev(b);
+        }
         virtual void after_commit(std::size_t rev) noexcept override {
             if constexpr(index_type == IndexType::unique) {
                 owner->_locker.unlock_keys(rev);
@@ -179,14 +189,14 @@ protected:
                 owner->_locker.unlock_keys(rev);
             }
         };
-
     };
 
     std::vector<TransactionObserver> _tx_observers;
     using KeyLocker = std::conditional_t<index_type == IndexType::unique, KeyLock<DocID>, std::nullptr_t>;
     KeyLocker _locker;
-    Unlocker _unlocker;
-
+    Listener _listener;
+    std::atomic<DocID> _last_written_rev = 0;
+    std::atomic<std::size_t> _pending_writes = {0};
 
 
 
@@ -194,10 +204,9 @@ protected:
 
     auto make_observer() {
         return [&](Batch &b, const Update &update) {
+            record_pending_rev(update.new_doc_id);
+            b.add_listener(&_listener);
             if constexpr(index_type == IndexType::unique || index_type == IndexType::unique_no_check) {
-                if constexpr(index_type == IndexType::unique) {
-                    b.add_listener(&_unlocker);
-                }
                 if (!update.new_doc) {
                     indexFn(Emit<true>(*this, b, IndexedDoc{update.old_doc_id, update.old_old_doc_id}), *update.old_doc);
                 } else {
@@ -214,16 +223,35 @@ protected:
         };
     }
 
+    void record_pending_rev(DocID id) {
+        _pending_writes.fetch_add(1, std::memory_order_relaxed);
+        auto cur_id = _last_written_rev.load(std::memory_order_relaxed);
+        while (cur_id < id
+                && !_last_written_rev.compare_exchange_weak(cur_id, id, std::memory_order_relaxed));
+    }
+
+    void close_pending_rev(Batch &b) {
+        auto cur_id = _last_written_rev.load(std::memory_order_relaxed);
+        if (_pending_writes.fetch_sub(1, std::memory_order_relaxed) == 1) {
+            //this is last pending write
+            //so now update revision and last_written_rev
+            //revision is +1 from last written doc
+            b.Put(Database::get_private_area_key(this->_kid), Row(revision, cur_id+1));
+        }
+    }
+
     void update_revision() {
         Batch b;
-        b.Put(this->_db->get_private_area_key(this->_kid), Row(revision));
+        update_rev(b);
         this->_db->commit_batch(b);
     }
 
     void reindex() {
         this->_db->clear_table(this->_kid, false);
-        this->_storage.rescan_for(make_observer());
-        update_revision();
+        reindex_from(0);
+    }
+    void reindex_from(DocID doc) {
+        this->_storage.rescan_for(make_observer(), doc);
     }
 
     void notify_tx_observers(Batch &b, const Key &key, const ValueType &value, DocID id, bool erase) {
@@ -240,6 +268,9 @@ protected:
                 throw DuplicateKeyException(key, this->_db, cur_doc, srcid);
             }
         }
+    }
+
+    void update_rev(Batch &b) {
     }
 
     static DuplicateKeyException make_exception(Key key, const PDatabase &db, DocID incoming, DocID stored) {

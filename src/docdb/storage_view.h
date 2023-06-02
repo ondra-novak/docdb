@@ -11,11 +11,10 @@ using DocID = std::uint64_t;
 
 
 
-template<typename _DocDef, typename Iter>
-static bool document_is_deleted(Iter b, Iter e) {
-    if (b == e) return true;
+template<typename _DocDef>
+static bool document_is_deleted(const typename _DocDef::Type &t) {
     if constexpr(DocumentCustomDeleted<_DocDef>) {
-        return _DocDef::is_deleted(b, e);
+        return _DocDef::is_deleted(t);
     }
     return false;
 }
@@ -37,13 +36,18 @@ struct DocRecord_Def {
     DocID previous_id = 0;
     ///Contains true if this record is deleted document
     bool deleted = true;
+    ///There is value loaded in (even if it deleted)
+    const bool has_value = false;
+
     DocRecord_Def(DocID previous_id):previous_id(previous_id),deleted(true) {}
     template<typename Iter>
-    DocRecord_Def(Iter b, Iter e) {
+    DocRecord_Def(Iter b, Iter e):has_value(b != e) {
         previous_id = Row::deserialize_item<DocID>(b, e);
-        deleted = document_is_deleted<_DocDef>(b, e);
-        if (b != e) {
+        if (has_value) {
             content =  _DocDef::from_binary(b,e);
+            deleted = document_is_deleted<_DocDef>(content);
+        } else {
+            deleted = true;
         }
     }
 
@@ -133,6 +137,11 @@ struct DocRecordDef {
         return _DocDef::to_binary(type.content, iter);
     }
 
+};
+
+struct ExportedDocument {
+    DocID id;
+    std::vector<char> data;
 };
 
 
@@ -238,6 +247,21 @@ public:
         auto beg = rs.begin();
         if (beg == rs.end()) return 0;
         return beg->id;
+    }
+
+    template<std::invocable<ExportedDocument> Fn>
+    static void export_documents(RecordSet &rc, Fn &&export_fn) {
+        ExportedDocument x;
+        while (!rc.empty()) {
+            auto [tmp1, id] = Row::extract<KeyspaceID, DocID>(rc.raw_key());
+            auto v = rc.raw_value();
+            x.id = id;
+            x.data.clear();
+            std::copy(v.begin(), v.end(), std::back_inserter(x.data));
+            export_fn(x);
+            rc.next();
+        }
+
     }
 
 };
