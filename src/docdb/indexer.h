@@ -116,6 +116,8 @@ public:
 
         void operator()(Key &&key, const ValueType &value) {put(key, value);}
         void operator()(Key &key, const ValueType &value) {put(key, value);}
+        void operator()(Key &&key) {put(key, ValueType());}
+        void operator()(Key &key) {put(key, ValueType());}
 
         DocID id() const {return _docinfo.cur_doc;}
         DocID prev_id() const {return _docinfo.prev_doc;}

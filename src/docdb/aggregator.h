@@ -133,7 +133,7 @@ public:
         else return 0;
     }
 
-    using TransactionObserver = std::function<void(Batch &b, const AggregatedKey& key, const ValueType &value, bool erase)>;
+    using TransactionObserver = std::function<void(Batch &b, const AggregatedKey& key, const ValueType &value, DocID docid, bool erase)>;
 
     void register_transaction_observer(TransactionObserver obs) {
         _tx_observers.push_back(std::move(obs));
@@ -349,7 +349,7 @@ protected:
 
     void notify_tx_observers(Batch &b, const AggregatedKey &key, const ValueType &value, bool erase) {
         for (const auto &f: _tx_observers) {
-            f(b, key, value, erase);
+            f(b, key, value, 0, erase);
         }
     }
 

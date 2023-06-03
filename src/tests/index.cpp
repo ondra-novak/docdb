@@ -33,7 +33,7 @@ void test1() {
     CHECK_EQUAL(d4,4);
 
     int fnd = 0;
-    for(const auto &x: index1.select({"world"})) {
+    for(const auto &x: index1 == "world") {
        CHECK_EQUAL(x.id, 2);
        auto [v] = x.value.get<std::size_t>();
        CHECK_EQUAL(v, 5);
@@ -44,7 +44,7 @@ void test1() {
     CHECK_EQUAL(fnd,1);
 
         {
-            auto recordset = index2.select({std::size_t(3)});
+            auto recordset = index2 == std::size_t(3);
             auto iter = recordset.begin();
             CHECK(iter != recordset.end());
             {
@@ -73,9 +73,9 @@ void test1() {
         }
         storage.put("world2",d2);
         {
-            auto rs1 = index1.select("world");
+            auto rs1 = index1 == "world";
             CHECK(rs1.begin() == rs1.end());
-            auto rs2 = index1.select("world2");
+            auto rs2 = index1 == "world2";
             CHECK(rs2.begin() != rs2.end());
         }
 

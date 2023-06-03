@@ -12,6 +12,8 @@ set(testFiles
     index_unique_hide.cpp
     row.cpp
     map.cpp
+    join.cpp
+    structured.cpp
 )
 
 link_libraries(

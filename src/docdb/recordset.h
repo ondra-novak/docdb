@@ -401,6 +401,10 @@ public:
         return _count;
     }
 
+    operator bool() const {
+        return !empty();
+    }
+
 protected:
 
     using MyBuffer = Buffer<char, 128>;

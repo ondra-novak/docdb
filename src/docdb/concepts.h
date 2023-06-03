@@ -118,6 +118,7 @@ struct DocConstructType<T,true> {
 template<typename T>
 using DocConstructType_t = typename DocConstructType<T, DocumentDefHasConstructType<T> >::Type;
 
+
 template<template<int> class X>
 struct ByteToIntegralType {
 
@@ -152,7 +153,7 @@ struct ByteToIntegralType {
 
 
     template<typename Fn>
-    auto visit(Fn &&visitor, std::uint8_t index) {
+    static auto visit(Fn &&visitor, std::uint8_t index) {
         switch (index >> 4) {
             case 0: return jump_table_1<0>(index, std::forward<Fn>(visitor));
             case 1: return jump_table_1<1>(index, std::forward<Fn>(visitor));

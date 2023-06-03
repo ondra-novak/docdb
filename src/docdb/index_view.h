@@ -297,9 +297,162 @@ public:
         }
     }
 
+    RecordSet operator > (Key &&x) const {return gte(x);}
+    RecordSet operator > (Key &x) const {return gte(x);}
+    RecordSet gt (Key &&x) const {return lt (x);}
+    RecordSet gt (Key &x) const {
+        x.change_kid(this->_kid);
+        if (isForward(this->_dir)) {
+            return IndexBase::template create_recordset<_ValueDef>(
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
+                 x.prefix_end(), RawKey(this->_kid+1),
+                 FirstRecord::included, FirstRecord::excluded
+            });
+        } else {
+            return IndexBase::template create_recordset<_ValueDef>(
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
+                 RawKey(this->_kid+1),x.prefix_end(),
+                 FirstRecord::excluded, FirstRecord::included
+            });
 
+        }
+    }
+    RecordSet operator < (Key &&x) const {return gte(x);}
+    RecordSet operator < (Key &x) const {return gte(x);}
+    RecordSet lt (Key &&x) const {return gt (x);}
+    RecordSet lt (Key &x) const {
+        x.change_kid(this->_kid);
+        if (isForward(this->_dir)) {
+            return IndexBase::template create_recordset<_ValueDef>(
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
+                 RawKey(this->_kid),x,
+                 FirstRecord::included, FirstRecord::excluded
+            });
+        } else {
+            return IndexBase::template create_recordset<_ValueDef>(
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
+                 x,RawKey(this->_kid),
+                 FirstRecord::excluded, FirstRecord::included
+            });
+
+        }
+    }
+    RecordSet operator >= (Key &&x) const {return gte(x);}
+    RecordSet operator >= (Key &x) const {return gte(x);}
+    RecordSet gte (Key &&x) const {return gte (x);}
+    RecordSet gte (Key &x) const {
+        x.change_kid(this->_kid);
+        if (isForward(this->_dir)) {
+            return IndexBase::template create_recordset<_ValueDef>(
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
+                 x, RawKey(this->_kid+1),
+                 FirstRecord::included, FirstRecord::excluded
+            });
+        } else {
+            return IndexBase::template create_recordset<_ValueDef>(
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
+                 RawKey(this->_kid+1),x,
+                 FirstRecord::excluded, FirstRecord::included
+            });
+
+        }
+    }
+    RecordSet operator <= (Key &&x) const {return lte(x);}
+    RecordSet operator <= (Key &x) const {return lte(x);}
+    RecordSet lte (Key &&x) const {return lte (x);}
+    RecordSet lte (Key &x) const {
+        x.change_kid(this->_kid);
+        if (isForward(this->_dir)) {
+            return IndexBase::template create_recordset<_ValueDef>(
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
+                 RawKey(this->_kid),x.prefix_end(),
+                 FirstRecord::included, FirstRecord::excluded
+            });
+        } else {
+            return IndexBase::template create_recordset<_ValueDef>(
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
+                 x.prefix_end(),RawKey(this->_kid),
+                 FirstRecord::excluded, FirstRecord::included
+            });
+
+        }
+    }
+    RecordSet operator %= (Key &&x) const {return eq(x);}
+    RecordSet operator %= (Key &x) const {return eq(x);}
+    RecordSet operator == (Key &&x) const {return eq(x);}
+    RecordSet operator == (Key &x) const {return eq(x);}
+    RecordSet eq (Key &&x) const {return eq (x);}
+    RecordSet eq (Key &x) const {
+        x.change_kid(this->_kid);
+        if (isForward(this->_dir)) {
+            return IndexBase::template create_recordset<_ValueDef>(
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
+                 x,x.prefix_end(),
+                 FirstRecord::included, FirstRecord::excluded
+            });
+        } else {
+            return IndexBase::template create_recordset<_ValueDef>(
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
+                 x.prefix_end(),x,
+                 FirstRecord::excluded, FirstRecord::included
+            });
+
+        }
+    }
 
 };
+
+
+template<typename _ValueDef, typename IndexBase>
+auto operator<(Key &k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    return index > k;
+}
+template<typename _ValueDef, typename IndexBase>
+auto operator<(Key &&k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    return index > k;
+}
+template<typename _ValueDef, typename IndexBase>
+auto operator>(Key &k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    return index < k;
+}
+template<typename _ValueDef, typename IndexBase>
+auto operator>(Key &&k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    return index < k;
+}
+
+template<typename _ValueDef, typename IndexBase>
+auto operator<=(Key &k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    return index >= k;
+}
+template<typename _ValueDef, typename IndexBase>
+auto operator<=(Key &&k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    return index >= k;
+}
+template<typename _ValueDef, typename IndexBase>
+auto operator>=(Key &k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    return index <= k;
+}
+template<typename _ValueDef, typename IndexBase>
+auto operator>=(Key &&k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    return index <= k;
+}
+template<typename _ValueDef, typename IndexBase>
+auto operator==(Key &k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    return index == k;
+}
+template<typename _ValueDef, typename IndexBase>
+auto operator==(Key &&k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    return index == k;
+}
+
+template<typename _ValueDef, typename IndexBase>
+auto operator!=(Key &k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    static_assert(defer_false<IndexBase>);
+}
+template<typename _ValueDef, typename IndexBase>
+auto operator!=(Key &&k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+    static_assert(defer_false<IndexBase>);
+}
 
 template<typename _DocDef>
 struct SkipDocIDDcument {
