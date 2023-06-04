@@ -285,16 +285,15 @@ public:
          } else if constexpr(IsVariant<T>) {
              if (sz == 0) return T();
              std::uint8_t index = *at++;
-             ByteToIntegralType<ConstructVariantHelper<T>::template DoIt> c;
-             return c.visit([&](auto c){
-                 if constexpr(c.val >= std::variant_size_v<T>) {
+             return number_to_constant<0, std::variant_size_v<T>-1 >(index, [&](auto c){
+                 if constexpr(!c.valid) {
                      throw std::invalid_argument("ROW: Variant index out of range (corrupted row?)");
                      return T();
                  } else {
-                     using Type = std::variant_alternative_t<c.val,T>;
+                     using Type = std::variant_alternative_t<c.value,T>;
                      return T(deserialize_item<Type>(at, end));
                  }
-             }, index);
+             });
          } else if constexpr(std::is_null_pointer_v<T> || std::is_same_v<T, std::monostate>) {
              return T();
          } else if constexpr(std::is_base_of_v<Blob, T> || std::is_base_of_v<RowView, T>) {

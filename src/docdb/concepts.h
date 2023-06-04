@@ -100,81 +100,58 @@ template<typename T>
 DOCDB_CXX20_CONCEPT(DocumentWrapper, std::is_constructible_v<T, decltype([](std::string &)->bool{return true;})>);
 
 
-template<typename T>
-DOCDB_CXX20_CONCEPT(DocumentDefHasConstructType, requires {
-    typename T::ConstructType;
-});
 
-template<typename T, bool>
-struct DocConstructType {
-    using Type = typename T::Type;
+template<int i>
+struct ConstInteger {
+    static constexpr int value = i;
+    static constexpr bool valid = true;
 };
 
-template<typename T>
-struct DocConstructType<T,true> {
-    using Type = typename T::ConstructType;
+struct ConstError {
+    static constexpr bool valid = false;
 };
 
-template<typename T>
-using DocConstructType_t = typename DocConstructType<T, DocumentDefHasConstructType<T> >::Type;
+template<typename Fn, int min, int max>
+class JumpTable {
+public:
+    static_assert(min <= max);
 
+    using Ret = decltype(std::declval<Fn>()(std::declval<ConstInteger<min> >()));
+    static constexpr unsigned int size = max - min + 1;
 
-template<template<int> class X>
-struct ByteToIntegralType {
-
-    template<int idx, typename Fn>
-    static auto finalize(Fn && fn) {
-        return fn(X<idx>());
+    constexpr JumpTable() {
+        init_jump_table<min>(_jumpTable);
     }
 
-    template<int group, typename Fn>
-    static auto jump_table_1(std::uint8_t index, Fn &&fn) {
-        constexpr auto base = group << 4;
-        switch (index) {
-            case base+0: return finalize<base+0>(std::forward<Fn>(fn));
-            case base+1: return finalize<base+1>(std::forward<Fn>(fn));
-            case base+2: return finalize<base+2>(std::forward<Fn>(fn));
-            case base+3: return finalize<base+3>(std::forward<Fn>(fn));
-            case base+4: return finalize<base+4>(std::forward<Fn>(fn));
-            case base+5: return finalize<base+5>(std::forward<Fn>(fn));
-            case base+6: return finalize<base+6>(std::forward<Fn>(fn));
-            case base+7: return finalize<base+7>(std::forward<Fn>(fn));
-            case base+8: return finalize<base+8>(std::forward<Fn>(fn));
-            case base+9: return finalize<base+9>(std::forward<Fn>(fn));
-            case base+10: return finalize<base+10>(std::forward<Fn>(fn));
-            case base+11: return finalize<base+11>(std::forward<Fn>(fn));
-            case base+12: return finalize<base+12>(std::forward<Fn>(fn));
-            case base+13: return finalize<base+13>(std::forward<Fn>(fn));
-            case base+14: return finalize<base+14>(std::forward<Fn>(fn));
-            case base+15: return finalize<base+15>(std::forward<Fn>(fn));
-            default: throw;
-        }
+    constexpr Ret visit(int value, Fn &&fn) const  {
+        auto index = static_cast<unsigned int>(value - min);
+        if (index >= size) fn(ConstError{});
+        return _jumpTable[index](std::forward<Fn>(fn));
     }
 
+protected:
 
-    template<typename Fn>
-    static auto visit(Fn &&visitor, std::uint8_t index) {
-        switch (index >> 4) {
-            case 0: return jump_table_1<0>(index, std::forward<Fn>(visitor));
-            case 1: return jump_table_1<1>(index, std::forward<Fn>(visitor));
-            case 2: return jump_table_1<2>(index, std::forward<Fn>(visitor));
-            case 3: return jump_table_1<3>(index, std::forward<Fn>(visitor));
-            case 4: return jump_table_1<4>(index, std::forward<Fn>(visitor));
-            case 5: return jump_table_1<5>(index, std::forward<Fn>(visitor));
-            case 6: return jump_table_1<6>(index, std::forward<Fn>(visitor));
-            case 7: return jump_table_1<7>(index, std::forward<Fn>(visitor));
-            case 8: return jump_table_1<8>(index, std::forward<Fn>(visitor));
-            case 9: return jump_table_1<9>(index, std::forward<Fn>(visitor));
-            case 10: return jump_table_1<10>(index, std::forward<Fn>(visitor));
-            case 11: return jump_table_1<11>(index, std::forward<Fn>(visitor));
-            case 12: return jump_table_1<12>(index, std::forward<Fn>(visitor));
-            case 13: return jump_table_1<13>(index, std::forward<Fn>(visitor));
-            case 14: return jump_table_1<14>(index, std::forward<Fn>(visitor));
-            case 15: return jump_table_1<15>(index, std::forward<Fn>(visitor));
-            default: throw;
+    template<int i>
+    static Ret call_fn(Fn &&fn) {return fn(ConstInteger<i>());}
+
+    using FnPtr = Ret (*)(Fn &&fn);
+    FnPtr _jumpTable[size] = {};
+
+    template<int i>
+    constexpr void init_jump_table(FnPtr *ptr) {
+        if constexpr(i <= max) {
+            *ptr = &call_fn<i>;
+            init_jump_table<i+1>(ptr+1);
         }
     }
 };
+
+template<int min, int max, typename Fn>
+auto number_to_constant(int number, Fn &&fn) {
+    static constexpr JumpTable<Fn, min, max> jptable;
+    return jptable.visit(number, std::forward<Fn>(fn));
+}
+
 
 template<typename ... T>
 struct DeferFalse {

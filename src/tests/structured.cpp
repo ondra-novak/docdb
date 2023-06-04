@@ -1,5 +1,6 @@
 
 #include <docdb/structured_document.h>
+#include "check.h"
 
 #include <docdb/row.h>
 #include <iostream>
@@ -14,6 +15,9 @@ int main() {
             {"double",12.25},
             {"xyz", 12},
             {"pole",{1,2,3,4,5}},
+            {"unicode",L"Příšerně žluťoučký kůň úpěl ďábelské kódy"},
+            {"null1",std::wstring(L"znak\0nula",9)},
+            {"null2",std::string("znak\0nula",9)}
     };
 
     std::string bin;
@@ -23,8 +27,8 @@ int main() {
     docdb::Structured out = docdb::StructuredDocument::from_binary(beg, end);
 
     bool equal = out == doc;
-    std::cout << equal << std::endl;
-    std::cout << bin << std::endl;
+    CHECK(equal);
+    CHECK_EQUAL(out["neg"].get<int>(), -15);
 }
 
 

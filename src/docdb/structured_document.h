@@ -4,6 +4,7 @@
 
 #include "row.h"
 
+#include "utf8.h"
 #include <algorithm>
 #include <map>
 #include <string>
@@ -27,6 +28,7 @@ using StructVariant = std::variant<
         std::nullptr_t,
         bool,
         std::string,
+        std::wstring,
         std::intmax_t,
         double,
         StructArray,
@@ -40,9 +42,9 @@ public:
 
     using StructVariant::StructVariant;
 
-    static Structured not_defined;
-    static KeyPairs empty_keypair;
-    static Array empty_array;
+    static const Structured not_defined;
+    static const KeyPairs empty_keypair;
+    static const Array empty_array;
 
     Structured(const std::initializer_list<Structured> &list)
         :Structured(buildValue(list.begin(), list.end())) {}
@@ -56,6 +58,9 @@ public:
 
     operator bool() const {return !operator==(nullptr);}
 
+    const Structured &operator[](const char *name) {
+        return operator[](std::string_view(name));
+    }
     const Structured &operator[](const std::string_view &name) {
         if (std::holds_alternative<StructKeypairs>(*this)) {
             const StructKeypairs &kp = std::get<StructKeypairs>(*this);
@@ -253,6 +258,10 @@ protected:
 
 };
 
+inline const Structured Structured::not_defined;
+inline const Structured::KeyPairs Structured::empty_keypair;
+inline const Structured::Array Structured::empty_array;
+
 
 template<typename Iter>
 Structured Structured::buildValue(Iter begin, Iter end) {
@@ -336,6 +345,8 @@ struct StructuredDocument {
                 return Row::serialize_items(iter, v);
             } else if constexpr(std::is_same_v<Type, std::string>) {
                 return string_to_binary(index, v, iter);
+            } else if constexpr(std::is_same_v<Type, std::wstring>) {
+                return wstring_to_binary(index, v, iter);
             } else if constexpr(std::is_same_v<Type, Structured::KeyPairs>) {
                 iter = uint_to_binary(index, v.size(), iter);
                 for (const auto &[key, val]: v) {
@@ -356,10 +367,6 @@ struct StructuredDocument {
         }, val);
     }
 
-    template<int i>
-    struct ByIndex {
-        static constexpr int val = i;
-    };
 
     template<typename Iter>
     static Structured from_binary(Iter &at, Iter end) {
@@ -367,17 +374,19 @@ struct StructuredDocument {
         unsigned char code = *at++;
         int index = code >> 4;
         int extra = code & 0xF;
-        return ByteToIntegralType<ByIndex>::visit([&](auto bidx) -> Structured {
-            if constexpr(bidx.val >= std::variant_size_v<StructVariant>) {
+        return number_to_constant<0,std::variant_size_v<StructVariant>-1 >(index, [&](auto bidx) -> Structured {
+            if constexpr(!bidx.valid) {
                 return undefined;
             } else {
-                using Type = std::variant_alternative_t<bidx.val, StructVariant>;
+                using Type = std::variant_alternative_t<bidx.value, StructVariant>;
                 if constexpr(std::is_same_v<Type, bool>) {
                     return extra != 0;
                 } else if constexpr(std::is_same_v<Type, std::nullptr_t> || std::is_same_v<Type, Undefined>) {
                     return Type();
                 } else if constexpr(std::is_same_v<Type, std::string>) {
                     return string_from_binary(extra, at, end);
+                } else if constexpr(std::is_same_v<Type, std::wstring>) {
+                    return wstring_from_binary(extra, at, end);
                 } else if constexpr(std::is_same_v<Type, std::intmax_t>) {
                     std::intmax_t v = uint_from_binary(extra, at, end);
                     if (extra & 0x08) v = -v;
@@ -407,26 +416,26 @@ struct StructuredDocument {
                     return out;
                 }
             }
-        }, index);
+        });
 
     }
 
     template<typename N, typename Iter>
     static Iter uint_to_binary(unsigned char index, N uv, Iter iter) {
-        return ByteToIntegralType<ByIndex>::visit([&](auto a){
-            if constexpr(a.val > 8) {
+        return number_to_constant<0,7>(getByteCount(uv),[&](auto a){
+            if constexpr(!a.valid) {
                 return iter;
             } else {
-                *iter = index | (a.val-1);
+                *iter = index | (a.value-1);
                 ++iter;
-                for (int i = 0; i < a.val; i++) {
+                for (int i = 0; i < a.value; i++) {
                     *iter = uv & 0xFF;
                     ++iter;
                     uv >>= 8;
                 }
             }
             return iter;
-        }, getByteCount(uv));
+        });
     }
     template<typename Iter>
     static Iter string_to_binary(unsigned char index, const std::string_view &val, Iter iter) {
@@ -434,21 +443,31 @@ struct StructuredDocument {
         for (char c: val) *iter++ = c;
         return iter;
     }
+    template<typename Iter>
+    static Iter wstring_to_binary(unsigned char index, const std::wstring_view &val, Iter iter) {
+        *iter = index;
+        ++iter;
+        for (wchar_t c: val) iter = wcharToUtf8(c, iter);
+        *iter = 0;
+        ++iter;
+        return iter;
+    }
 
     template<typename Iter>
     static std::uint64_t uint_from_binary(int extra, Iter &at, Iter iter) {
-        return ByteToIntegralType<ByIndex>::visit([&](auto a)->std::uint64_t{
-            if constexpr(a.val > 8) {
+        return number_to_constant<0,7>((extra & 0x7),[&](auto a)->std::uint64_t{
+            if constexpr(!a.valid) {
                 return 0;
             } else {
+                constexpr auto count = a.value+1;
                 std::uint64_t v = 0;
-                for (int i = 0; i < a.val; i++)  {
+                for (int i = 0; i < count; i++)  {
                     v = v | (static_cast<std::uint64_t>(*at) << (i * 8));
                     ++at;
                 }
                 return v;
             }
-        }, (extra & 0x7)+1);
+        });
     }
 
     template<typename Iter>
@@ -461,6 +480,16 @@ struct StructuredDocument {
             ++at;
         }
         return out;
+    }
+    template<typename Iter>
+    static std::wstring wstring_from_binary(int extra, Iter &at, Iter iter) {
+        std::wstring out;
+        while (at != iter && *at) {
+            out.push_back(utf8Towchar(at, iter));
+        }
+        at++;
+        return out;
+
     }
 };
 
