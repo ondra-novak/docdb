@@ -1,5 +1,6 @@
 
 #include <docdb/structured_document.h>
+#include <docdb/json.h>
 #include "check.h"
 
 #include <docdb/row.h>
@@ -29,6 +30,8 @@ int main() {
     bool equal = out == doc;
     CHECK(equal);
     CHECK_EQUAL(out["neg"].get<int>(), -15);
+
+    std::cout << doc.to_json() << std::endl;
 }
 
 

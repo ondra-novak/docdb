@@ -248,6 +248,25 @@ public:
         }, *this, other);
     }
 
+    template<typename Iter>
+    Iter     to_json(Iter iter) const;
+
+
+    template<typename Iter>
+    static Structured from_json(Iter &at, Iter end);
+
+
+
+    std::string to_json() const {
+        std::string s;
+        to_json(std::back_inserter(s));
+        return s;
+    }
+
+    static Structured from_json(std::string_view text) {
+        auto b = text.begin();
+        return from_json(b,text.end());
+    }
 
 
 protected:
@@ -499,7 +518,6 @@ struct StructuredDocument {
 
 
 }
-
 
 
 
