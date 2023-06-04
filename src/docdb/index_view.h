@@ -256,10 +256,10 @@ public:
 
     }
 
-    RecordSet select_range(Key &&from, Key &&to, LastRecord last_record = LastRecord::excluded)const  {return select_range(from, to, last_record);}
-    RecordSet select_range(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) const {return select_range(from, to, last_record);}
-    RecordSet select_range(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) const {return select_range(from, to, last_record);}
-    RecordSet select_range(Key &from, Key &to, LastRecord last_record = LastRecord::excluded)const  {
+    RecordSet select_between(Key &&from, Key &&to, LastRecord last_record = LastRecord::excluded)const  {return select_between(from, to, last_record);}
+    RecordSet select_between(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) const {return select_between(from, to, last_record);}
+    RecordSet select_between(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) const {return select_between(from, to, last_record);}
+    RecordSet select_between(Key &from, Key &to, LastRecord last_record = LastRecord::excluded)const  {
         from.change_kid(this->_kid);
         to.change_kid(this->_kid);
         if (from <= to) {
@@ -297,10 +297,10 @@ public:
         }
     }
 
-    RecordSet operator > (Key &&x) const {return gte(x);}
-    RecordSet operator > (Key &x) const {return gte(x);}
-    RecordSet gt (Key &&x) const {return lt (x);}
-    RecordSet gt (Key &x) const {
+    RecordSet operator > (Key &&x) const {return select_greater_then(x);}
+    RecordSet operator > (Key &x) const {return select_greater_then(x);}
+    RecordSet select_greater_then (Key &&x) const {return select_less_then (x);}
+    RecordSet select_greater_then (Key &x) const {
         x.change_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::template create_recordset<_ValueDef>(
@@ -317,10 +317,10 @@ public:
 
         }
     }
-    RecordSet operator < (Key &&x) const {return gte(x);}
-    RecordSet operator < (Key &x) const {return gte(x);}
-    RecordSet lt (Key &&x) const {return gt (x);}
-    RecordSet lt (Key &x) const {
+    RecordSet operator < (Key &&x) const {return select_less_then(x);}
+    RecordSet operator < (Key &x) const {return select_less_then(x);}
+    RecordSet select_less_then (Key &&x) const {return select_less_then (x);}
+    RecordSet select_less_then (Key &x) const {
         x.change_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::template create_recordset<_ValueDef>(
@@ -337,10 +337,10 @@ public:
 
         }
     }
-    RecordSet operator >= (Key &&x) const {return gte(x);}
-    RecordSet operator >= (Key &x) const {return gte(x);}
-    RecordSet gte (Key &&x) const {return gte (x);}
-    RecordSet gte (Key &x) const {
+    RecordSet operator >= (Key &&x) const {return select_greater_or_equal_then(x);}
+    RecordSet operator >= (Key &x) const {return select_greater_or_equal_then(x);}
+    RecordSet select_greater_or_equal_then (Key &&x) const {return select_greater_or_equal_then (x);}
+    RecordSet select_greater_or_equal_then (Key &x) const {
         x.change_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::template create_recordset<_ValueDef>(
@@ -357,10 +357,10 @@ public:
 
         }
     }
-    RecordSet operator <= (Key &&x) const {return lte(x);}
-    RecordSet operator <= (Key &x) const {return lte(x);}
-    RecordSet lte (Key &&x) const {return lte (x);}
-    RecordSet lte (Key &x) const {
+    RecordSet operator <= (Key &&x) const {return select_less_or_equal_then(x);}
+    RecordSet operator <= (Key &x) const {return select_less_or_equal_then(x);}
+    RecordSet select_less_or_equal_then (Key &&x) const {return select_less_or_equal_then (x);}
+    RecordSet select_less_or_equal_then (Key &x) const {
         x.change_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::template create_recordset<_ValueDef>(
@@ -377,28 +377,10 @@ public:
 
         }
     }
-    RecordSet operator %= (Key &&x) const {return eq(x);}
-    RecordSet operator %= (Key &x) const {return eq(x);}
-    RecordSet operator == (Key &&x) const {return eq(x);}
-    RecordSet operator == (Key &x) const {return eq(x);}
-    RecordSet eq (Key &&x) const {return eq (x);}
-    RecordSet eq (Key &x) const {
-        x.change_kid(this->_kid);
-        if (isForward(this->_dir)) {
-            return IndexBase::template create_recordset<_ValueDef>(
-                    this->_db->make_iterator(this->_snap, this->_no_cache),{
-                 x,x.prefix_end(),
-                 FirstRecord::included, FirstRecord::excluded
-            });
-        } else {
-            return IndexBase::template create_recordset<_ValueDef>(
-                    this->_db->make_iterator(this->_snap, this->_no_cache),{
-                 x.prefix_end(),x,
-                 FirstRecord::excluded, FirstRecord::included
-            });
-
-        }
-    }
+    RecordSet operator == (Key &&x) const {return select_equal_to(x);}
+    RecordSet operator == (Key &x) const {return select_equal_to(x);}
+    RecordSet select_equal_to (Key &&x) const {return select_equal_to (x);}
+    RecordSet select_equal_to (Key &x) const {return select(x);}
 
 };
 
