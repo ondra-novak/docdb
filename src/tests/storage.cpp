@@ -26,7 +26,7 @@ void test1() {
 
         auto view = storage.get_snapshot();
 
-        auto d = view.find(d1);
+        auto d = view.find(d2);
         CHECK(d.has_value());
         CHECK_EQUAL(d->content,"world");
         d = view.find(d4);
@@ -89,4 +89,5 @@ int main() {
 
 
     test1();
+    return 0;
 }

@@ -252,8 +252,11 @@ public:
     Iter     to_json(Iter iter) const;
 
 
+    static constexpr int flagWideStrings = 1;
+
+
     template<typename Iter>
-    static Structured from_json(Iter &at, Iter end);
+    static Structured from_json(Iter &at, Iter end, int flags = 0);
 
 
 
@@ -263,9 +266,9 @@ public:
         return s;
     }
 
-    static Structured from_json(std::string_view text) {
+    static Structured from_json(std::string_view text, int flags = 0) {
         auto b = text.begin();
-        return from_json(b,text.end());
+        return from_json(b,text.end(), flags);
     }
 
 

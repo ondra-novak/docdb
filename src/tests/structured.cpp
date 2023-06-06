@@ -31,7 +31,10 @@ int main() {
     CHECK(equal);
     CHECK_EQUAL(out["neg"].get<int>(), -15);
 
-    std::cout << doc.to_json() << std::endl;
+    std::string x = doc.to_json();
+    docdb::Structured jout = docdb::Structured::from_json(x);
+    std::string y = jout.to_json();
+    CHECK_EQUAL(x, y);
 }
 
 
