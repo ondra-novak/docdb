@@ -249,12 +249,66 @@ public:
         }, *this, other);
     }
 
+    std::string to_string() const {
+        return std::visit([this](const auto &v) -> std::string{
+            using T = std::decay_t<decltype(v)>;
+            if constexpr(std::is_same_v<T, Undefined>) {return "[undefined]";}
+            else if constexpr(std::is_same_v<T, bool>) {return v?"true":"false";}
+            else if constexpr(std::is_same_v<T, std::string>) {return v;}
+            else if constexpr(std::is_same_v<T, std::wstring>) {
+                std::string out;
+                for (auto c: v) wcharToUtf8(c, std::back_inserter(out));
+                return out;
+            } 
+            else if constexpr(std::is_same_v<T,std::intmax_t> || std::is_same_v<T,double>) {
+                return std::to_string(v);
+            }
+            else { 
+                return to_json();
+            }
+        }, *this);
+    }
+
+    std::wstring to_wstring() const {
+        return std::visit([this](const auto &v) -> std::wstring{
+            using T = std::decay_t<decltype(v)>;
+            if constexpr(std::is_same_v<T, Undefined>) {return L"[undefined]";}
+            else if constexpr(std::is_same_v<T, bool>) {return v?L"true":L"false";}
+            else if constexpr(std::is_same_v<T, std::string>) {
+                std::wstring out;
+                auto iter = v.begin();
+                auto end = v.end();
+                while (iter != end) {
+                    out.push_back(utf8Towchar(iter,end));
+                }
+                return out;
+            }
+            else if constexpr(std::is_same_v<T, std::wstring>) {return v;}        
+            else if constexpr(std::is_same_v<T,std::intmax_t> || std::is_same_v<T,double>) {
+                return std::to_wstring(v);
+            }
+            else { 
+                std::wstring out;
+                std::string z = to_json();
+                auto iter = z.begin();
+                auto end = z.end();
+                while (iter != end) {
+                    out.push_back(utf8Towchar(iter,end));
+                }
+                return out;
+            }
+        }, *this);
+    }
+
     template<typename Iter>
     Iter     to_json(Iter iter) const;
 
 
+    static constexpr int flagWideStrings = 1;
+
+
     template<typename Iter>
-    static Structured from_json(Iter &at, Iter end);
+    static Structured from_json(Iter &at, Iter end, int flags = 0);
 
 
 
@@ -264,9 +318,9 @@ public:
         return s;
     }
 
-    static Structured from_json(std::string_view text) {
+    static Structured from_json(std::string_view text, int flags = 0) {
         auto b = text.begin();
-        return from_json(b,text.end());
+        return from_json(b,text.end(), flags);
     }
 
 
@@ -512,11 +566,6 @@ struct StructuredDocument {
 
     }
 };
-
-
-
-
-
 
 }
 
