@@ -39,6 +39,7 @@ public:
 
     using KeyPairs = StructKeypairs;
     using Array = StructArray;
+    static_assert(std::variant_size_v<StructVariant> < 16);
 
     using StructVariant::StructVariant;
 
