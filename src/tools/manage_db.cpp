@@ -35,15 +35,13 @@ public:
 static Logger logger;
 static EmptyLogger empty_logger;
 
-static docdb::PDatabase open_db(std::string path, bool create_flag, bool verbose_mode) {
+static docdb::PDatabase open_db(std::string path, bool create_flag, bool verbose_mode, std::size_t max_file_size) {
     leveldb::Options opts;
     opts.info_log = verbose_mode?static_cast<leveldb::Logger *>(&logger):static_cast<leveldb::Logger *>(&empty_logger);
     opts.create_if_missing = create_flag;
     opts.reuse_logs  = true;
-    leveldb::DB *out;
-    auto st = leveldb::DB::Open(opts, path, &out);
-    if (!st.ok()) throw docdb::DatabaseError(st);
-    return docdb::Database::create(out);
+    if (max_file_size) opts.max_file_size = max_file_size * 1024*1024;
+    return docdb::Database::create(path, opts);
 }
 
 std::string convertNumberToString(std::uint64_t number, int width)
@@ -140,7 +138,7 @@ static void print_db_info(const docdb::PDatabase &db) {
     std::size_t prev_level_size = 0;
     std::size_t prev_level_count = 0;
     auto flush_out = [&] {
-        if (prev_level != -1) {
+        if (prev_level != static_cast<std::size_t>(-1)) {
             std::cout << " " <<prev_level << " "
                     << convertNumberToString(prev_level_size, 10) << " "
                     << std::setw(4) << std::right << prev_level_count << std::endl;
@@ -646,7 +644,7 @@ static void command_restore(const docdb::PDatabase &db, std::string name, const 
         edoc.id = docid;
         edoc.data.resize(size);
         inf.read(edoc.data.data(), edoc.data.size());
-        if (inf.gcount() != edoc.data.size()) throw std::runtime_error("Failed to read record: " + std::to_string(docid));
+        if (static_cast<std::size_t>(inf.gcount()) != edoc.data.size()) throw std::runtime_error("Failed to read record: " + std::to_string(docid));
         storage.import_document(b, edoc);
         cnt++;
         db->commit_batch(b);
@@ -722,7 +720,8 @@ void print_help(const char *arg0) {
     std::cout << "Usage: " << arg0 << " -hcd <database_path>\n\n"
             "-h           show help\n"
             "-c           create database if missing\n"
-            "-d           show debug messages\n";
+            "-d           show debug messages\n"
+            "-s <size>    max file size in MB (for compacting)\n";
 
 }
 
@@ -732,7 +731,8 @@ int main(int argc, char **argv) {
     bool create_flag = false;
     bool debug_mode = false;
     int opt;
-    while ((opt = getopt(argc, argv, "hcd")) != -1) {
+    std::size_t max_file_size = 0;
+    while ((opt = getopt(argc, argv, "hcds:")) != -1) {
         switch (opt) {
             case 'h': print_help(argv[0]);
                       exit(0);
@@ -740,6 +740,8 @@ int main(int argc, char **argv) {
             case 'c': create_flag = true;
                       break;
             case 'd': debug_mode = true;
+                      break;
+            case 's': max_file_size = strtoul(optarg, nullptr, 10);
                       break;
             default:
                       std::cerr << "Unknown option, use -h for help" << std::endl;
@@ -750,7 +752,7 @@ int main(int argc, char **argv) {
         std::cerr << "Missing name of database, use -h for help" << std::endl;
         return 1;
     }
-    docdb::PDatabase db = open_db(argv[optind], create_flag, debug_mode);
+    docdb::PDatabase db = open_db(argv[optind], create_flag, debug_mode,max_file_size);
 
     print_db_info(db);
     print_list_tables(db);

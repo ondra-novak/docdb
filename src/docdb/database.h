@@ -33,6 +33,26 @@ using PSnapshot = std::shared_ptr<const leveldb::Snapshot>;
 ///Database base
 class Database: public std::enable_shared_from_this<Database> {
 public:
+
+    ///Create database object
+    static PDatabase create(leveldb::DB *db) {
+        return std::make_shared<Database>(db);
+    }
+
+    ///Create database object
+    /**
+     * @param path path to database (or path to be created)
+     * @param options Options (leveldb options)
+     * @return PDatabase object
+     */
+    static PDatabase create(const std::string &path, const leveldb::Options &options) {
+        leveldb::DB *db;
+        leveldb::Status st = leveldb::DB::Open(options, path, &db);
+        if (!st.ok()) throw DatabaseError(st);
+        return create(db);
+    }
+
+
     ///Initialize database
     /**
      * @param dbinst leveldb instance
@@ -217,10 +237,6 @@ public:
         opts.snapshot = snap.get();
         opts.fill_cache = !no_cache;
         return std::unique_ptr<leveldb::Iterator>(_dbinst->NewIterator(opts));
-    }
-
-    static PDatabase create(leveldb::DB *db) {
-        return std::make_shared<Database>(db);
     }
 
     bool get(std::string_view key, std::string &result, const PSnapshot &snap = {}) {
