@@ -6,6 +6,7 @@
 
 #include "utf8.h"
 #include <algorithm>
+#include <chrono>
 #include <map>
 #include <string>
 #include <typeinfo>
@@ -31,6 +32,7 @@ using StructVariant = std::variant<
         std::wstring,
         std::intmax_t,
         double,
+        std::chrono::system_clock::time_point,
         StructArray,
         StructKeypairs>;
 
@@ -259,11 +261,11 @@ public:
                 std::string out;
                 for (auto c: v) wcharToUtf8(c, std::back_inserter(out));
                 return out;
-            } 
+            }
             else if constexpr(std::is_same_v<T,std::intmax_t> || std::is_same_v<T,double>) {
                 return std::to_string(v);
             }
-            else { 
+            else {
                 return to_json();
             }
         }, *this);
@@ -283,11 +285,11 @@ public:
                 }
                 return out;
             }
-            else if constexpr(std::is_same_v<T, std::wstring>) {return v;}        
+            else if constexpr(std::is_same_v<T, std::wstring>) {return v;}
             else if constexpr(std::is_same_v<T,std::intmax_t> || std::is_same_v<T,double>) {
                 return std::to_wstring(v);
             }
-            else { 
+            else {
                 std::wstring out;
                 std::string z = to_json();
                 auto iter = z.begin();
@@ -409,10 +411,7 @@ struct StructuredDocument {
                 ++iter;
                 return iter;
             } else if constexpr(std::is_same_v<Type, std::intmax_t>) {
-                std::intmax_t n = (v<0);
-                index |= n << 3;
-                std::uint64_t uv = (1-(n<<1))*v;
-                return uint_to_binary(index, uv, iter);
+                return int_to_binary(index, v, iter);
             } else if constexpr(std::is_same_v<Type, double>) {
                 *iter = index;
                 ++iter;
@@ -428,6 +427,9 @@ struct StructuredDocument {
                     iter = to_binary(val, iter);
                 }
                 return iter;
+            } else if constexpr(std::is_same_v<Type, std::chrono::system_clock::time_point>) {
+                auto val = v.time_since_epoch().count();
+                return int_to_binary(index, val, iter);
             } else {
                 static_assert(std::is_same_v<Type, Structured::Array>);
                 iter = uint_to_binary(index, v.size(), iter);
@@ -479,6 +481,9 @@ struct StructuredDocument {
                         out.emplace(std::move(key), from_binary(at, end));
                     }
                     return out;
+                } else if constexpr(std::is_same_v<Type, std::chrono::system_clock::time_point>) {
+                    auto val = int_from_binary(extra, at, end);
+                    return std::chrono::system_clock::time_point(std::chrono::system_clock::duration(val));
                 } else {
                     static_assert(std::is_same_v<Type, Structured::Array>);
                     Structured::Array out;
@@ -512,6 +517,14 @@ struct StructuredDocument {
         });
     }
     template<typename Iter>
+    static Iter int_to_binary(unsigned char index, std::intmax_t iv, Iter iter) {
+        std::intmax_t n = (iv<0);
+        index |= n << 3;
+        std::uint64_t uv = (1-(n<<1))*iv;
+        return uint_to_binary(index, uv, iter);
+    }
+
+    template<typename Iter>
     static Iter string_to_binary(unsigned char index, const std::string_view &val, Iter iter) {
         iter = uint_to_binary(index, val.size(), iter);
         for (char c: val) *iter++ = c;
@@ -542,6 +555,13 @@ struct StructuredDocument {
                 return v;
             }
         });
+    }
+
+    template<typename Iter>
+    static std::intmax_t int_from_binary(int extra, Iter &at, Iter end) {
+        std::intmax_t v = uint_from_binary(extra, at, end);
+        if (extra & 0x08) v = -v;
+        return v;
     }
 
     template<typename Iter>

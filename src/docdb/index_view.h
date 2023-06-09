@@ -6,7 +6,7 @@
 #include "recordset.h"
 #include "row.h"
 
-#include "doc_storage_concept.h"
+#include "storage_concept.h"
 
 namespace docdb {
 

@@ -1,6 +1,6 @@
 #pragma once
-#ifndef SRC_DOCDB_DOC_STORAGE_CONCEPT_H_
-#define SRC_DOCDB_DOC_STORAGE_CONCEPT_H_
+#ifndef SRC_DOCDB_STORAGE_CONCEPT_H_
+#define SRC_DOCDB_STORAGE_CONCEPT_H_
 
 #include "database.h"
 #include "concepts.h"
@@ -39,4 +39,4 @@ DOCDB_CXX20_CONCEPT(DocumentStorageType , requires(T x) {
 
 
 
-#endif /* SRC_DOCDB_DOC_STORAGE_CONCEPT_H_ */
+#endif /* SRC_DOCDB_STORAGE_CONCEPT_H_ */

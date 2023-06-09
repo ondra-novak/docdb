@@ -86,12 +86,12 @@ wchar_t decodeJsonChar2(Iter &at, Iter end) {
         case 'u': {
             wchar_t n = 0;
             for (int i = 0; i < 4; i++) {
-                if (at == end) return -1;   
+                if (at == end) return -1;
                 char z = *at;
                 if (z >= '0' && z <= '9') n = (n * 16) + (z - '0');
                 else if (z >= 'A' && z <='F')  n = (n * 16) + (z - 'A' + 10);
                 else if (z >= 'a' && z <='f')  n = (n * 16) + (z - 'a' + 10);
-                else return -1;                
+                else return -1;
                 ++at;
             }
             return n;
@@ -100,7 +100,7 @@ wchar_t decodeJsonChar2(Iter &at, Iter end) {
     }
 }
 template<typename Iter>
-wchar_t decodeJsonChar(Iter &at, Iter end) { 
+wchar_t decodeJsonChar(Iter &at, Iter end) {
     wchar_t x = decodeJsonChar2(at, end);
     wchar_t y;
     if (x >= 0xD800 && x < 0xDC00) {
@@ -117,7 +117,7 @@ wchar_t decodeJsonChar(Iter &at, Iter end) {
         } else {
             return -1;
         }
-    } else return x;        
+    } else return x;
 }
 
 
@@ -269,7 +269,7 @@ inline Structured Structured::from_json(Iter &at, Iter end, int flags) {
         if (at == end) throw JsonParseException(JsonParseException::Type::eof);
         c = *at;
         ++at;
-    }    
+    }
     switch (c) {
         case '+':
         case '-':
@@ -288,7 +288,7 @@ inline Structured Structured::from_json(Iter &at, Iter end, int flags) {
                     char *tmp;
                     buff.push_back(c);
                     while (at != end) {
-                        c = *at;                        
+                        c = *at;
                         if (c == ',' || c == ']' || c == '}' || std::isspace(c) ) break;
                         dot |= c == '.';
                         buff.push_back(c);
@@ -301,7 +301,7 @@ inline Structured Structured::from_json(Iter &at, Iter end, int flags) {
                    } else {
                         auto x = strtoll(buff.c_str(), &tmp, 10);
                         if (*tmp) throw JsonParseException(JsonParseException::Type::number);
-                        return static_cast<std::intmax_t>(x);        
+                        return static_cast<std::intmax_t>(x);
                    }
             }
         case '"': {
@@ -310,7 +310,7 @@ inline Structured Structured::from_json(Iter &at, Iter end, int flags) {
                 while (at != end && *at != '"') {
                     wchar_t w = _details::decodeJsonChar(at,end);
                     if (w == -1) throw JsonParseException(JsonParseException::Type::character);
-                    out.push_back(w);                    
+                    out.push_back(w);
                 }
                 if (at == end) throw JsonParseException(JsonParseException::Type::eof);
                 ++at;
@@ -374,11 +374,12 @@ inline Structured Structured::from_json(Iter &at, Iter end, int flags) {
             do {
                 out.push_back(from_json(at,end,flags));
                 while (at != end && std::isspace(*at)) ++at;
-                char c = *at;                   
+                char c = *at;
                 ++at;
                 if (c == ']') return out;
-                if (c != ',') throw JsonParseException(JsonParseException::Type::eof);                 
+                if (c != ',') throw JsonParseException(JsonParseException::Type::eof);
             } while (true);
+            break;
         }
         case '{': {
             Structured::KeyPairs out;
@@ -390,28 +391,29 @@ inline Structured Structured::from_json(Iter &at, Iter end, int flags) {
             do {
                 auto s = from_json(at,end,0);
                 if (!std::holds_alternative<std::string>(s)) {
-                    throw JsonParseException(JsonParseException::Type::key);                 
+                    throw JsonParseException(JsonParseException::Type::key);
                 }
                 while (at != end && std::isspace(*at)) ++at;
-                char c = *at;                   
+                char c = *at;
                 ++at;
-                if (c != ':') throw JsonParseException(JsonParseException::Type::collon);                 
-                auto v = from_json(at,end,flags);                
+                if (c != ':') throw JsonParseException(JsonParseException::Type::collon);
+                auto v = from_json(at,end,flags);
                 if (!out.emplace(std::move(std::get<std::string>(s)), std::move(v)).second) {
-                    throw JsonParseException(JsonParseException::Type::dupkey);                 
+                    throw JsonParseException(JsonParseException::Type::dupkey);
                 }
                 while (at != end && std::isspace(*at)) ++at;
-                c = *at;                   
+                c = *at;
                 ++at;
                 if (c == '}') return out;
-                if (c != ',') throw JsonParseException(JsonParseException::Type::eof);                 
+                if (c != ',') throw JsonParseException(JsonParseException::Type::eof);
             } while (true);
         }
+        break;
         default:
             break;
-        
+
     }
-    throw JsonParseException(JsonParseException::Type::unknown);                 
+    throw JsonParseException(JsonParseException::Type::unknown);
 
 }
 
