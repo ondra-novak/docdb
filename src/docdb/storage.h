@@ -331,8 +331,8 @@ protected:
         CommitObservers(const CommitObservers &) = delete;
         CommitObservers &operator=(const CommitObservers &) = delete;
 
-        virtual void before_commit(docdb::Batch &b) override {}
-        virtual void after_rollback(std::size_t rev) noexcept override {}
+        virtual void before_commit(docdb::Batch &) override {}
+        virtual void after_rollback(std::size_t ) noexcept override {}
 
         void reg_observer(CommitObserver &obs) {
             std::lock_guard lk(_mx);

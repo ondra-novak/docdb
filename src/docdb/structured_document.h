@@ -24,6 +24,10 @@ struct Undefined {};
 
 inline Undefined undefined;
 
+using Link = const Structured *;
+
+using SharedLink = std::shared_ptr<const Structured>;
+
 using StructVariant = std::variant<
         Undefined,
         std::nullptr_t,
@@ -34,14 +38,20 @@ using StructVariant = std::variant<
         double,
         std::chrono::system_clock::time_point,
         StructArray,
-        StructKeypairs>;
+        StructKeypairs,
+        //keep this at end
+        Link,
+        SharedLink,
+        std::string_view>;
 
 class Structured:public StructVariant {
 public:
+    using Flags = int;
+    ///retrieve strings as string_view during deserialization
+    static constexpr int use_string_view = 1;
 
     using KeyPairs = StructKeypairs;
     using Array = StructArray;
-    static_assert(std::variant_size_v<StructVariant> < 16);
 
     using StructVariant::StructVariant;
 
@@ -61,10 +71,10 @@ public:
 
     operator bool() const {return !operator==(nullptr);}
 
-    const Structured &operator[](const char *name) {
+    const Structured &operator[](const char *name) const {
         return operator[](std::string_view(name));
     }
-    const Structured &operator[](const std::string_view &name) {
+    const Structured &operator[](const std::string_view &name) const {
         if (std::holds_alternative<StructKeypairs>(*this)) {
             const StructKeypairs &kp = std::get<StructKeypairs>(*this);
             auto iter = kp.find(name);
@@ -74,7 +84,7 @@ public:
         return not_defined;
     }
 
-    const Structured &operator[](std::size_t index) {
+    const Structured &operator[](std::size_t index) const {
         if (std::holds_alternative<StructArray>(*this)) {
             const StructArray&arr = std::get<StructArray>(*this);
             if (index < arr.size()) return arr[index];
@@ -82,23 +92,47 @@ public:
         return not_defined;
     }
 
-    template<typename T>
-    T get() const {
-        return std::visit([&](const auto &v) -> const T {
+    template<typename T, typename X>
+    DOCDB_CXX20_REQUIRES(std::convertible_to<X, Structured &> || std::convertible_to<X, const Structured &>)
+    friend T get(X me) {
+        return std::visit([&](const auto &v) -> T {
             using U = std::decay_t<decltype(v)>;
-            if constexpr(std::is_convertible_v<U, T>) {
+            if constexpr(std::is_same_v<U, T>) {
+                return v;
+            } if constexpr(std::is_convertible_v<U, T> && !std::is_same_v<U,std::nullptr_t>) {
                 return U(v);
+            } else if constexpr(std::is_same_v<U, Link> || std::is_same_v<U,SharedLink> ){
+                return get<T>(*v);
             } else {
                 throw std::bad_cast();
             }
-        }, *this);
+        }, me);
     }
+
+    template<typename T>
+    T as() const {
+        return get<T, const Structured &>(*this);
+    }
+    template<typename T>
+    T as() {
+        return get<T, Structured &>(*this);
+    }
+
 
     template<typename T>
     bool contains() const {
         return std::visit([&](const auto &v){
             using U = std::decay_t<decltype(v)>;
-            return std::is_convertible_v<U, T>;
+            if constexpr(std::is_same_v<U, T>) {
+                return true;
+            }
+            bool ret = std::is_convertible_v<U, T> && !std::is_same_v<U,std::nullptr_t>;
+            if (!ret) {
+                if constexpr(std::is_same_v<U, Link> || std::is_same_v<U, SharedLink>) {
+                    if (v) return v->template contains<T>();
+                    else return false;
+                }
+            }
         }, *this);
     }
 
@@ -379,8 +413,11 @@ template<typename VariantType, typename T>
 constexpr int variant_index = variant_index_calc<VariantType, T>();
 
 
+template<Structured::Flags flags = Structured::use_string_view>
 struct StructuredDocument {
     using Type = Structured;
+
+    static_assert(std::variant_size_v<StructVariant> < 18);
 
     static int getByteCount(std::uint64_t number) {
         int byteCount = 1 + (number > 0xFFULL)
@@ -393,6 +430,16 @@ struct StructuredDocument {
         return byteCount;
     }
 
+    template<typename X, int index = 0>
+    static constexpr int find_index = ([]{
+        if constexpr(std::is_same_v<std::variant_alternative<index, StructVariant>, X>) {
+            return index;
+        } else {
+            static_assert(index < std::variant_size_v<StructVariant>);
+            return StructuredDocument::template find_index<X, index+1>;
+        }
+    })();
+
 
     template<typename Iter>
     static Iter to_binary(const Structured &val, Iter iter) {
@@ -400,7 +447,10 @@ struct StructuredDocument {
         unsigned char index = static_cast<char>(vval.index()) << 4;
         return std::visit([&](const auto &v){
             using Type  = std::decay_t<decltype(v)>;
-            if constexpr(std::is_same_v<Type, bool>) {
+            if constexpr(std::is_same_v<Type, Link> || std::is_same_v<Type, SharedLink>) {
+                if (v) return to_binary(*v, iter);
+                else return to_binary(Undefined{}, iter);
+            } else if constexpr(std::is_same_v<Type, bool>) {
                 index |= v?1:0;
                 *iter = index;
                 ++iter;
@@ -418,6 +468,8 @@ struct StructuredDocument {
                 return Row::serialize_items(iter, v);
             } else if constexpr(std::is_same_v<Type, std::string>) {
                 return string_to_binary(index, v, iter);
+            } else if constexpr(std::is_same_v<Type, std::string_view>) {
+                return string_to_binary(find_index<std::string>, v, iter);
             } else if constexpr(std::is_same_v<Type, std::wstring>) {
                 return wstring_to_binary(index, v, iter);
             } else if constexpr(std::is_same_v<Type, Structured::KeyPairs>) {
@@ -460,7 +512,11 @@ struct StructuredDocument {
                 } else if constexpr(std::is_same_v<Type, std::nullptr_t> || std::is_same_v<Type, Undefined>) {
                     return Type();
                 } else if constexpr(std::is_same_v<Type, std::string>) {
-                    return string_from_binary(extra, at, end);
+                    if constexpr(std::is_convertible_v<Iter, const char *> && (flags & Structured::use_string_view)) {
+                        return string_view_from_binary(extra, at, end);
+                    } else {
+                        return string_from_binary(extra, at, end);
+                    }
                 } else if constexpr(std::is_same_v<Type, std::wstring>) {
                     return wstring_from_binary(extra, at, end);
                 } else if constexpr(std::is_same_v<Type, std::intmax_t>) {
@@ -484,6 +540,9 @@ struct StructuredDocument {
                 } else if constexpr(std::is_same_v<Type, std::chrono::system_clock::time_point>) {
                     auto val = int_from_binary(extra, at, end);
                     return std::chrono::system_clock::time_point(std::chrono::system_clock::duration(val));
+                } else if constexpr(std::is_same_v<Type, std::string_view> || std::is_same_v<Type, Link>|| std::is_same_v<Type, SharedLink>) {
+                    //these are not serialized
+                    return undefined;
                 } else {
                     static_assert(std::is_same_v<Type, Structured::Array>);
                     Structured::Array out;
@@ -541,7 +600,7 @@ struct StructuredDocument {
     }
 
     template<typename Iter>
-    static std::uint64_t uint_from_binary(int extra, Iter &at, Iter iter) {
+    static std::uint64_t uint_from_binary(int extra, Iter &at, Iter end) {
         return number_to_constant<0,7>((extra & 0x7),[&](auto a)->std::uint64_t{
             if constexpr(!a.valid) {
                 return 0;
@@ -551,6 +610,7 @@ struct StructuredDocument {
                 for (int i = 0; i < count; i++)  {
                     v = v | (static_cast<std::uint64_t>(*at) << (i * 8));
                     ++at;
+                    if (at == end) return v;
                 }
                 return v;
             }
@@ -576,10 +636,19 @@ struct StructuredDocument {
         return out;
     }
     template<typename Iter>
-    static std::wstring wstring_from_binary(int extra, Iter &at, Iter iter) {
+    static std::string_view string_view_from_binary(int extra, Iter &at, Iter iter) {
+        std::size_t sz = uint_from_binary(extra, at, iter);
+        std::size_t dist = std::distance(at, iter);
+        if (sz > dist) sz = dist;
+        const char *p = at;
+        at+=sz;
+        return {p, sz};
+    }
+    template<typename Iter>
+    static std::wstring wstring_from_binary(int , Iter &at, Iter end) {
         std::wstring out;
-        while (at != iter && *at) {
-            out.push_back(utf8Towchar(at, iter));
+        while (at != end && *at) {
+            out.push_back(utf8Towchar(at, end));
         }
         at++;
         return out;

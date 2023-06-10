@@ -151,7 +151,7 @@ public:
         std::string_view range_end;
         FirstRecord first_record;
         LastRecord last_record;
-        Filter filter;
+        Filter filter = {};
     };
 
     RecordSetBase(std::unique_ptr<leveldb::Iterator> &&iter, const Config &config)

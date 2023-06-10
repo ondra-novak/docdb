@@ -20,6 +20,7 @@ struct IndexerState  {
 template<DocumentDef _ValueDef>
 struct IndexerEmitTemplate {
     void operator()(Key,typename _ValueDef::Type);
+    void operator()(Key);
     static constexpr bool erase = false;
     DocID id() const;
     DocID prev_id() const;

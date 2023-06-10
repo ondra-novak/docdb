@@ -166,7 +166,7 @@ protected:
 };
 
 struct ExtractDocumentIDFromKey {
-    DocID operator()(const std::string_view &key, const std::string_view &value) const {
+    DocID operator()(const std::string_view &key, const std::string_view &) const {
         auto docidstr = key.substr(key.length()-sizeof(DocID));
         auto [id] = Row::extract<DocID>(docidstr);
         return id;
@@ -174,7 +174,7 @@ struct ExtractDocumentIDFromKey {
 };
 
 struct ExtractDocumentIDFromValue {
-    DocID operator()(const std::string_view &key, const std::string_view &value) const{
+    DocID operator()(const std::string_view &, const std::string_view &value) const{
         auto [id] = Row::extract<DocID>(value);
         return id;
     }
