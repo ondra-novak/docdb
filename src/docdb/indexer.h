@@ -17,6 +17,7 @@ struct IndexerState  {
 };
 
 
+
 template<DocumentDef _ValueDef>
 struct IndexerEmitTemplate {
     void operator()(Key,typename _ValueDef::Type);
@@ -24,8 +25,15 @@ struct IndexerEmitTemplate {
     static constexpr bool erase = false;
     DocID id() const;
     DocID prev_id() const;
-
 };
+
+template<typename T, typename Storage, typename _ValueDef>
+DOCDB_CXX20_CONCEPT(IndexFn, requires{
+   std::invocable<T, IndexerEmitTemplate<_ValueDef>, typename Storage::DocType>;
+   {T::revision} -> std::convertible_to<IndexerRevision>;
+});
+
+
 #if 0
 class DuplicateKeyException: public std::exception {
 public:
@@ -45,12 +53,13 @@ protected:
 };
 #endif
 
-template<DocumentStorageType Storage, typename IndexFn, IndexerRevision revision, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
-DOCDB_CXX20_REQUIRES(std::invocable<IndexFn, IndexerEmitTemplate<_ValueDef>, const typename Storage::DocType &>)
+template<DocumentStorageType Storage, typename _IndexFn, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
+DOCDB_CXX20_REQUIRES(IndexFn<_IndexFn, Storage, _ValueDef>)
 class Indexer: public IndexView<Storage, _ValueDef, index_type> {
 public:
 
-    static constexpr IndexFn indexFn = {};
+    static constexpr _IndexFn indexFn = {};
+    static constexpr IndexerRevision revision = _IndexFn::revision;
     static constexpr Purpose _purpose = index_type == IndexType::multi || index_type == IndexType::unique_hide_dup?Purpose::index:Purpose::unique_index;
 
     using DocType = typename Storage::DocType;

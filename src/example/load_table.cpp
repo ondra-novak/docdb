@@ -68,20 +68,32 @@ enum class IndexedField {
     name, company, city, country, phone, email, subsdate, website
 };
 
+struct PrimaryIndexFn {
+    static constexpr int revision = 1;
+    template<typename Emit>
+    void operator()(Emit emit, const Customer &row) const {
+        emit(row.id,{});
+    }
+};
+
+struct OtherIndexFn {
+    static constexpr int revision = 1;
+    template<typename Emit>
+    void operator()(Emit emit, const Customer &row) const {
+        emit({IndexedField::name, row.fname, row.lname},{});
+        emit({IndexedField::company, row.company},{});
+        emit({IndexedField::city, row.city},{});
+        emit({IndexedField::phone, row.phone1},{});
+        emit({IndexedField::phone, row.phone2},{});
+        emit({IndexedField::email, row.email},{});
+        emit({IndexedField::subsdate, row.subsdate},{});
+        emit({IndexedField::website, row.website},{});
+    }
+};
+
 using Storage = docdb::Storage<CustomerDocument>;
-using PrimaryIndex = docdb::Indexer<Storage,[](auto emit, const Customer &row){
-   emit(row.id,{});
-},1, docdb::IndexType::unique,docdb::StringDocument>;
-using OtherIndex = docdb::Indexer<Storage, [](auto emit, const Customer &row){
-   emit({IndexedField::name, row.fname, row.lname},{});
-   emit({IndexedField::company, row.company},{});
-   emit({IndexedField::city, row.city},{});
-   emit({IndexedField::phone, row.phone1},{});
-   emit({IndexedField::phone, row.phone2},{});
-   emit({IndexedField::email, row.email},{});
-   emit({IndexedField::subsdate, row.subsdate},{});
-   emit({IndexedField::website, row.website},{});
-}, 1, docdb::IndexType::multi, docdb::StringDocument>;
+using PrimaryIndex = docdb::Indexer<Storage,PrimaryIndexFn, docdb::IndexType::unique,docdb::StringDocument>;
+using OtherIndex = docdb::Indexer<Storage, OtherIndexFn, docdb::IndexType::multi, docdb::StringDocument>;
 
 
 void read_csv(std::istream &in, Storage &storage) {

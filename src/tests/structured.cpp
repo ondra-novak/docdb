@@ -6,6 +6,8 @@
 #include <docdb/row.h>
 #include <iostream>
 
+using Document = docdb::StructuredDocument<>;
+
 #include <map>
 int main() {
     docdb::Structured doc = {
@@ -22,14 +24,14 @@ int main() {
     };
 
     std::string bin;
-    docdb::StructuredDocument::to_binary(doc, std::back_inserter(bin));
+    Document::to_binary(doc, std::back_inserter(bin));
     auto beg = bin.begin();
     auto end = bin.end();
-    docdb::Structured out = docdb::StructuredDocument::from_binary(beg, end);
+    docdb::Structured out = Document::from_binary(beg, end);
 
     bool equal = out == doc;
     CHECK(equal);
-    CHECK_EQUAL(out["neg"].get<int>(), -15);
+    CHECK_EQUAL(out["neg"].as<int>(), -15);
 
     std::string x = doc.to_json();
     docdb::Structured jout = docdb::Structured::from_json(x);

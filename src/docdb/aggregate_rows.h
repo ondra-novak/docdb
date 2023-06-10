@@ -47,6 +47,19 @@ DOCDB_CXX20_CONCEPT(RowAggregateFunction, requires (X fn) {
     {fn.get_result()}->std::convertible_to<Row>;
 });
 
+template<typename X, typename ... Args>
+struct AggregatedRevision {
+    static constexpr std::size_t revision = AggregatedRevision <Args...>::revision + 0x9e3779b9 + (X::revision<<6) + (X::revision>>2);
+};
+template<typename X>
+struct AggregatedRevision<X> {
+    static constexpr std::size_t revision = X::revision;
+};
+
+template<typename ... Args>
+inline constexpr std::size_t aggregated_revision = AggregatedRevision<Args...>::revision;
+
+
 ///Aggregate rows into single Row object
 /**
  * The function expects that that index returns values in type Row;
@@ -61,7 +74,10 @@ DOCDB_CXX20_CONCEPT(RowAggregateFunction, requires (X fn) {
  * @return Row object containing aggregated result
  */
 template<RowAggregateFunction ... ArgTypes>
-constexpr auto aggregate_rows =  [](const auto &index, Key key) -> AggregatedResult<Row> {
+struct AggregateRows {
+    static constexpr std::size_t revision = AggregatedRevision<ArgTypes...>::revision;
+    template<typename Index>
+    AggregatedResult<Row> operator()(const Index &index, Key key) const {
         auto rs = index.select(key);
         static_assert(std::is_convertible_v<decltype(*rs.begin()), const Row &>,
                 "The function 'aggregate_rows' supports values returned as the type Row");
@@ -74,11 +90,16 @@ constexpr auto aggregate_rows =  [](const auto &index, Key key) -> AggregatedRes
         Row out;
         _state.build_result(out);
         return out;
-    };
+    }
+};
 
+
+template<RowAggregateFunction ... ArgTypes>
+constexpr AggregateRows<ArgTypes...> aggregate_rows =  {};
 
 template<typename Type = double>
 struct Count {
+    static constexpr std::size_t revision = 1;
     std::size_t _count = 0;
     using ValueType = std::nullptr_t;
 
@@ -93,6 +114,7 @@ struct Count {
 
 template<typename Type>
 struct Sum {
+    static constexpr std::size_t revision = 2;
     Type _s = 0;
     using ValueType = Type;
     template<typename X>
@@ -106,6 +128,7 @@ struct Sum {
 
 template<typename Type>
 struct Avg {
+    static constexpr std::size_t revision = 3;
     Type _s = 0;
     std::size_t _count = 0;
     using ValueType = Type;
@@ -121,6 +144,7 @@ struct Avg {
 
 template<typename Type>
 struct Sum2 {
+    static constexpr std::size_t revision = 4;
     Type _s = 0;
     using ValueType = Type;
     template<typename X>
@@ -134,6 +158,7 @@ struct Sum2 {
 
 template<typename Type>
 struct Max {
+    static constexpr std::size_t revision = 5;
     Type _s = {};
     bool _first = true;
     using ValueType = Type;
@@ -156,6 +181,7 @@ struct Max {
 
 template<typename Type>
 struct Min {
+    static constexpr std::size_t revision = 6;
     Type _s = {};
     bool _first = true;
     using ValueType = Type;
@@ -175,6 +201,7 @@ struct Min {
 
 template<typename Type>
 struct First {
+    static constexpr std::size_t revision = 7;
     Type _s = {};
     bool _first = true;
     using ValueType = Type;
@@ -192,6 +219,7 @@ struct First {
 
 template<typename Type>
 struct Last {
+    static constexpr std::size_t revision = 8;
     Type _s = {};
     using ValueType = Type;
     template<typename X>
@@ -205,6 +233,7 @@ struct Last {
 
 template<typename T, typename ... ArgFns>
 struct Composite {
+    static constexpr std::size_t revision = AggregatedRevision<ArgFns...>::revision;
 
     using States = std::tuple<ArgFns...>;
     using Results = std::tuple<decltype(std::declval<ArgFns>().get_result())...>;

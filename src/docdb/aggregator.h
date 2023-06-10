@@ -77,6 +77,12 @@ public:
 
 };
 
+struct KeyReduceEmitTemplate {
+    void operator()(AggregatedKey key, const Key &value);
+    static constexpr bool erase = false;
+};
+
+
 ///Defines update mode for the aggregation
 enum class UpdateMode {
     /**
@@ -93,14 +99,31 @@ enum class UpdateMode {
     automatic
 };
 
+template<typename T, typename Storage>
+DOCDB_CXX20_CONCEPT(KeyReduceFn, requires{
+    std::invocable<T, KeyReduceEmitTemplate, Key, const typename Storage::DocType &, DocID>
+        && std::invocable<T, KeyReduceEmitTemplate, Key, const typename Storage::DocType &>
+        && std::invocable<T, KeyReduceEmitTemplate, Key>;
+   {T::revision} -> std::convertible_to<AggregatorRevision>;
+});
 
-template<AggregatorSource MapSrc, typename KeyReduceFn, typename AggregatorFn,
-                AggregatorRevision revision, UpdateMode update_mode, typename _ValueDef = RowDocument>
+template<typename T, typename Storage>
+DOCDB_CXX20_CONCEPT(AggregatorFn, requires{
+    std::invocable<T, const Storage &, Key>;
+   {T::revision} -> std::convertible_to<AggregatorRevision>;
+});
+
+
+
+template<AggregatorSource MapSrc, typename _KeyReduceFn, typename _AggregatorFn,
+                UpdateMode update_mode, typename _ValueDef = RowDocument>
+DOCDB_CXX20_REQUIRES(KeyReduceFn<_KeyReduceFn, MapSrc> && AggregatorFn<_AggregatorFn, MapSrc>)
 class Aggregator: public AggregatorView<_ValueDef> {
 public:
 
-    static constexpr KeyReduceFn keyReduceFn = {};
-    static constexpr AggregatFn aggregateFn = {};
+    static constexpr _KeyReduceFn keyReduceFn = {};
+    static constexpr _AggregatorFn aggregatorFn = {};
+    static constexpr AggregatorRevision revision = _KeyReduceFn::revision + 0x9e3779b9 + (_AggregatorFn::revision<<6) + (_AggregatorFn::revision>>2);
     using ValueType = typename _ValueDef::Type;
     using DocType = typename MapSrc::ValueType;
 
@@ -324,11 +347,11 @@ protected:
 
     auto make_observer() {
          return [&](Batch &b, const Key &k, const DocType &value, DocID docid, bool erase) {
-             if constexpr(std::invocable<decltype(keyReduceFn), Emit<false>, Key>) {
+             if constexpr(std::invocable<_KeyReduceFn, Emit<false>, Key>) {
                  call_emit(erase, b, k);
-             }else if constexpr(std::invocable<decltype(keyReduceFn), Emit<false>, Key, const DocType &>) {
+             }else if constexpr(std::invocable<_KeyReduceFn, Emit<false>, Key, const DocType &>) {
                  call_emit(erase, b, k, value);
-             }else if constexpr(std::invocable<decltype(keyReduceFn), Emit<false>, Key, const DocType &, DocID>) {
+             }else if constexpr(std::invocable<_KeyReduceFn, Emit<false>, Key, const DocType &, DocID>) {
                  call_emit(erase, b, k, value, docid);
              } else {
                  struct X{};
@@ -358,12 +381,15 @@ protected:
 };
 
 template<typename ... Args>
-constexpr auto reduceKey() {
-    return [](auto emit, Key key, const auto &val) {
+struct ReduceKey {
+    static constexpr int revision = 1;
+    template<typename Emit, typename Val>
+    void operator()(Emit emit, Key key, const Val &) const {
         auto kk = key.get<Args...>();
         emit(kk, kk);
-    };
-}
+    }
+};
+
 
 }
 

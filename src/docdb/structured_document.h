@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <memory>
 #include <string>
 #include <typeinfo>
 #include <variant>
@@ -59,6 +60,7 @@ public:
     static const KeyPairs empty_keypair;
     static const Array empty_array;
 
+    Structured(const char *text):StructVariant(std::string(text)) {}
     Structured(const std::initializer_list<Structured> &list)
         :Structured(buildValue(list.begin(), list.end())) {}
 
@@ -432,10 +434,10 @@ struct StructuredDocument {
 
     template<typename X, int index = 0>
     static constexpr int find_index = ([]{
-        if constexpr(std::is_same_v<std::variant_alternative<index, StructVariant>, X>) {
+        if constexpr(std::is_same_v<std::variant_alternative_t<index, StructVariant>, X>) {
             return index;
         } else {
-            static_assert(index < std::variant_size_v<StructVariant>);
+            static_assert(index < std::variant_size_v<StructVariant> || defer_false<X>);
             return StructuredDocument::template find_index<X, index+1>;
         }
     })();

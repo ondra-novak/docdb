@@ -4,14 +4,25 @@
 #include "../docdb/storage.h"
 #include "../docdb/indexer.h"
 
-using Storage = docdb::Storage<docdb::StringDocument>;
-using Index_TextToLen = docdb::Indexer<Storage, [](auto emit, const std::string_view &doc) {
-    emit(doc,doc.length());
-}, 1>;
+struct Index_TextToLenFn {
+    static constexpr int revision = 1;
+    template<typename Emit>
+    void operator()(Emit emit, const std::string_view &doc) const {
+        emit(doc,doc.length());
+    }
+};
+struct Index_LenToTextFn {
+    static constexpr int revision = 1;
+    template<typename Emit>
+    void operator()(Emit emit, const std::string_view &doc) const {
+        emit(doc.length(), doc);
+    }
+};
 
-using Index_LenToText = docdb::Indexer<Storage, [](auto emit, const std::string_view &doc) {
-    emit(doc.length(), doc);
-}, 1>;
+using Storage = docdb::Storage<docdb::StringDocument>;
+using Index_TextToLen = docdb::Indexer<Storage, Index_TextToLenFn>;
+
+using Index_LenToText = docdb::Indexer<Storage, Index_LenToTextFn>;
 
 
 void test1() {

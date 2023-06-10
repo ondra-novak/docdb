@@ -40,6 +40,14 @@ static std::pair<std::string_view,int> words[] = {
 };
 
 
+struct IndexFn {
+    static constexpr int revision = 1;
+    template<typename Emit, typename Doc>
+    void operator()(Emit emit, const Doc &doc)const{
+        auto [text,number] = doc.get();
+        emit({text.length()},{number});
+    }
+};
 
 void test1() {
 
@@ -50,15 +58,12 @@ void test1() {
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
     using Storage = docdb::Storage<DocumentDef>;
-    using Index = docdb::Indexer<Storage, [](auto emit, const auto &doc){
-        auto [text,number] = doc.get();
-        emit({text.length()},{number});
-    },1,docdb::IndexType::multi, IndexDef>;
+    using Index = docdb::Indexer<Storage, IndexFn ,docdb::IndexType::multi, IndexDef>;
     using StatsAggregator = docdb::Aggregator<Index,
-            docdb::reduceKey<std::size_t>(),
-            docdb::aggregate_rows<docdb::Composite<int,
+            docdb::ReduceKey<std::size_t>,
+            docdb::AggregateRows<docdb::Composite<int,
                     docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int>
-                > >,1, docdb::UpdateMode::manual>;
+                > >, docdb::UpdateMode::manual>;
 
 
     Storage storage(db, "test_storage");

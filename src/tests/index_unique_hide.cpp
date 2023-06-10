@@ -20,6 +20,18 @@ void check_result(const Index &index, const std::pair<std::string_view, int> (&v
 }
 
 
+struct IndexFn {
+    static constexpr int revision = 1;
+    template<typename Emit>
+    void operator()(Emit emit, const auto &doc) const {
+        auto [txt, val] = doc.get();
+        emit(txt,val);
+    };
+
+};
+
+
+
 void test1() {
 
 
@@ -27,10 +39,7 @@ void test1() {
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
     using Storage = docdb::Storage<docdb::FixedRowDocument<std::string_view, int> >;
-    using Index = docdb::Indexer<Storage, [](auto emit, const auto &doc) {
-            auto [txt, val] = doc.get();
-            emit(txt,val);
-        },1,docdb::IndexType::unique_hide_dup,docdb::FixedRowDocument<int> >;
+    using Index = docdb::Indexer<Storage, IndexFn, docdb::IndexType::unique_hide_dup,docdb::FixedRowDocument<int> >;
 
     Storage storage(db, "test_storage");
     Index index(storage, "test_index");
