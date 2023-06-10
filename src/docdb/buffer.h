@@ -80,7 +80,7 @@ public:
     template<std::size_t N>
     constexpr BufferBase &operator=(BufferBase<T, N> &&other) {
         return operator_assign(other);
-    };
+    }
 
     constexpr BufferBase &operator=(BufferBase &&other) {
         return operator_assign(std::move(other));

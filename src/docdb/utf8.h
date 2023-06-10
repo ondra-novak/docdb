@@ -14,9 +14,9 @@ OutputIterator wcharToUtf8(wchar_t wchar, OutputIterator output)
        if constexpr(!v.valid) {
            throw; //should never happen
        } else if constexpr(v.value == 0) { //to avoid single zero in sequence (Modified UTF-8)
-           *output = 0xC0;
+           *output = static_cast<unsigned char>(0xC0);
            ++output;
-           *output = 0x80;
+           *output = static_cast<unsigned char>(0x80);
            ++output;
        } else if constexpr(v.value == 1) { //one byte
            *output = static_cast<char>(wchar);

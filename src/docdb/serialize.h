@@ -90,7 +90,7 @@ public:
  */
 constexpr Blob prefix(const std::string_view &prefix) {return Blob(prefix);}
 
-Blob prefix(const std::wstring_view &prefix) {
+inline Blob prefix(const std::wstring_view &prefix) {
     std::string_view binary(reinterpret_cast<const char *>(prefix.data()), prefix.size()*sizeof(wchar_t));
     return Blob(binary);
 }
