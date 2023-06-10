@@ -45,11 +45,12 @@ protected:
 };
 #endif
 
-template<DocumentStorageType Storage, auto indexFn, IndexerRevision revision, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
-DOCDB_CXX20_REQUIRES(std::invocable<decltype(indexFn), IndexerEmitTemplate<_ValueDef>, const typename Storage::DocType &>)
+template<DocumentStorageType Storage, typename IndexFn, IndexerRevision revision, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
+DOCDB_CXX20_REQUIRES(std::invocable<IndexFn, IndexerEmitTemplate<_ValueDef>, const typename Storage::DocType &>)
 class Indexer: public IndexView<Storage, _ValueDef, index_type> {
 public:
 
+    static constexpr IndexFn indexFn = {};
     static constexpr Purpose _purpose = index_type == IndexType::multi || index_type == IndexType::unique_hide_dup?Purpose::index:Purpose::unique_index;
 
     using DocType = typename Storage::DocType;

@@ -94,11 +94,13 @@ enum class UpdateMode {
 };
 
 
-template<AggregatorSource MapSrc, auto keyReduceFn, auto aggregatorFn,
+template<AggregatorSource MapSrc, typename KeyReduceFn, typename AggregatorFn,
                 AggregatorRevision revision, UpdateMode update_mode, typename _ValueDef = RowDocument>
 class Aggregator: public AggregatorView<_ValueDef> {
 public:
 
+    static constexpr KeyReduceFn keyReduceFn = {};
+    static constexpr AggregatFn aggregateFn = {};
     using ValueType = typename _ValueDef::Type;
     using DocType = typename MapSrc::ValueType;
 
