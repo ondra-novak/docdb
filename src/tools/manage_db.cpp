@@ -1,5 +1,7 @@
 #include <docdb/database.h>
 #include <docdb/storage.h>
+#include <docdb/structured_document.h>
+#include <docdb/json.h>
 
 #include <cmath>
 #include <cstdio>
@@ -170,7 +172,19 @@ struct Command {
     void (*completion)(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb);
 };
 
-std::string make_printable(const std::string_view &s, bool space) {
+std::string make_printable(const std::string_view &s, bool space, bool doc) {
+    if (doc) {
+        try {
+            using DocDef = docdb::StructuredDocument<docdb::Structured::validate_source|docdb::Structured::use_string_view>;
+            auto b = s.begin();
+            auto sdoc = DocDef::from_binary(b, s.end());
+            return sdoc.to_json();
+        } catch (...) {
+            //
+        }
+    }
+
+
     std::string out;
     for (signed char c: s) {
         switch (c) {
@@ -261,7 +275,7 @@ static void purpose_completion(const docdb::PDatabase &db, const char *word, std
     for (char c = ' '; c < 127; c++) {
         auto str = purposeToText(static_cast<docdb::Purpose>(c));
         if(!str.empty()) {
-            std::string s = make_printable(str, true);
+            std::string s = make_printable(str, true, false);
             if (s.compare(0, word_size, word) == 0) cb(s);
             c++;
         }
@@ -272,7 +286,7 @@ static void list_of_tables(const docdb::PDatabase &db, const char *word, std::si
     auto l = db->list();
     std::string buff;
     for (const auto &x: l) {
-        std::string buff = make_printable(x.first, true);
+        std::string buff = make_printable(x.first, true, false);
         if (buff.compare(0,word_size,word) == 0) {
             cb(buff);
         }
@@ -373,7 +387,7 @@ struct RecordsetList {
                     _cols.push_back({
                         std::to_string(id),
                         std::to_string(prev_id),
-                        make_printable(doc,false),
+                        make_printable(doc,false, true),
                     });
                     list_ids.push_back(id);
                     list_ids.push_back(prev_id);
@@ -388,8 +402,8 @@ struct RecordsetList {
                     auto [key] = k.get<docdb::Blob>();
                     _cols.push_back({
                         std::to_string(id),
-                        make_printable(key,false),
-                        make_printable(val,false)
+                        make_printable(key,false, true),
+                        make_printable(val,false, true)
                     });
                     list_ids.push_back(id);
                     list_keys.push_back(std::string(key));
@@ -401,8 +415,8 @@ struct RecordsetList {
                     auto [id, doc] = docdb::Row::extract<docdb::DocID, docdb::Blob>(v);
                     _cols.push_back({
                         std::to_string(id),
-                        make_printable(key,false),
-                        make_printable(doc,false),
+                        make_printable(key,false,true),
+                        make_printable(doc,false,true),
                     });
                     list_ids.push_back(id);
                     list_keys.push_back(std::string(key));
@@ -413,8 +427,8 @@ struct RecordsetList {
                     auto v = rc.raw_value();
                     _cols.push_back({
                         std::string(),
-                        make_printable(key,false),
-                        make_printable(v,false),
+                        make_printable(key,false, true),
+                        make_printable(v,false, true),
                     });
                     list_keys.push_back(std::string(key));
                 } break;
@@ -424,8 +438,8 @@ struct RecordsetList {
                     auto v = rc.raw_value();
                     _cols.push_back({
                         std::string(),
-                        make_printable(key,false),
-                        make_printable(v,false),
+                        make_printable(key,false, true),
+                        make_printable(v,false, true),
                     });
                     list_keys.push_back(std::string(key));
                 } break;
@@ -517,8 +531,13 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
                 auto r =db->get_as_document<docdb::FoundRecord<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(x.second.first, id),{});
                 if (r) {
                     found = true;
-                    std::cerr << "Document from collection '" << x.first << "':" << std::endl<<std::endl;
-                    std::cout << make_printable(r->content,false) << std::endl;
+                    std::cerr << "Document from collection '" << x.first << "':" << std::endl;
+                    if (r->previous_id) {
+                        std::cerr << "Replaced document: " << r->previous_id << std::endl;
+                    }
+                    std::cout << "```" <<std::endl;
+                    std::cout << make_printable(r->content,false, true) << std::endl;
+                    std::cout << "```" <<std::endl;
                     std::cerr << std::endl;
                 }
             }
@@ -527,7 +546,7 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
     } else {
         auto r =db->get_as_document<docdb::FoundRecord<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(iter->second.first, id),{});
         if (r) {
-            std::cout << make_printable(r->content,false) << std::endl;
+            std::cout << make_printable(r->content,false, true) << std::endl;
         } else {
             std::cerr << "Document was not found in the collection: " << name << std::endl;
         }
@@ -552,7 +571,7 @@ static void completion_current_keys(const docdb::PDatabase &db, const char *word
             }
         } else {
             for (const auto &c: cur_recordset->list_keys) {
-                std::string s = make_printable(c, true);
+                std::string s = make_printable(c, true, false);
                 if (s.compare(0, word_size, word) == 0) cb(s);
             }
         }
@@ -673,7 +692,7 @@ static void completion_files(const docdb::PDatabase &db, const char *word, std::
     std::istringstream k(std::string("\"").append(bb, len).append("\""));
     auto wvect = generateWordVector(k);
     lkp(wvect[0].data(),wvect[0].size(), std::cmatch(), [&](const std::string &str){
-        auto s = make_printable(str, true);
+        auto s = make_printable(str, true, false);
         auto p =  s.find(word, 0, word_size);
         if (p != s.npos) cb(s.substr(p));
     });

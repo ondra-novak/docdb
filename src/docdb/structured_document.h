@@ -50,6 +50,8 @@ public:
     using Flags = int;
     ///retrieve strings as string_view during deserialization
     static constexpr int use_string_view = 1;
+    ///validate binary source, throw exception if invalid (otherwise returns undefined)
+    static constexpr int validate_source = 2;
 
     using KeyPairs = StructKeypairs;
     using Array = StructArray;
@@ -418,6 +420,7 @@ constexpr int variant_index = variant_index_calc<VariantType, T>();
 template<Structured::Flags flags = Structured::use_string_view>
 struct StructuredDocument {
     using Type = Structured;
+    static constexpr bool validate = flags & Structured::validate_source;
 
     static_assert(std::variant_size_v<StructVariant> < 18);
 
@@ -497,56 +500,93 @@ struct StructuredDocument {
         }, val);
     }
 
+    class ValidationFailed: public std::exception {
+    public:
+        const char *what() const noexcept override {
+            return "Invalid structured format - validation failed";
+        }
+    };
 
     template<typename Iter>
     static Structured from_binary(Iter &at, Iter end) {
-        if (at == end) return undefined;
+        if (at == end) {
+            if constexpr(validate) throw ValidationFailed();
+            return undefined;
+        }
         unsigned char code = *at++;
         int index = code >> 4;
         int extra = code & 0xF;
         return number_to_constant<0,std::variant_size_v<StructVariant>-1 >(index, [&](auto bidx) -> Structured {
             if constexpr(!bidx.valid) {
+                if constexpr(validate) throw ValidationFailed();
                 return undefined;
             } else {
                 using Type = std::variant_alternative_t<bidx.value, StructVariant>;
                 if constexpr(std::is_same_v<Type, bool>) {
+                    if constexpr(validate) {
+                        if (extra < 1) throw ValidationFailed();
+                    }
                     return extra != 0;
                 } else if constexpr(std::is_same_v<Type, std::nullptr_t> || std::is_same_v<Type, Undefined>) {
+                    if constexpr(validate) {
+                        if (extra == 0) throw ValidationFailed();
+                    }
                     return Type();
                 } else if constexpr(std::is_same_v<Type, std::string>) {
+                    if constexpr(validate) {
+                        if (extra & 0x8) throw ValidationFailed();
+                    }
                     if constexpr(std::is_convertible_v<Iter, const char *> && (flags & Structured::use_string_view)) {
                         return string_view_from_binary(extra, at, end);
                     } else {
                         return string_from_binary(extra, at, end);
                     }
                 } else if constexpr(std::is_same_v<Type, std::wstring>) {
+                    if constexpr(validate) {
+                        if (extra == 0) throw ValidationFailed();
+                    }
                     return wstring_from_binary(extra, at, end);
                 } else if constexpr(std::is_same_v<Type, std::intmax_t>) {
                     std::intmax_t v = uint_from_binary(extra, at, end);
                     if (extra & 0x08) v = -v;
                     return v;
                 } else if constexpr(std::is_same_v<Type, double>) {
+                    if constexpr(validate) {
+                        if (extra == 0) throw ValidationFailed();
+                    }
                     return Row::deserialize_item<double>(at, end);
                 } else if constexpr(std::is_same_v<Type, Structured::KeyPairs>) {
+                    if constexpr(validate) {
+                        if (extra & 0x8) throw ValidationFailed();
+                    }
                     Structured::KeyPairs out;
                     std::size_t count = uint_from_binary(extra, at,end);
                     for (std::size_t i = 0; i < count; ++i) {
                         if (at == end) break;
                         char sz = *at;
                         at++;
+                        if constexpr(validate) {
+                            if (extra >= 8) throw ValidationFailed();
+                        }
                         std::string key = string_from_binary(sz, at,end);
                         if (at == end) break;
                         out.emplace(std::move(key), from_binary(at, end));
                     }
                     return out;
                 } else if constexpr(std::is_same_v<Type, std::chrono::system_clock::time_point>) {
+                    if constexpr(validate) {
+                        if (extra & 0x8) throw ValidationFailed();
+                    }
                     auto val = int_from_binary(extra, at, end);
                     return std::chrono::system_clock::time_point(std::chrono::system_clock::duration(val));
                 } else if constexpr(std::is_same_v<Type, std::string_view> || std::is_same_v<Type, Link>|| std::is_same_v<Type, SharedLink>) {
-                    //these are not serialized
+                    if constexpr(validate) throw ValidationFailed();
                     return undefined;
                 } else {
                     static_assert(std::is_same_v<Type, Structured::Array>);
+                    if constexpr(validate) {
+                        if (extra & 0x8) throw ValidationFailed();
+                    }
                     Structured::Array out;
                     std::size_t count = uint_from_binary(extra, at,end);
                     for (std::size_t i = 0; i < count; ++i) {
@@ -605,6 +645,7 @@ struct StructuredDocument {
     static std::uint64_t uint_from_binary(int extra, Iter &at, Iter end) {
         return number_to_constant<0,7>((extra & 0x7),[&](auto a)->std::uint64_t{
             if constexpr(!a.valid) {
+                if constexpr(validate) throw ValidationFailed();
                 return 0;
             } else {
                 constexpr auto count = a.value+1;
@@ -612,7 +653,10 @@ struct StructuredDocument {
                 for (int i = 0; i < count; i++)  {
                     v = v | (static_cast<std::uint64_t>(*at) << (i * 8));
                     ++at;
-                    if (at == end) return v;
+                    if (at == end) {
+                        if constexpr(validate) throw ValidationFailed();
+                        return v;
+                    }
                 }
                 return v;
             }
@@ -631,7 +675,11 @@ struct StructuredDocument {
         std::size_t sz = uint_from_binary(extra, at, iter);
         std::string out;
         out.reserve(sz);
-        for (std::size_t i = 0; i < sz && at != iter; ++i) {
+        for (std::size_t i = 0; i < sz ; ++i) {
+            if (at == iter) {
+                if constexpr(validate) throw ValidationFailed();
+                break;
+            }
             out.push_back(*at);
             ++at;
         }
@@ -641,7 +689,10 @@ struct StructuredDocument {
     static std::string_view string_view_from_binary(int extra, Iter &at, Iter iter) {
         std::size_t sz = uint_from_binary(extra, at, iter);
         std::size_t dist = std::distance(at, iter);
-        if (sz > dist) sz = dist;
+        if (sz > dist) {
+            if constexpr(validate) throw ValidationFailed();
+            sz = dist;
+        }
         const char *p = at;
         at+=sz;
         return {p, sz};
@@ -652,7 +703,11 @@ struct StructuredDocument {
         while (at != end && *at) {
             out.push_back(utf8Towchar(at, end));
         }
-        at++;
+        if (at == end) {
+            if constexpr(validate) throw ValidationFailed();
+        } else {
+            at++;
+        }
         return out;
 
     }
