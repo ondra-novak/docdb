@@ -151,7 +151,7 @@ public:
                    std::string tmp;
                    if (_owner._db->get(key, tmp)) {
                        auto [r] = Row::extract<DocID>(tmp);
-                       if (r != _docinfo.prev_doc) {
+                       if (r != _docinfo.cur_doc && r != _docinfo.prev_doc) {
                            throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
                        }
                    }
@@ -286,12 +286,13 @@ protected:
     void update_rev(Batch &b) {
     }
 
-    static DuplicateKeyException make_exception(Key key, const PDatabase &db, DocID incoming, DocID stored) {
+    static DuplicateKeyException make_exception(Key key, const PDatabase &db, DocID income, DocID stored) {
         std::string message("Duplicate key found in index: ");
         auto name = db->name_from_id(key.get_kid());
         if (name.has_value()) message.append(*name);
         else message.append("Unknown table KID ").append(std::to_string(static_cast<int>(key.get_kid())));
-        message.append(". Conflicting document: ").append(std::to_string(stored));
+        message.append(". Indexed document: ").append(std::to_string(stored));
+        message.append(". Conflicting document: ").append(std::to_string(income));
         return DuplicateKeyException(std::string(std::string_view(key)), std::move(message));
 
     }

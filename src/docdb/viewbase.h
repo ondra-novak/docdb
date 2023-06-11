@@ -143,10 +143,10 @@ public:
     using DocType = typename _DocDef::Type;
 
 
-    FoundRecord<_DocDef> find(Key &&key) {
+    FoundRecord<_DocDef> find(Key &&key) const {
         return find(key);
     }
-    FoundRecord<_DocDef> find(Key &key) {
+    FoundRecord<_DocDef> find(Key &key) const {
         key.change_kid(_kid);
         return _db->get_as_document<FoundRecord<_DocDef> >(key, _snap);
 

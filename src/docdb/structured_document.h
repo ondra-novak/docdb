@@ -88,6 +88,9 @@ public:
         return not_defined;
     }
 
+    const Structured &operator[](int index) const {
+        return operator[](static_cast<std::size_t>(index));
+    }
     const Structured &operator[](std::size_t index) const {
         if (std::holds_alternative<StructArray>(*this)) {
             const StructArray&arr = std::get<StructArray>(*this);
@@ -96,30 +99,47 @@ public:
         return not_defined;
     }
 
+    Structured &at(std::size_t index) {
+        if (std::holds_alternative<StructArray>(*this)) {
+            StructArray&arr = std::get<StructArray>(*this);
+            if (index < arr.size()) return arr[index];
+        }
+        throw std::bad_cast();
+    }
+
+    Structured &at(const std::string_view &name) {
+        if (std::holds_alternative<StructKeypairs>(*this)) {
+            StructKeypairs &kp = std::get<StructKeypairs>(*this);
+            auto iter = kp.find(name);
+            if (iter != kp.end()) return iter->second;
+        }
+        throw std::bad_cast();
+    }
+
     template<typename T, typename X>
     DOCDB_CXX20_REQUIRES(std::convertible_to<X, Structured &> || std::convertible_to<X, const Structured &>)
-    friend T get(X me) {
+    friend T get(X &&me) {
         return std::visit([&](const auto &v) -> T {
             using U = std::decay_t<decltype(v)>;
             if constexpr(std::is_same_v<U, T>) {
                 return v;
             } if constexpr(std::is_convertible_v<U, T> && !std::is_same_v<U,std::nullptr_t>) {
-                return U(v);
+                return T(v);
             } else if constexpr(std::is_same_v<U, Link> || std::is_same_v<U,SharedLink> ){
                 return get<T>(*v);
             } else {
                 throw std::bad_cast();
             }
-        }, me);
+        }, std::forward<X>(me));
     }
 
     template<typename T>
     T as() const {
-        return get<T, const Structured &>(*this);
+        return get<T>(*this);
     }
     template<typename T>
     T as() {
-        return get<T, Structured &>(*this);
+        return get<T>(*this);
     }
 
 
@@ -137,6 +157,7 @@ public:
                     else return false;
                 }
             }
+            return ret;
         }, *this);
     }
 
@@ -651,7 +672,7 @@ struct StructuredDocument {
                 constexpr auto count = a.value+1;
                 std::uint64_t v = 0;
                 for (int i = 0; i < count; i++)  {
-                    v = v | (static_cast<std::uint64_t>(*at) << (i * 8));
+                    v = v | (static_cast<std::uint64_t>(static_cast<unsigned char>(*at)) << (i * 8));
                     ++at;
                     if (at == end) {
                         if constexpr(validate) throw ValidationFailed();

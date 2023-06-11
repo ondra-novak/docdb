@@ -436,6 +436,29 @@ auto operator!=(Key &&k, const IndexViewGen<_ValueDef, IndexBase> &index) {
     static_assert(defer_false<IndexBase>);
 }
 
+template<typename _ValueDef>
+struct ValueAndDocID {
+    using ValueType = typename _ValueDef::Type;
+    DocID id;
+    ValueType value;
+};
+
+template<typename _ValueDef>
+struct ValueAndDocIDDocument {
+    using Type = ValueAndDocID<_ValueDef>;
+    template<typename Iter>
+    static Type from_binary(Iter from, Iter to) {
+        DocID id = Row::deserialize_item<DocID>(from, to);
+        return {id, _ValueDef::from_binary(from, to)};
+    }
+    template<typename Iter>
+    static Iter to_binary(const Type &val, Iter push) {
+        static_assert(defer_false<Iter>, "Not implemented");
+        return push;
+    }
+
+};
+
 template<typename _DocDef>
 struct SkipDocIDDcument {
     using Type = typename _DocDef::Type;
@@ -456,7 +479,7 @@ template<DocumentStorageViewType _Storage, typename _ValueDef, IndexType index_t
 using IndexView =
         std::conditional_t<index_type == IndexType::multi || index_type == IndexType::unique_hide_dup,
         IndexViewGen<_ValueDef,IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromKey, index_type==IndexType::unique_hide_dup?sizeof(DocID):0> >,
-        IndexViewGen<SkipDocIDDcument<_ValueDef>, IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromValue> > >;
+        IndexViewGen<ValueAndDocIDDocument<_ValueDef>, IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromValue> > >;
 
 }
 

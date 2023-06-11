@@ -157,7 +157,13 @@ inline Iter Structured::to_json(Iter iter) const {
 
     return std::visit([&](const auto &val){
         using Type = std::decay_t<decltype(val)>;
-        if constexpr(std::is_same_v<Type, bool>) {
+        if constexpr(std::is_same_v<Type, Link> || std::is_same_v<Type, SharedLink> ) {
+            if (val) {
+                val->to_json(iter);
+            } else {
+                _details::text_to_iter("null", iter);
+            }
+        } else if constexpr(std::is_same_v<Type, bool>) {
             _details::text_to_iter(val?"true":"false", iter);
         } else if constexpr(std::is_null_pointer_v<Type> || std::is_same_v<Type, Undefined>) {
             _details::text_to_iter("null", iter);
@@ -173,7 +179,7 @@ inline Iter Structured::to_json(Iter iter) const {
             }
        } else if constexpr(std::is_same_v<Type, std::intmax_t>) {
            _details::text_to_iter(std::to_string(val), iter);
-       } else if constexpr(std::is_same_v<Type, std::string>){
+       } else if constexpr(std::is_same_v<Type, std::string> || std::is_same_v<Type, std::string_view>){
            _details::string_to_iter(val, iter);
        } else if constexpr(std::is_same_v<Type, std::wstring>) {
            _details::wstring_to_iter(val, iter);
