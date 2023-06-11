@@ -203,9 +203,11 @@ public:
             auto [old_doc_id, bin] = rw.get<DocID, Blob>();
             auto beg = bin.begin();
             auto end = bin.end();
-            if (!StorageView<_DocDef>::is_deleted(beg, end)) {
+            if (beg != end) {
                 auto old_doc = _DocDef::from_binary(beg, end);
-                notify_observers(b, Update {nullptr,&old_doc,del_id,del_id,old_doc_id});
+                if (!document_is_deleted<_DocDef>(old_doc)) {
+                    notify_observers(b, Update {nullptr,&old_doc,del_id,del_id,old_doc_id});
+                }
             }
             b.Delete(kk);
             this->_db->commit_batch(b);

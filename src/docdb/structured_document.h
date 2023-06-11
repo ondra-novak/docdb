@@ -672,12 +672,12 @@ struct StructuredDocument {
                 constexpr auto count = a.value+1;
                 std::uint64_t v = 0;
                 for (int i = 0; i < count; i++)  {
-                    v = v | (static_cast<std::uint64_t>(static_cast<unsigned char>(*at)) << (i * 8));
-                    ++at;
                     if (at == end) {
                         if constexpr(validate) throw ValidationFailed();
                         return v;
                     }
+                    v = v | (static_cast<std::uint64_t>(static_cast<unsigned char>(*at)) << (i * 8));
+                    ++at;
                 }
                 return v;
             }

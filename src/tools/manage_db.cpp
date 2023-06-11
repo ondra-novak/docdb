@@ -1,5 +1,6 @@
 #include <docdb/database.h>
 #include <docdb/storage.h>
+#include <docdb/index_view.h>
 #include <docdb/structured_document.h>
 #include <docdb/json.h>
 
@@ -250,6 +251,20 @@ static void command_erase(const docdb::PDatabase &db, std::string name, const st
 
 }
 
+static void command_purge_doc(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size() < 2) throw std::invalid_argument("Usage: purge <docid> <docid> <docid>...");
+    auto nfo = get_kid(db, name);
+    if (nfo.second != docdb::Purpose::storage) throw std::invalid_argument("Supported collection: Storage");
+    docdb::Storage<docdb::StringDocument> storage(db, name);
+    std::size_t cnt = args.size();
+    for (std::size_t i = 1; i < cnt; i++) {
+        docdb::DocID id = std::strtoull(args[i].c_str(),nullptr,10);
+        storage.purge(id);
+        std::cout << "Purged document: " << id << std::endl;
+    }
+
+}
+
 static void command_create(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
     if (args.size() != 3) {
         throw std::invalid_argument("create <type> <name>");
@@ -289,6 +304,19 @@ static void list_of_tables(const docdb::PDatabase &db, const char *word, std::si
         std::string buff = make_printable(x.first, true, false);
         if (buff.compare(0,word_size,word) == 0) {
             cb(buff);
+        }
+    }
+}
+
+static void list_of_storages(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+    auto l = db->list();
+    std::string buff;
+    for (const auto &x: l) {
+        if (x.second.second == docdb::Purpose::storage) {
+            std::string buff = make_printable(x.first, true, false);
+            if (buff.compare(0,word_size,word) == 0) {
+                cb(buff);
+            }
         }
     }
 }
@@ -402,7 +430,7 @@ struct RecordsetList {
                     auto [key] = k.get<docdb::Blob>();
                     _cols.push_back({
                         std::to_string(id),
-                        make_printable(key,false, true),
+                        make_printable(key,false, false),
                         make_printable(val,false, true)
                     });
                     list_ids.push_back(id);
@@ -415,7 +443,7 @@ struct RecordsetList {
                     auto [id, doc] = docdb::Row::extract<docdb::DocID, docdb::Blob>(v);
                     _cols.push_back({
                         std::to_string(id),
-                        make_printable(key,false,true),
+                        make_printable(key,false,false),
                         make_printable(doc,false,true),
                     });
                     list_ids.push_back(id);
@@ -427,7 +455,7 @@ struct RecordsetList {
                     auto v = rc.raw_value();
                     _cols.push_back({
                         std::string(),
-                        make_printable(key,false, true),
+                        make_printable(key,false, false),
                         make_printable(v,false, true),
                     });
                     list_keys.push_back(std::string(key));
@@ -438,7 +466,7 @@ struct RecordsetList {
                     auto v = rc.raw_value();
                     _cols.push_back({
                         std::string(),
-                        make_printable(key,false, true),
+                        make_printable(key,false, false),
                         make_printable(v,false, true),
                     });
                     list_keys.push_back(std::string(key));
@@ -698,6 +726,51 @@ static void completion_files(const docdb::PDatabase &db, const char *word, std::
     });
 }
 
+static void command_chkref(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size() != 2) throw std::invalid_argument("Usafe: chkref <storage_name>");
+    auto iinfo = get_kid(db, name);
+    std::string storage_name = args[1];
+    auto sinfo = get_kid(db, storage_name);
+    using SView = docdb::StorageView<docdb::StringDocument>;
+    SView storage(db, sinfo.first, docdb::Direction::forward, {}, true);
+    int p = 1*(iinfo.second == docdb::Purpose::unique_index) + 2*(iinfo.second == docdb::Purpose::index);
+    docdb::number_to_constant<1,2>(p, [&](auto val){
+        if constexpr(val.valid) {
+
+            using IndexType = std::conditional_t<val.value == 1,
+                    docdb::IndexView<SView, docdb::StringDocument, docdb::IndexType::unique_no_check>,
+                    docdb::IndexView<SView, docdb::StringDocument, docdb::IndexType::multi>
+            >;
+            IndexType idx(db, iinfo.first, docdb::Direction::forward, {},true, storage);
+            docdb::Batch b;
+            bool f = false;
+            for (auto row : idx.select_all()) {
+                docdb::DocID id = row.id;
+                auto d = storage.find(id);
+                if (!d) {
+                    docdb::RawKey k = row.key;
+                    b.Delete(k);
+                    std::cout << "Document  " << id << " missing, key erase " << make_printable(k,false,false) << std::endl;
+                    f = true;
+                }
+            }
+            if (f) {
+                std::cout << "Confirm you want to commit changes (type 'yes'):";
+                std::string line;
+                std::getline(std::cin, line);
+                if (line == "yes") {
+                    db->commit_batch(b);
+                    std::cout << "Successfully committed" << std::endl;
+                }
+            } else {
+                std::cout << "No problems found" << std::endl;
+            }
+        } else {
+            throw std::runtime_error("Unsupported index");
+        }
+    });
+}
+
 
 static Command commands[] = {
         {"compact", command_compact, empty_completion},
@@ -705,7 +778,9 @@ static Command commands[] = {
         {"list", command_list, empty_completion},
         {"quit", command_quit, empty_completion},
         {"use", command_use, list_of_tables},
-        {"erase", command_erase, list_of_tables},
+        {"erase_table", command_erase, list_of_tables},
+        {"purge", command_purge_doc, completion_current_ids},
+        {"chkref", command_chkref, list_of_storages},
         {"create", command_create,purpose_completion},
         {"first", command_iterate_from_first,empty_completion},
         {"last", command_iterate_from_last,empty_completion},

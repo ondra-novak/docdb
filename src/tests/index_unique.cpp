@@ -10,7 +10,7 @@ void check_result(const Index &index, const std::pair<std::string_view, int> (&v
     for (const auto &row: index.select_all()) {
         CHECK_LESS(i , N);
         auto [k] = row.key.template get<std::string_view>();
-        auto [v] = row.value.get();
+        auto [v] = row.value.value.get();
         CHECK_EQUAL(k, vals[i].first);
         CHECK_EQUAL(v, vals[i].second);
         ++i;
