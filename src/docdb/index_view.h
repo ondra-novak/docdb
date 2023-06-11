@@ -204,7 +204,7 @@ public:
     }
 
     RecordSet select_all(Direction dir = Direction::normal)const  {
-        if (isForward(this->_dir)) {
+        if (isForward(changeDirection(this->_dir, dir))) {
             return IndexBase::template create_recordset<_ValueDef>(
                     this->_db->make_iterator(this->_snap,this->_no_cache),{
                     RawKey(this->_kid),RawKey(this->_kid+1),
@@ -222,14 +222,14 @@ public:
     RecordSet select_from(Key &&key, Direction dir = Direction::normal) {return select_from(key,dir);}
     RecordSet select_from(Key &key, Direction dir = Direction::normal) {
         key.change_kid(this->_kid);
-        if (isForward(this->_dir)) {
+        if (isForward(changeDirection(this->_dir, dir))) {
             return IndexBase::template create_recordset<_ValueDef>(
                     this->_db->make_iterator(false,this->_snap),{
                     key,RawKey(this->_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
-            Key pfx = key.prefix_end();
+            RawKey pfx = key.prefix_end();
             return IndexBase::template create_recordset<_ValueDef>(
                     this->_db->make_iterator(false,this->_snap),{
                     pfx,RawKey(this->_kid),
@@ -240,7 +240,7 @@ public:
     RecordSet select(Key &&key, Direction dir = Direction::normal) const {return select(key,dir);}
     RecordSet select(Key &key, Direction dir = Direction::normal) const {
         key.change_kid(this->_kid);
-        if (isForward(this->_dir)) {
+        if (isForward(changeDirection(this->_dir,dir))) {
             return IndexBase::template create_recordset<_ValueDef>(
                     this->_db->make_iterator(this->_snap,this->_no_cache),{
                     key,key.prefix_end(),
@@ -264,22 +264,22 @@ public:
         to.change_kid(this->_kid);
         if (from <= to) {
             if (last_record == LastRecord::included) {
-                Key pfx = from.prefix_end();
+                RawKey pfx = to.prefix_end();
                 return IndexBase::template create_recordset<_ValueDef>(
-                        this->_db->make_iterator(false,this->_snap),{
+                        this->_db->make_iterator(this->_snap, this->_no_cache),{
                         from,pfx,
                         FirstRecord::included, LastRecord::excluded
                 });
             } else {
                 return IndexBase::template create_recordset<_ValueDef>(
-                        this->_db->make_iterator(false,this->_snap),{
+                        this->_db->make_iterator(this->_snap, this->_no_cache),{
                         from,to,
                         FirstRecord::included, LastRecord::excluded
                 });
             }
 
         } else {
-            Key xfrom = from.prefix_end();
+            RawKey xfrom = from.prefix_end();
             if (last_record == LastRecord::included) {
                 return IndexBase::template create_recordset<_ValueDef>(
                         this->_db->make_iterator(this->_snap,this->_no_cache),{
@@ -287,7 +287,7 @@ public:
                         FirstRecord::excluded, LastRecord::included
                 });
             } else {
-                Key xto = to.prefix_end();
+                RawKey xto = to.prefix_end();
                 return IndexBase::template create_recordset<_ValueDef>(
                         this->_db->make_iterator(this->_snap,this->_no_cache),{
                         xfrom,xto,
