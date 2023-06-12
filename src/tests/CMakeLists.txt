@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.1)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests/)
 #file(GLOB testFiles "*.cpp")
 set(testFiles
-    aggregation.cpp    
+    aggregation.cpp
     manage_db.cpp
     storage.cpp
     buffer.cpp
@@ -13,6 +13,7 @@ set(testFiles
     row.cpp
     map.cpp
     structured.cpp
+    binop.cpp
 )
 
 link_libraries(
