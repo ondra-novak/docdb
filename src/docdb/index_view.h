@@ -196,7 +196,11 @@ public:
 
     IndexViewGen get_snapshot(bool no_cache = true) const {
         if (this->_snap) return *this;
-        return IndexViewGen(this->_db, this->_kid, this->_dir, this->_db->make_snapshot(), true, static_cast<const IndexBase &>(*this));
+        return IndexViewGen(this->_db, this->_kid, this->_dir, this->_db->make_snapshot(), no_cache, static_cast<const IndexBase &>(*this));
+    }
+
+    IndexViewGen get_snapshot(PSnapshot snap, bool no_cache = true) const {
+        return IndexViewGen(this->_db, this->_kid, this->_dir, snap, no_cache, static_cast<const IndexBase &>(*this));
     }
 
     IndexViewGen reverse() const {

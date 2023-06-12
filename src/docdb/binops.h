@@ -71,6 +71,17 @@ public:
         });
         return dref();
     }
+    Derived &&AND(bool &f) {
+        if (f) {
+            return AND();
+        } else {
+            f = true;
+            return dref();
+        }
+    }
+    Derived &&AND(bool &&f) {
+        return AND(f);
+    }
     ///Perform operation OR above last two sets in stack
     Derived &&OR() {
         perform_binop([](Set &a, Set &b, Set &out){
@@ -86,6 +97,17 @@ public:
         });
         return dref();
     }
+    Derived &&OR(bool &f) {
+        if (f) {
+            return OR();
+        } else {
+            f = true;
+            return dref();
+        }
+    }
+    Derived &&OR(bool &&f) {
+        return OR(f);
+    }
     ///Perform operation XOR above last two sets in stack
     Derived &&XOR() {
         perform_binop([](Set &a, Set &b, Set &out){
@@ -99,6 +121,17 @@ public:
             }
         });
         return dref();
+    }
+    Derived &&XOR(bool &f) {
+        if (f) {
+            return XOR();
+        } else {
+            f = true;
+            return dref();
+        }
+    }
+    Derived &&XOR(bool &&f) {
+        return XOR(f);
     }
     ///Perform operation NOT+AND  above last two sets in stack
     /**
@@ -118,6 +151,19 @@ public:
         });
         return dref();
     }
+    Derived &&NOT_AND(bool &f) {
+        if (f) {
+            return NOT_AND();
+        } else {
+            f = true;
+            return dref();
+        }
+    }
+    Derived &&NOT_AND(bool &&f) {
+        return NOT_AND(f);
+    }
+
+
 
     ///Create empty set
     /**
@@ -149,7 +195,7 @@ public:
         if (_stack.empty()) [[unlikely]] return dref();
         auto &t = (tmp1.size()<tmp2.size()?tmp1:tmp2);
         if (t.size() < _stack.top().size()) {
-            std::swap(t,_stack.top().size());
+            std::swap(t,_stack.top());
         }
         _stack.pop();
         return dref();
@@ -169,6 +215,15 @@ public:
      */
     bool top_is_empty() const {
         return !empty() && _stack.top().empty();
+    }
+    bool top_is_empty(bool f) const {
+        return !empty() && f && _stack.top().empty();
+    }
+
+    void clear() {
+        while (!_stack.empty()) {
+            DELETE();
+        }
     }
 
 protected:
@@ -203,13 +258,10 @@ public:
 
     using SetCalculatorBase<DocID, RecordSetCalculator>::push;
 
-    template<typename A, typename B, auto c>
-    RecordSetCalculator &&push(typename IndexView<A,B,c>::RecordSet &&rc) {
-        return push(rc);
-    }
-    template<typename A, typename B, auto c>
-    RecordSetCalculator &&push(typename IndexView<A,B,c>::RecordSet &rc) {
-        Set s= this->get_empty_set();
+    template<typename Iter>
+    DOCDB_CXX20_REQUIRES(std::is_same_v<decltype(std::declval<Iter>().begin()->id), DocID>)
+    RecordSetCalculator &&push(Iter &&rc) {
+        auto s= this->get_empty_set();
         std::transform(rc.begin(), rc.end(), std::back_inserter(s), [](const auto &row){
             return row.id;
         });
