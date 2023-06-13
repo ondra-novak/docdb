@@ -41,7 +41,7 @@ struct DocRecord_Def {
 
     DocRecord_Def(DocID previous_id):previous_id(previous_id),deleted(true) {}
     template<typename Iter>
-    DocRecord_Def(Iter b, Iter e):has_value(b != e) {
+    DocRecord_Def(Iter b, Iter e):has_value(std::distance(b ,e) > static_cast<std::ptrdiff_t>(sizeof(DocID))) {
         previous_id = Row::deserialize_item<DocID>(b, e);
         if (has_value) {
             content =  _DocDef::from_binary(b,e);
@@ -50,6 +50,7 @@ struct DocRecord_Def {
             deleted = true;
         }
     }
+
 
 };
 
