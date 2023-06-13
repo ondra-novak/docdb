@@ -361,11 +361,15 @@ public:
         }, *this);
     }
 
-    template<typename Iter>
-    Iter     to_json(Iter iter) const;
-
-
     static constexpr int flagWideStrings = 1;
+    static constexpr int flagUTF8 = 2;
+    static constexpr int flagEscapeSlash = 4;
+
+
+    template<typename Iter>
+    Iter     to_json(Iter iter, int flags = 0) const;
+
+
 
 
     template<typename Iter>
@@ -373,9 +377,9 @@ public:
 
 
 
-    std::string to_json() const {
+    std::string to_json(int flags = 0) const {
         std::string s;
-        to_json(std::back_inserter(s));
+        to_json(std::back_inserter(s),flags);
         return s;
     }
 

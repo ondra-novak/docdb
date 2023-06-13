@@ -15,7 +15,7 @@ void text_to_iter(std::string_view text, Iter &iter) {
 }
 
 template<typename OutputIterator>
-OutputIterator encodeJsonChar(wchar_t character, OutputIterator output) {
+OutputIterator encodeJsonChar(wchar_t character, OutputIterator output, int flags) {
     switch (character) {
         case '"':
             text_to_iter("\\\"", output);
@@ -24,8 +24,14 @@ OutputIterator encodeJsonChar(wchar_t character, OutputIterator output) {
             text_to_iter("\\\\", output);
             return output;
         case '/':
-            text_to_iter("\\/", output);
-            return output;
+            if (flags & Structured::flagEscapeSlash) {
+                text_to_iter("\\/", output);
+                return output;
+            } else {
+                *output = static_cast<char>(character);
+                ++output;
+                return output;
+            }
         case '\b':
             text_to_iter("\\b", output);
             return output;
@@ -43,14 +49,18 @@ OutputIterator encodeJsonChar(wchar_t character, OutputIterator output) {
             return output;
         default:
             switch ((character >= 32) + (character >= 128)
-                    + (character >= 0x10000)) {
+                    + ((character >= 0x10000) & ((flags & Structured::flagUTF8) == 0))) {
                 default:
                 case 2: {
-                    char buff[8];
-                    std::size_t n = std::snprintf(buff, sizeof(buff), "\\u%04X",
-                            character);
-                    text_to_iter( { buff, n }, output);
-                    return output;
+                    if (flags & Structured::flagUTF8) {
+                        return wcharToUtf8(character, output);
+                    } else {
+                        char buff[8];
+                        std::size_t n = std::snprintf(buff, sizeof(buff), "\\u%04X",
+                                character);
+                        text_to_iter( { buff, n }, output);
+                        return output;
+                    }
                 }
                 case 1:
                     *output = static_cast<char>(character);
@@ -63,7 +73,7 @@ OutputIterator encodeJsonChar(wchar_t character, OutputIterator output) {
                     wchar_t lowSurrogate = 0xDC00
                             + ((character - 0x10000) & 0x3FF);
                     return encodeJsonChar(lowSurrogate,
-                            encodeJsonChar(highSurrogate, output));
+                            encodeJsonChar(highSurrogate, output,flags), flags);
                 }
             }
     }
@@ -101,6 +111,9 @@ wchar_t decodeJsonChar2(Iter &at, Iter end) {
 }
 template<typename Iter>
 wchar_t decodeJsonChar(Iter &at, Iter end) {
+    if (*at & 0x80) {
+        return utf8Towchar(at, end);
+    }
     wchar_t x = decodeJsonChar2(at, end);
     wchar_t y;
     if (x >= 0xD800 && x < 0xDC00) {
@@ -123,26 +136,26 @@ wchar_t decodeJsonChar(Iter &at, Iter end) {
 
 
 template<typename Iter>
-void string_to_iter(std::string_view text, Iter &iter) {
+void string_to_iter(std::string_view text, Iter &iter, int flags) {
     *iter = '"';
     ++iter;
     auto b = text.begin();
     auto e = text.end();
     while (b != e) {
-        iter = encodeJsonChar(utf8Towchar(b, e), iter);
+        iter = encodeJsonChar(utf8Towchar(b, e), iter, flags);
     }
     *iter = '"';
     ++iter;
 }
 
 template<typename Iter>
-void wstring_to_iter(std::wstring_view text, Iter &iter) {
+void wstring_to_iter(std::wstring_view text, Iter &iter, int flags) {
     *iter = '"';
     ++iter;
     auto b = text.begin();
     auto e = text.end();
     while (b != e) {
-        iter = encodeJsonChar(*b, iter);
+        iter = encodeJsonChar(*b, iter, flags);
         ++b;
     }
     *iter = '"';
@@ -153,13 +166,13 @@ void wstring_to_iter(std::wstring_view text, Iter &iter) {
 
 
 template<typename Iter>
-inline Iter Structured::to_json(Iter iter) const {
+inline Iter Structured::to_json(Iter iter, int flags) const {
 
     return std::visit([&](const auto &val){
         using Type = std::decay_t<decltype(val)>;
         if constexpr(std::is_same_v<Type, Link> || std::is_same_v<Type, SharedLink> ) {
             if (val) {
-                val->to_json(iter);
+                val->to_json(iter,flags);
             } else {
                 _details::text_to_iter("null", iter);
             }
@@ -180,21 +193,21 @@ inline Iter Structured::to_json(Iter iter) const {
        } else if constexpr(std::is_same_v<Type, std::intmax_t>) {
            _details::text_to_iter(std::to_string(val), iter);
        } else if constexpr(std::is_same_v<Type, std::string> || std::is_same_v<Type, std::string_view>){
-           _details::string_to_iter(val, iter);
+           _details::string_to_iter(val, iter, flags);
        } else if constexpr(std::is_same_v<Type, std::wstring>) {
-           _details::wstring_to_iter(val, iter);
+           _details::wstring_to_iter(val, iter, flags);
        } else if constexpr(std::is_same_v<Type, StructArray>) {
            *iter = '[';
            ++iter;
            if (!val.empty()) {
                auto b = val.begin();
                auto e = val.end();
-               iter = b->to_json(iter);
+               iter = b->to_json(iter,flags);
                ++b;
                while (b != e) {
                    *iter = ',';
                    ++iter;
-                   iter = b->to_json(iter);
+                   iter = b->to_json(iter,flags);
                    ++b;
                }
            }
@@ -206,18 +219,18 @@ inline Iter Structured::to_json(Iter iter) const {
            if (!val.empty()) {
                auto b = val.begin();
                auto e = val.end();
-               _details::string_to_iter(b->first, iter);
+               _details::string_to_iter(b->first, iter, flags);
                *iter = ':';
                ++iter;
-               iter = b->second.to_json(iter);
+               iter = b->second.to_json(iter,flags);
                ++b;
                while (b != e) {
                    *iter = ',';
                    ++iter;
-                   _details::string_to_iter(b->first, iter);
+                   _details::string_to_iter(b->first, iter, flags);
                    *iter = ':';
                    ++iter;
-                   iter = b->second.to_json(iter);
+                   iter = b->second.to_json(iter,flags);
                    ++b;
                }
            }
