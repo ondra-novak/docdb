@@ -123,10 +123,10 @@ public:
             using U = std::decay_t<decltype(v)>;
             if constexpr(std::is_same_v<U, T>) {
                 return v;
-            } if constexpr(std::is_convertible_v<U, T> && !std::is_same_v<U,std::nullptr_t>) {
-                return T(v);
             } else if constexpr(std::is_same_v<U, Link> || std::is_same_v<U,SharedLink> ){
                 return get<T>(*v);
+            } else if constexpr(std::is_constructible_v<T,U> && !std::is_same_v<U,std::nullptr_t>) {
+                return T(v);
             } else {
                 throw std::bad_cast();
             }
