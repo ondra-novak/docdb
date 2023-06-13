@@ -279,7 +279,7 @@ public:
         if (_stack.empty()) return;
         const Set &t = _stack.top();
         for (DocID id: t) {
-            fn(view.find(id));
+            fn(id, view.find(id));
         }
     }
 
