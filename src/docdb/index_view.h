@@ -432,11 +432,11 @@ auto operator==(Key &&k, const IndexViewGen<_ValueDef, IndexBase> &index) {
 }
 
 template<typename _ValueDef, typename IndexBase>
-auto operator!=(Key &k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+auto operator!=(Key &, const IndexViewGen<_ValueDef, IndexBase> &) {
     static_assert(defer_false<IndexBase>);
 }
 template<typename _ValueDef, typename IndexBase>
-auto operator!=(Key &&k, const IndexViewGen<_ValueDef, IndexBase> &index) {
+auto operator!=(Key &&, const IndexViewGen<_ValueDef, IndexBase> &) {
     static_assert(defer_false<IndexBase>);
 }
 
@@ -456,7 +456,7 @@ struct ValueAndDocIDDocument {
         return {id, _ValueDef::from_binary(from, to)};
     }
     template<typename Iter>
-    static Iter to_binary(const Type &val, Iter push) {
+    static Iter to_binary(const Type &, Iter push) {
         static_assert(defer_false<Iter>, "Not implemented");
         return push;
     }
@@ -472,7 +472,7 @@ struct SkipDocIDDcument {
         return _DocDef::from_binary(from, to);
     }
     template<typename Iter>
-    static Iter to_binary(const Type &val, Iter push) {
+    static Iter to_binary(const Type &, Iter push) {
         static_assert(defer_false<Iter>, "Not implemented");
         return push;
     }

@@ -69,11 +69,11 @@ template<typename X>
 class CustomSerializer {
 public:
     template<typename Iter>
-    static Iter serialize(const X &val, Iter target) {
+    static Iter serialize(const X &, Iter ) {
         static_assert(std::is_same_v<X, std::nullptr_t>, "Custom serializer is not defined for this type");
     }
     template<typename Iter>
-    static X deserialize(Iter &at, Iter end) {
+    static X deserialize(Iter &, Iter ) {
         static_assert(std::is_same_v<X, std::nullptr_t>, "Custom deserializer is not defined for this type");
         return {};
     }

@@ -283,7 +283,8 @@ protected:
         }
     }
 
-    void update_rev(Batch &b) {
+    void update_rev(Batch &) {
+        //empty
     }
 
     static DuplicateKeyException make_exception(Key key, const PDatabase &db, DocID income, DocID stored) {
