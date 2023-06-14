@@ -31,7 +31,7 @@ protected:
 };
 class EmptyLogger: public leveldb::Logger {
 public:
-    virtual void Logv(const char* format, std::va_list ap) override {
+    virtual void Logv(const char* , std::va_list ) override {
     }
 };
 
@@ -210,23 +210,23 @@ std::string make_printable(const std::string_view &s, bool space, bool doc) {
 
 static bool exit_flag = false;
 
-static void command_compact(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_compact(const docdb::PDatabase &db, std::string , const std::vector<std::string> &) {
     db->compact();
 }
 
-static void command_quit(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_quit(const docdb::PDatabase &, std::string , const std::vector<std::string> &) {
     exit_flag= true;
 }
 
-static void command_use(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_use(const docdb::PDatabase &, std::string , const std::vector<std::string> &) {
     //empty
 }
 
-static void command_levels(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_levels(const docdb::PDatabase &db, std::string , const std::vector<std::string> &) {
     print_db_info(db);
 }
 
-static void command_list(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_list(const docdb::PDatabase &db, std::string , const std::vector<std::string> &) {
     print_list_tables(db);
 }
 
@@ -700,7 +700,7 @@ static void command_restore(const docdb::PDatabase &db, std::string name, const 
 
 }
 
-static void command_private(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_private(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &) {
     auto nfo = get_kid(db, name);
     std::cout << "Table's private area" << std::endl;
     cur_recordset = std::make_unique<RecordsetList>(db, docdb::Purpose::private_area,
@@ -710,7 +710,7 @@ static void command_private(const docdb::PDatabase &db, std::string name, const 
 
 }
 
-static void completion_files(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+static void completion_files(const docdb::PDatabase &, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
     auto lkp = ReadLine::fileLookup(".");
     const char *b = rl_line_buffer;
     while (*b && std::isspace(*b)) b++;
@@ -798,11 +798,11 @@ static Command commands[] = {
 ReadLine::CompletionList genCompletionList(docdb::PDatabase db) {
     ReadLine::CompletionList out;
     for (const auto &c : commands) {
-        out.push_back({ReadLine::Pattern(c.name+" (.*)"), ReadLine::HintGenerator([db, &c](const char *word, std::size_t word_size ,const std::cmatch &m, const ReadLine::HintCallback &cb) {
+        out.push_back({ReadLine::Pattern(c.name+" (.*)"), ReadLine::HintGenerator([db, &c](const char *word, std::size_t word_size ,const std::cmatch &, const ReadLine::HintCallback &cb) {
             c.completion(db, word, word_size,  cb);
         })});
     }
-    out.push_back({"([a-zA-Z0-9]*)", [](const char *word, std::size_t word_size ,const std::cmatch &m, const ReadLine::HintCallback &cb){
+    out.push_back({"([a-zA-Z0-9]*)", [](const char *word, std::size_t word_size ,const std::cmatch &, const ReadLine::HintCallback &cb){
         for (const auto &c : commands) {
             if (c.name.compare(0,word_size,word) == 0) cb(c.name);
         }

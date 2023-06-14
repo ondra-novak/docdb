@@ -461,14 +461,14 @@ struct StructuredDocument {
     }
 
     template<typename X, int index = 0>
-    static constexpr int find_index = ([]{
+    static constexpr int find_index() {
         if constexpr(std::is_same_v<std::variant_alternative_t<index, StructVariant>, X>) {
             return index;
         } else {
             static_assert(index < std::variant_size_v<StructVariant> || defer_false<X>);
-            return StructuredDocument::template find_index<X, index+1>;
+            return StructuredDocument::template find_index<X, index+1>();
         }
-    })();
+    }
 
 
     template<typename Iter>
@@ -499,7 +499,7 @@ struct StructuredDocument {
             } else if constexpr(std::is_same_v<Type, std::string>) {
                 return string_to_binary(index, v, iter);
             } else if constexpr(std::is_same_v<Type, std::string_view>) {
-                return string_to_binary(find_index<std::string>, v, iter);
+                return string_to_binary(find_index<std::string>(), v, iter);
             } else if constexpr(std::is_same_v<Type, std::wstring>) {
                 return wstring_to_binary(index, v, iter);
             } else if constexpr(std::is_same_v<Type, Structured::KeyPairs>) {
