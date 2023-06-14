@@ -102,7 +102,7 @@ char *ReadLine::completion_word_break_hook() {
     if (curInst) {
         return const_cast<char *>(curInst->completionWordBreakHook(rl_line_buffer, rl_end, rl_point));
     } else {
-        return rl_completer_word_break_characters;
+        return const_cast<char *>(rl_completer_word_break_characters);
     }
 }
 

@@ -6,6 +6,7 @@
 #include "serialize.h"
 #include <variant>
 #include <ieee754.h>
+#include <cstdint>
 
 namespace docdb {
 

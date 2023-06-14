@@ -238,7 +238,7 @@ auto get_kid(const docdb::PDatabase &db,const std::string &name) {
 
 }
 
-static void command_erase(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_erase(const docdb::PDatabase &db, std::string , const std::vector<std::string> &args) {
     if (args.size() != 2) throw std::invalid_argument("Requires name of collection to erase");
     get_kid(db, args[1]);
     std::cout << "Do you really wish to erase collection: " << args[1] << std::endl;
@@ -265,7 +265,7 @@ static void command_purge_doc(const docdb::PDatabase &db, std::string name, cons
 
 }
 
-static void command_create(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_create(const docdb::PDatabase &db, std::string , const std::vector<std::string> &args) {
     if (args.size() != 3) {
         throw std::invalid_argument("create <type> <name>");
     }
@@ -282,7 +282,7 @@ static void command_create(const docdb::PDatabase &db, std::string name, const s
 
 
 
-static void empty_completion(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+static void empty_completion(const docdb::PDatabase &, const char *, std::size_t , const ReadLine::HintCallback &) {
 
 }
 
