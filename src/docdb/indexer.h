@@ -200,13 +200,7 @@ protected:
         return [&](Batch &b, const Update &update) {
             record_pending_rev(update.new_doc_id);
             b.add_listener(&_listener);
-            if constexpr(index_type == IndexType::unique || index_type == IndexType::unique_no_check) {
-                if (!update.new_doc) {
-                    indexFn(Emit<true>(*this, b, IndexedDoc{update.old_doc_id, update.old_old_doc_id}), *update.old_doc);
-                } else {
-                    indexFn(Emit<false>(*this, b, IndexedDoc{update.new_doc_id, update.old_doc_id}), *update.new_doc);
-                }
-            } else {
+            {
                 if (update.old_doc) {
                     indexFn(Emit<true>(*this, b, IndexedDoc{update.old_doc_id, update.old_old_doc_id}), *update.old_doc);
                 }
