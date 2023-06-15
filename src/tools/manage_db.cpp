@@ -286,7 +286,7 @@ static void empty_completion(const docdb::PDatabase &, const char *, std::size_t
 
 }
 
-static void purpose_completion(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+static void purpose_completion(const docdb::PDatabase &, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
     for (char c = ' '; c < 127; c++) {
         auto str = purposeToText(static_cast<docdb::Purpose>(c));
         if(!str.empty()) {
@@ -330,7 +330,7 @@ struct Columns {
 struct ColumnSizes {
     std::size_t id = 0;
     std::size_t key = 0;
-    std::size_t val = 0;;
+    std::size_t val = 0;
 };
 
 template<typename Iter>
@@ -532,14 +532,14 @@ static void check_table_selected(const std::string_view &name) {
     if (name.empty()) throw std::runtime_error("No collection selected. Use command 'use <collection>'");
 }
 
-static void command_iterate_from_first(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_iterate_from_first(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &) {
     check_table_selected(name);
     auto kid = get_kid(db, name);
     cur_recordset = std::make_unique<RecordsetList>(db, kid.first, kid.second, docdb::Direction::forward);
     cur_recordset->print_page();
 }
 
-static void command_iterate_from_last(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_iterate_from_last(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &) {
     check_table_selected(name);
     auto kid = get_kid(db, name);
     cur_recordset = std::make_unique<RecordsetList>(db, kid.first, kid.second, docdb::Direction::backward);
@@ -581,7 +581,7 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
     }
 }
 
-static void completion_current_ids(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+static void completion_current_ids(const docdb::PDatabase &, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
     if (cur_recordset) {
         for (const auto &c: cur_recordset->list_ids) {
             std::string s= std::to_string(c);
@@ -590,7 +590,7 @@ static void completion_current_ids(const docdb::PDatabase &db, const char *word,
     }
 }
 
-static void completion_current_keys(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+static void completion_current_keys(const docdb::PDatabase &, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
     if (cur_recordset) {
         if (cur_recordset->p == docdb::Purpose::storage) {
             for (const auto &c: cur_recordset->list_ids) {
@@ -639,7 +639,7 @@ static void command_select(const docdb::PDatabase &db, std::string name, const s
     cur_recordset->print_page();
 }
 
-static void command_rewind(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+static void command_rewind(const docdb::PDatabase &, std::string , const std::vector<std::string> &) {
     if (cur_recordset) {
         cur_recordset->rc.reset();
         cur_recordset->print_page();

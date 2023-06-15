@@ -29,29 +29,10 @@ struct IndexerEmitTemplate {
 
 template<typename T, typename Storage, typename _ValueDef>
 DOCDB_CXX20_CONCEPT(IndexFn, requires{
-   std::invocable<T, IndexerEmitTemplate<_ValueDef>, typename Storage::DocType>;
+   requires std::invocable<T, IndexerEmitTemplate<_ValueDef>, typename Storage::DocType>;
    {T::revision} -> std::convertible_to<IndexerRevision>;
 });
 
-
-#if 0
-class DuplicateKeyException: public std::exception {
-public:
-    DuplicateKeyException(Key key, const PDatabase &db, DocID incoming, DocID stored)
-        :_key(key), _message("Duplicate key in an index: ") {
-            auto name = db->name_from_id(key.get_kid());
-            if (name.has_value()) _message.append(*name);
-            else _message.append("Unknown table KID ").append(std::to_string(static_cast<int>(key.get_kid())));
-            _message.append(". Conflicting document: ").append(std::to_string(stored));
-    }
-    const Key &get_key() const {return _key;}
-    const char *what() const noexcept override {return _message.c_str();}
-protected:
-    Key _key;
-    std::string _message;
-
-};
-#endif
 
 template<DocumentStorageType Storage, typename _IndexFn, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
 DOCDB_CXX20_REQUIRES(IndexFn<_IndexFn, Storage, _ValueDef>)
