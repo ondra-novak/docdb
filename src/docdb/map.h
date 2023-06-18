@@ -74,11 +74,13 @@ protected:
     void store(Batch &b, Key &key, const ValueType &val) {
         auto &buff = b.get_buffer();
         _ValueDef::to_binary(val, std::back_inserter(buff));
+        key.change_kid(this->_kid);
         b.Put(key, buff);
         for (const auto &c: _tx_observers) c(b,key,val, false);
     }
 
     void clear(Batch &b, Key &key) {
+        key.change_kid(this->_kid);
         //no observers, so map deletion is way more easier
         if (_tx_observers.empty()) {
             b.Delete(key);

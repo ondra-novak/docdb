@@ -2,6 +2,7 @@
 #include <docdb/storage.h>
 #include <docdb/index_view.h>
 #include <docdb/structured_document.h>
+#include <docdb/map.h>
 #include <docdb/json.h>
 
 #include <cmath>
@@ -771,6 +772,26 @@ static void command_chkref(const docdb::PDatabase &db, std::string name, const s
     });
 }
 
+static void command_chkstorage(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &) {
+    auto iinfo = get_kid(db, name);
+    if (iinfo.second != docdb::Purpose::storage) throw std::invalid_argument("Current collection must be 'Storage'");
+    docdb::MapView<docdb::StringDocument> stor(db, iinfo.first, docdb::Direction::forward, {}, false);
+    docdb::Batch b;
+    bool errors = false;
+    for (const auto &row : stor.select_all()) {
+        const docdb::RawKey &key = row.key;
+        if (key.size() > sizeof(docdb::DocID)) {
+            std::cout << "Deleting invalid row: " << make_printable(key, false, false) << std::endl;
+            b.Delete(key);
+            errors = true;
+        }
+    }
+    if (errors) {
+        db->commit_batch(b);
+    }
+
+}
+
 
 static Command commands[] = {
         {"compact", command_compact, empty_completion},
@@ -781,6 +802,7 @@ static Command commands[] = {
         {"erase_table", command_erase, list_of_tables},
         {"purge", command_purge_doc, completion_current_ids},
         {"chkref", command_chkref, list_of_storages},
+        {"chkstorage", command_chkstorage, empty_completion},
         {"create", command_create,purpose_completion},
         {"first", command_iterate_from_first,empty_completion},
         {"last", command_iterate_from_last,empty_completion},

@@ -65,7 +65,7 @@ public:
     }
 
     void change_kid(KeyspaceID kid) {
-        if (size() < sizeof(KeyspaceID)) {
+        if (Row::size() < sizeof(KeyspaceID)) {
             throw std::invalid_argument("Invalid Key object instance");
         }
         char *ptr = mutable_ptr();
@@ -84,6 +84,10 @@ public:
         std::string_view me(*this);
         me = me.substr(sizeof(KeyspaceID));
         return this->extract<Types...>(me);
+    }
+
+    auto size() const {
+        return Row::size() - sizeof(KeyspaceID);
     }
 
 

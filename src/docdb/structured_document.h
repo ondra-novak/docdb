@@ -421,7 +421,13 @@ Structured Structured::buildValue(Iter begin, Iter end) {
         return Structured(std::move(r));
     }
     else {
-        return Structured(StructArray(begin, end));
+        StructArray out;
+        out.reserve(std::distance(begin,end));
+        while (begin != end) {
+            if (begin->defined()) out.push_back(std::move(*begin));
+            ++begin;
+        }
+        return out;
 
     }
 }
