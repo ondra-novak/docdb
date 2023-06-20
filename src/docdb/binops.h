@@ -69,6 +69,11 @@ public:
 
         bool is_inverted() const {return _inverted;}
 
+        void clear() {
+             std::vector<Item>::clear();
+             _inverted = false;
+         }
+
 
     protected:
         bool _inverted = false;
@@ -79,7 +84,7 @@ public:
     static bool cmpfn(const Item &a, const Item &b) {
         return a.id < b.id;
     }
-    static ValueT &&move_first(ValueT &x, ValueT &y) {
+    static ValueT &&move_first(ValueT &, ValueT &y) {
         return std::move(y);
     }
 
@@ -111,7 +116,7 @@ public:
     Ret push(RecordSet &&rc, FN fn = empty_map_fn) {
         Set out = empty_set();
         for (const auto &rw: rc) {
-            out.emplace_back(Item(rw.id, fn(rw)));
+            out.emplace_back(Item{rw.id, fn(rw)});
         }
         return push_unsorted(std::move(out));
     }
@@ -234,20 +239,20 @@ public:
     }
 
     bool empty() const {return _stack.empty();}
-    bool top_empty() const {
-        return !_stack.empty() && _stack.top().has_value() && _stack.top()->empty();
+    bool is_top_empty() const {
+        return !_stack.empty() &&  _stack.top().empty() && !_stack.top().is_inverted();
     }
 
     template<typename StorageView, typename Fn>
     bool list(const StorageView &view, Fn &&fn) {
         if (_stack.empty()) return false;
-        return list(_stack.top());
+        return list(_stack.top(), view, fn);
     }
 
     template<typename StorageView, typename Fn>
     bool list(const Set &set, const StorageView &view, Fn &&fn) {
         if (!set.is_inverted()) {
-            for (const Item &itm: *set) {
+            for (const Item &itm: set) {
                 fn(itm.id, itm.value, view.find(itm.id));
             }
             return true;
@@ -261,6 +266,26 @@ public:
         std::swap(_last_b, _last_a);
         out.clear();
         return out;
+    }
+
+    Set all_items_set() {
+        return Set::invert(empty_set());
+    }
+
+    Set &top() {
+        return _stack.top();
+    }
+
+    const Set &top() const {
+        return _stack.top();
+    }
+
+    void clear() {
+        while (!_stack.empty()) {
+            std::swap(_last_b, _last_a);
+            _last_a = std::move(_stack.top());
+            _stack.pop();
+        }
     }
 
 protected:
