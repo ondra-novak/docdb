@@ -116,7 +116,7 @@ bool ReadLine::filterHistory(const std::string &line) noexcept {
     return ok;
 }
 
-void ReadLine::postprocess(std::string &line) noexcept {
+void ReadLine::postprocess(std::string &) noexcept {
     //empty - no postprocessing
 }
 
@@ -128,7 +128,7 @@ ReadLine::HintItem ReadLine::allocHintItem(const std::string &str) {
     return HintItem(strdup(str.c_str()));
 }
 
-void ReadLine::editHints(const char *wholeLine, std::size_t start, std::size_t end, HintList &list) noexcept  {
+void ReadLine::editHints(const char *, std::size_t , std::size_t , HintList &) noexcept  {
     //empty;
 }
 
@@ -302,7 +302,7 @@ ReadLine::HintGenerator::HintGenerator(const std::initializer_list<std::string> 
 }
 
 ReadLine::HintGenerator::HintGenerator(std::vector<std::string> &&options)
-:GenFn([lst = std::move(options)](const char *word, std::size_t sz,const std::cmatch &m, const HintCallback &cb) {
+:GenFn([lst = std::move(options)](const char *word, std::size_t sz,const std::cmatch &, const HintCallback &cb) {
     for (const auto &x: lst) {
         if (x.compare(0, sz, word) == 0) cb(x);
     }
