@@ -69,6 +69,11 @@ public:
 
         bool is_inverted() const {return _inverted;}
 
+        void clear() {
+            std::vector<Item>::clear();
+            _inverted = false;
+        }
+
 
     protected:
         bool _inverted = false;
