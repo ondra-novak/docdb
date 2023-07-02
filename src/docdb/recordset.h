@@ -82,7 +82,7 @@ template<typename RecordSet, typename ValueType>
 class RecordSetIterator{
 public:
 
-    using iterator_category = std::forward_iterator_tag;
+    using iterator_category = std::input_iterator_tag;
     using value_type = ValueType; // crap
     using difference_type = ptrdiff_t;
     using pointer = void;
@@ -178,7 +178,6 @@ public:
     std::string_view raw_value() const {
         return to_string(_iter->value());
     }
-
 
     ///Returns true, if recordset is empty
     /**

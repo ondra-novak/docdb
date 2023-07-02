@@ -2,6 +2,7 @@
 #include "../docdb/storage.h"
 #include "../docdb/indexer.h"
 #include "../docdb/aggregator.h"
+#include "../docdb/recordset_aggregator.h"
 #include "memdb.h"
 
 #include "../docdb/aggregate_rows.h"
@@ -49,6 +50,13 @@ struct IndexFn {
     }
 };
 
+
+
+static auto aggrSumFn = [](int &sum, const docdb::Row &row) {
+    auto [v] = row.get<int>();
+    sum+=v;
+};
+
 void test1() {
 
     using DocumentDef = docdb::FixedRowDocument<std::string_view, int>;
@@ -63,7 +71,7 @@ void test1() {
             docdb::ReduceKey<std::size_t>,
             docdb::AggregateRows<docdb::Composite<int,
                     docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int>
-                > >, docdb::UpdateMode::manual>;
+                > > >;
 
 
     Storage storage(db, "test_storage");
@@ -71,9 +79,12 @@ void test1() {
     StatsAggregator aggr(index, "test_aggr");
 
 
-
     for (auto c: words) {
         storage.put({c.first,c.second});
+    }
+
+    for (auto row: docdb::Aggregate<std::size_t>::Recordset(index.select_all(), aggrSumFn)){
+        std::cout << std::get<0>(row.key) << ": " << row.value << std::endl;
     }
 
     aggr.update();

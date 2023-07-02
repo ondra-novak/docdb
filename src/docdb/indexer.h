@@ -163,6 +163,10 @@ public:
     void update() {
         //empty, as the index don't need update, but some object may try to call it
     }
+    bool try_update() {
+       //empty, as the index don't need update, but some object may try to call it
+        return true;
+    }
 
 protected:
 

@@ -73,8 +73,6 @@ public:
     Key get_as_key() const {
         return Key(RowView(std::string_view(*this).substr(sizeof(KeyspaceID))));
     }
-
-
 };
 
 struct KeyReduceEmitTemplate {
@@ -114,9 +112,8 @@ DOCDB_CXX20_CONCEPT(AggregatorFn, requires{
 });
 
 
-
 template<AggregatorSource MapSrc, typename _KeyReduceFn, typename _AggregatorFn,
-                UpdateMode update_mode, typename _ValueDef = RowDocument>
+                typename _ValueDef = RowDocument>
 DOCDB_CXX20_REQUIRES(KeyReduceFn<_KeyReduceFn, MapSrc> && AggregatorFn<_AggregatorFn, MapSrc>)
 class Aggregator: public AggregatorView<_ValueDef> {
 public:
@@ -131,19 +128,23 @@ public:
     /**
      * @param source source index
      * @param name name of keyspace where materialized aggregation is stored
-     * @param manual_update use true to disable background update. In this case, you
-     * need manually call update() to finish pending aggregations
+     * @param autoupdate_treshold  count of dirty keys needed to perform automatic update. You
+     * can set this value to 1, if you need to run update after every write. Manual update is
+     * possible anytime
      *
      */
-    Aggregator(MapSrc &source, std::string_view name)
-        :Aggregator(source, source.get_db()->open_table(name, Purpose::aggregation)) {}
-    Aggregator(MapSrc &source, KeyspaceID kid)
+    Aggregator(MapSrc &source, std::string_view name, std::size_t autoupdate_threshold = 10000)
+        :Aggregator(source, source.get_db()->open_table(name, Purpose::aggregation), autoupdate_threshold) {}
+    Aggregator(MapSrc &source, KeyspaceID kid, std::size_t autoupdate_threshold = 10000)
         :AggregatorView<_ValueDef>(source.get_db(), kid, Direction::forward, {}, false)
         ,_source(source)
-        ,_tcontrol(*this){
+        ,_dirty_max(autoupdate_threshold)
+        ,_tcontrol(*this) {
 
         if (get_revision() != revision) {
             rebuild();
+        } else {
+            load_dirty();
         }
         this->_source.register_transaction_observer(make_observer());
     }
@@ -172,21 +173,22 @@ public:
         Emit(Aggregator &owner, Batch &b)
             :_owner(owner), _b(b) {}
 
-        void operator()(AggregatedKey &&key, const Key &value) {put(key, value);}
-        void operator()(AggregatedKey &key, const Key &value) {put(key, value);}
+        void operator()(const Row &key, const Row &value) {put(key, value);}
 
     protected:
         Aggregator &_owner;
         Batch &_b;
 
 
-        void put(AggregatedKey &key, const Key &value) {
-            key.change_kid(Database::get_private_area_key(_owner._kid));
-            key.append(_b.get_revision());
+        void put(const Row &key, const Row &value) {
+            RawKey kk = Database::get_private_area_key(_owner._kid, key);
             auto &buffer = _b.get_buffer();
             auto buff_iter = std::back_inserter(buffer);
-            _ValueDef::to_binary(value, buff_iter);
-            _b.Put(key, buffer);
+            RowDocument::to_binary(value, buff_iter);
+            std::lock_guard lk(_owner._dirty_lock);
+            _b.Put(kk, buffer); //backup dirty key in leveldb
+            //but we prefer to store dirty key in a map
+            _owner._dirty_keys.emplace(std::move(kk), std::move(buffer));
         }
     };
 
@@ -200,26 +202,24 @@ public:
      */
     void update() {
         _source.update();
-        this->do_update();
+        this->do_update(false);
+    }
+
+    bool try_update() {
+        if (!_source.try_update()) return false;
+        return this->do_update(true);
     }
 
     ///Synchronizes current thread with finishing of background tasks
-    /**
-     * It is used in destructor, but you can use it anywhere you need. This
-     * blocks current thread until background update is finished. Note that
-     * function works with automatic background updates, not updates called
-     * manually by the update() function.
-     *
-     * @note If many records are being inserted which triggers more and
-     * more updates, the function cannot unblock. You need to stop pushing
-     * new updates.
-     */
     void join() {
-        int v;
-        v = _pending.load(std::memory_order_relaxed);
-        while (v) {
-            _pending.wait(v, std::memory_order_relaxed);
-            v = _pending.load(std::memory_order_relaxed);
+        ///just acquire lock, this blocks until background thread ends
+        std::unique_lock lk(_dirty_lock);
+        if (_aggr_running) {
+            std::condition_variable cv;
+            _awaiters.push_back([&]{
+                cv.notify_all();
+            });
+            cv.wait(lk);
         }
     }
 
@@ -232,22 +232,7 @@ protected:
         TaskControl &operator=(const TaskControl &owner) = delete;
 
         virtual void after_commit(std::size_t) noexcept override {
-            if (_owner.mark_dirty()) {
-                if constexpr(update_mode == UpdateMode::automatic) {
-                    ++_owner._pending;
-                    _owner._db->run_async([this] {
-                        try {
-                            _owner.run_aggregation();
-                        } catch (...) {
-                            _e = std::current_exception();
-                        }
-                        auto &ref = _owner._pending;
-                        if (--ref == 0) {
-                            ref.notify_all();
-                        }
-                    });
-                }
-            }
+            _owner.after_commit();
         }
         virtual void before_commit(Batch &b) override {
             if (_e) {
@@ -265,76 +250,126 @@ protected:
         std::exception_ptr _e;
     };
 
+
     MapSrc &_source;
     std::vector<TransactionObserver> _tx_observers;
+    using DirtyMap = std::unordered_map<RawKey, Batch::BufferType, std::hash<std::string_view> >;
+    DirtyMap _dirty_keys;
+    std::mutex _dirty_lock;
+    std::size_t _dirty_max;
     TaskControl _tcontrol;
-    //object has been market dirty, must be updated
-    //in automatic mode, this also indicates, that background thread is scheduled
-    std::atomic<bool> _dirty = {true};
-    //count of pending background requests. It is possible to have 2 of them, one processing, other pending
-    std::atomic<int> _pending = {0};
-    //locks aggregation to be procesed one thread at time
-    std::mutex _mx;
+    bool _aggr_running = false;
+    std::vector<std::function<void()> > _awaiters;
 
-    bool mark_dirty() {
-        bool need = false;
-        return _dirty.compare_exchange_strong(need, true,std::memory_order_relaxed);
-    }
-
-    bool do_update() {
-        std::lock_guard _(_mx);
-        bool need = true;
-        if (!_dirty.compare_exchange_strong(need, false, std::memory_order_relaxed)) {
-            return false;
-        }
-        run_aggregation();
-        return true;
-    }
-
-
-    void run_aggregation() {
-        Batch b;
-        RecordSetBase rs(this->_db->make_iterator({}, this->_no_cache), {
+    //load dirty keys from leveldb to internal memory map
+    void load_dirty() {
+        RecordSetBase rs(this->_db->make_iterator({}, true), {
                 Database::get_private_area_key(this->_kid),
                 Database::get_private_area_key(this->_kid+1),
                 FirstRecord::excluded,
                 LastRecord::excluded
         });
-
-        RawKey prev_key((RowView()));
-
         while (!rs.empty()) {
-            std::string_view keydata = rs.raw_key();
-            std::string_view valuedata = rs.raw_value();
-            keydata = keydata.substr(sizeof(KeyspaceID), keydata.length()-sizeof(KeyspaceID)- sizeof(std::size_t));
-            RawKey nk((RowView(keydata)));
-            if (nk != prev_key) {
-                prev_key = nk;
-                prev_key.mutable_buffer();
-                AggregatedResult<ValueType> r = aggregatorFn(_source, Key(RowView(valuedata)));
-                if (r._has_value) {
-                    auto &buff = b.get_buffer();
-                    _ValueDef::to_binary(r._value, std::back_inserter(buff));
-                    b.Put(nk, buff);
-                    notify_tx_observers(b, nk, r._value, false);
-                } else {
-                    if (_tx_observers.empty()) {
-                        b.Delete(nk);
-                    } else {
-                        auto prev = this->find(nk);
-                        if (prev.has_value()) {
-                            b.Delete(nk);
-                            notify_tx_observers(b, nk, *prev, true);
-                        }
-                    }
-                }
-            }
-            b.Delete(to_slice(rs.raw_key()));
-            rs.next();
+          std::string_view keydata = rs.raw_key();
+          std::string_view valuedata = rs.raw_value();
+
+          RawKey key((RowView(keydata)));
+          Batch::BufferType value(valuedata);
+          key.mutable_buffer();
+
+          _dirty_keys.emplace(std::move(key), std::move(value));
+          rs.next();
+      }
+    }
+
+    void after_commit() {
+        std::unique_lock lk(_dirty_lock);
+        if (_dirty_keys.size() >= _dirty_max && !_aggr_running) {
+            _aggr_running = true;
+            DirtyMap kmap = std::move(_dirty_keys);
+            lk.unlock();
+            std::thread thr([this, kmap = std::move(kmap)]() mutable {
+                run_aggregation_from_thread(kmap);
+            });
+            thr.detach();
         }
-        this->_db->commit_batch(b);
+    }
+
+
+    void run_aggregation_from_thread(DirtyMap &dirty) {
+        std::unique_lock<std::mutex> lk(_dirty_lock, std::defer_lock);
+        do {
+            run_aggregation(dirty, lk);
+            if (_dirty_keys.size() < _dirty_max) break;
+            dirty.clear();
+            std::swap(dirty, _dirty_keys);
+            lk.unlock();
+        } while (true);
+        _aggr_running = false;
+        auto awt = std::move(_awaiters);
+        lk.unlock();
+        for (auto &x: awt) x();
+
 
     }
+
+    void run_aggregation(const DirtyMap &dirty, std::unique_lock<std::mutex> &lk) {
+        Batch b;
+        for (const auto &[key,value]: dirty) {
+            auto [nkrow] = key.get<RowView>();
+            RawKey nk(nkrow);
+            AggregatedResult<ValueType> r = aggregatorFn(_source, Key(Blob(value)));
+            if (r._has_value) {
+                auto &buff = b.get_buffer();
+                _ValueDef::to_binary(r._value, std::back_inserter(buff));
+                b.Put(nk, buff);
+                notify_tx_observers(b, nk, r._value, false);
+            } else if (_tx_observers.empty()) {
+                b.Delete(nk);
+            } else {
+                auto prev = this->find(nk);
+                if (prev.has_value()) {
+                    b.Delete(nk);
+                    notify_tx_observers(b, nk, *prev, true);
+                }
+            }
+            this->_db->commit_batch(b);
+
+        }
+        lk.lock();
+        for (const auto &[key,value]: dirty) {
+            auto iter = _dirty_keys.find(key);
+            if (iter == _dirty_keys.end()) {
+                b.Delete(key);
+            }
+        }
+        this->_db->commit_batch(b);
+    }
+
+
+    bool do_update(bool non_block) {
+        std::unique_lock lk(_dirty_lock);
+        while (_aggr_running) {
+            if (non_block) return false;
+            std::condition_variable cv;
+            _awaiters.push_back([&]{
+                cv.notify_all();
+            });
+            cv.wait(lk);
+        }
+        DirtyMap dmap (std::move(_dirty_keys));
+        if (!dmap.empty()) {
+            _aggr_running = true;
+            lk.unlock();
+            run_aggregation(dmap, lk);
+            _aggr_running = false;
+            auto awt = std::move(_awaiters);
+            lk.unlock();
+            for (auto &x: awt) x();
+        }
+        return true;
+    }
+
 
     template<typename ... Args>
     void call_emit(bool erase, Batch &b, const Key &k, Args  ... args) {
@@ -368,6 +403,7 @@ protected:
 
     void rebuild() {
         this->_db->clear_table(this->_kid, false);
+        this->_db->clear_table(this->_kid, true);
         this->_source.rescan_for(make_observer());
         update_revision();
     }
