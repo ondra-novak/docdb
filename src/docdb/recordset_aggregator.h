@@ -21,21 +21,42 @@ namespace _details {
      DOCDB_CXX20_CONCEPT(IteratorContainsID, requires(X x) {
         {x->id} -> std::convertible_to<DocID>;
      });
+
+     template<typename T> struct GetColumns {
+         using TupleType = typename T::TupleType;
+     };
+
+     template<typename ... Items> struct GetColumns<std::tuple<Items...> > {
+         using TupleType = std::tuple<Items...>;
+     };
+
 }
+
 
 ///Aggregate tool
 /**
- * @tparam KeyColumns types stored in key, up to unique columns. Unspecified extra columns are
- * aggregated. For example if you have key <int,std::string,int>, you can specify <int,std::string>
- * as KeyColumns, so any values matching these two columns are aggregated into single value
+ * @tparam ColumnTuple This template argument should contain std::tuple<> of types matching
+ * the format of stored key however it can contain less columns for grouping. For example, if
+ * the key has 3 columns, you can specify just 2 column to group by these columns. It is also
+ * possible to define own type, which can accept the std::tuple<> and define coparison operator
+ * to implement non-standard grouping. In this case, your type must contain `using TupleType`
+ * which must contain definition of types in columns declared as tuple
+ *
+ * @code
+ * struct MyAggregatedKey {
+ *      using TupleType = std::tuple<std::size_t, double>;
+ *      MyAggregatedKey(const TupleType &init);
+ *      //...
+ * };
+ * @endcode
+ *
  *
  * To use aggregation over recordset, use Aggregate<Collumns...>::Recordset
  */
-template<typename ... KeyColumns>
+template<typename ColumnTuple /*= std::tuple<> */>
 struct Aggregate {
 
-    ///type for key - it is alias for std::tuple
-    using KeyObject = std::tuple<KeyColumns...>;
+    using TupleType = typename _details::GetColumns<ColumnTuple>::TupleType;
 
 
     ///Aggregate recordset
@@ -76,10 +97,10 @@ struct Aggregate {
 
         ///Structure is returned as result of aggregated iteration
         struct ValueType {
-            ValueType(const Key &k):key(k.get<KeyColumns...>()) {}
+            ValueType(const Key &k):key(k.get<TupleType>()) {}
 
-            ///Key - contains tuple of keys specified by KeyColumns...
-            KeyObject key;
+            ///Key - contains key in type passed as ColumnTuple
+            ColumnTuple key;
             ///Value - contains aggregated value
             AggrValueType value = {};
         };
@@ -157,7 +178,7 @@ struct Aggregate {
             }
             ++_iter;
             while (_iter != _end) {
-                KeyObject k(_iter->key.template get<KeyColumns...>());
+                ColumnTuple k(_iter->key.template get<TupleType>());
                 if (k != _result->key) break;
                 if constexpr (three_args_fn) {
                     _aggrFn(_result->value, _iter->value, _iter->id);

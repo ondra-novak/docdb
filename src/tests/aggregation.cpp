@@ -83,7 +83,7 @@ void test1() {
         storage.put({c.first,c.second});
     }
 
-    for (auto row: docdb::Aggregate<std::size_t>::Recordset(index.select_all(), aggrSumFn)){
+    for (auto row: docdb::Aggregate<std::tuple<std::size_t> >::Recordset(index.select_all(), aggrSumFn)){
         std::cout << std::get<0>(row.key) << ": " << row.value << std::endl;
     }
 
