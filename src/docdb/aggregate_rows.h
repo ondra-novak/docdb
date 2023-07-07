@@ -1,3 +1,21 @@
+/**
+ * @file aggregate_rows.h contains various aggregation functions that can be used above RowDocuments
+ *
+ * - AggregateRows<> - contains aggregation function for the whole row. You specify
+ *                     aggregation functions for each column as template arguments
+ * - Count           - count rows
+ * - Sum             - sum values
+ * - Sum2            - perform sum of square roots
+ * - Avg             - calculate average
+ * - Min             - get minimum item
+ * - Max             - get maximum item
+ * - First           - get first item
+ * - Last            - get last item
+ * - Composite<>     - run multiple aggregation above single column
+ *
+ *
+ */
+
 #pragma once
 #ifndef SRC_DOCDB_AGGREGATE_ROWS_H_
 #define SRC_DOCDB_AGGREGATE_ROWS_H_
@@ -7,44 +25,9 @@
 #include <cmath>
 namespace docdb {
 
-template<typename ... AgrTypes>
-struct AggregateState{
-
-    using States = std::tuple<AgrTypes...>;
-
-    template<int index = 0>
-    void accumulate(const Row &row) {
-        if constexpr(index >= std::tuple_size_v<States>) {
-            return;
-        } else {
-            if (row.empty()) return;
-            auto &st = std::get<index>(_state);
-            using ValueType = typename std::tuple_element_t<index, States>::ValueType;
-            auto [x, next_row] = row.get<ValueType, Row >();
-            st.add(x);
-            accumulate<index+1>(next_row);
-        }
-    }
-
-    template<int index = 0>
-    void build_result(Row &row) {
-        if constexpr(index >= std::tuple_size_v<States>) {
-            return;
-        } else {
-            const auto &st = std::get<index>(_state);
-            row.append(st.get_result());
-            build_result<index+1>(row);
-        }
-    }
-
-    States _state;
-};
-
 template<typename X>
-DOCDB_CXX20_CONCEPT(RowAggregateFunction, requires (X fn) {
-    typename X::ValueType;
-    {fn.add(std::declval<typename X::ValueType>())} ->std::same_as<void>;
-    {fn.get_result()}->std::convertible_to<Row>;
+DOCDB_CXX20_CONCEPT(RowAggregateFunction, requires (X fn, typename X::AccumType &acc, const typename X::InputType &input) {
+    {fn(acc,input)};
 });
 
 template<typename X, typename ... Args>
@@ -60,203 +43,189 @@ template<typename ... Args>
 inline constexpr std::size_t aggregated_revision = AggregatedRevision<Args...>::revision;
 
 
-///Aggregate rows into single Row object
-/**
- * The function expects that that index returns values in type Row;
- *
- * @tparam AgrTypes list of aggregation function to execute on each column. For example
- * Sum<type>, Count<type>, etc. Each type means one columnt (expect Count<type>, which
- * doesn't consume any column). If you need multiple aggregations for a single column, use
- * Composite aggregation.
- *
- * @param index source index where search values to aggregate
- * @param key contains prefix key to aggregate
- * @return Row object containing aggregated result
- */
-template<RowAggregateFunction ... ArgTypes>
+template<RowAggregateFunction ... AgrTypes>
 struct AggregateRows {
-    static constexpr std::size_t revision = AggregatedRevision<ArgTypes...>::revision;
-    template<typename Index>
-    AggregatedResult<Row> operator()(const Index &index, Key key) const {
-        auto rs = index.select(key);
-        static_assert(std::is_convertible_v<decltype(*rs.begin()), const Row &>,
-                "The function 'aggregate_rows' supports values returned as the type Row");
-        if (rs.begin() == rs.end()) return {};
-        AggregateState<ArgTypes ...> _state;
+    using Accumulator = std::tuple<typename AgrTypes::AccumType ...>;
+    using ParsedRow = std::tuple<typename AgrTypes::InputType ...>;
+    static constexpr std::size_t revision = AggregatedRevision<AgrTypes...>::revision;
+    std::tuple<AgrTypes ...> _state = {};
 
-        for (const auto &row: rs) {
-            _state.accumulate(row.value);
-        }
-        Row out;
-        _state.build_result(out);
-        return out;
+
+    template<std::size_t ... Is>
+    void accumulate(const ParsedRow &in, std::index_sequence<Is...>) {
+        (std::get<Is>(_state).add(std::get<Is>(in)),...);
     }
+    template<std::size_t ... Is>
+    void get_result(Accumulator &acc, std::index_sequence<Is...>) const {
+        ((std::get<Is>(acc) = std::get<Is>(_state).get_result()),...);
+    }
+
+    template<std::size_t ... Is>
+    void do_accumulate(Accumulator &acc, const ParsedRow &in, std::index_sequence<Is...>) {
+        (std::get<Is>(_state).operator()(std::get<Is>(acc), std::get<Is>(in)),...);
+    }
+
+
+    void operator()(Accumulator &accum, const Row &row) {
+        ParsedRow data = row.get<ParsedRow>();
+        do_accumulate(accum, data, std::index_sequence_for<AgrTypes...>{});
+    }
+
+
+
 };
 
 
-template<RowAggregateFunction ... ArgTypes>
-constexpr AggregateRows<ArgTypes...> aggregate_rows =  {};
-
-template<typename Type = double>
+template<typename Type = std::nullptr_t>
 struct Count {
     static constexpr std::size_t revision = 1;
-    std::size_t _count = 0;
-    using ValueType = std::nullptr_t;
+    using AccumType = std::size_t;
+    using InputType = Type;
 
-    template<typename X>
-    void add(X &&) {
-        ++_count;
-    }
-    Type get_result() const {
-        return Type(_count);
+    void operator()(std::size_t &count, const Type &x) {
+        ++count;
     }
 };
 
 template<typename Type>
 struct Sum {
     static constexpr std::size_t revision = 2;
-    Type _s = 0;
-    using ValueType = Type;
-    template<typename X>
-    void add(const X &x) {
-        _s = _s + x;
-    }
-    auto get_result() const {
-        return _s;
+    using AccumType = Type;
+    using InputType = Type;
+
+    void operator()(Type &sum, const Type &x) {
+        sum = sum + x;
     }
 };
 
 template<typename Type>
 struct Avg {
     static constexpr std::size_t revision = 3;
-    Type _s = 0;
-    std::size_t _count = 0;
-    using ValueType = Type;
-    template<typename X>
-    void add(const X &x) {
-        _s = _s + x;
-        ++_count;
+    using AccumType = Type;
+    using InputType = Type;
+    Sum<Type> _sum = {};
+    Count<Type> _count = {};
+    typename Sum<Type>::AccumType _sum_state = {};
+    typename Count<Type>::AccumType _count_state = {};
+
+    void operator()(Type &avg, const Type &x) {
+        _sum(_sum_state, x);
+        _count(_count_state, x);
+        avg = static_cast<Type>(_sum/_count);
     }
-    auto get_result() const {
-        return _s/_count;
-    }
+
 };
 
 template<typename Type>
 struct Sum2 {
     static constexpr std::size_t revision = 4;
-    Type _s = 0;
-    using ValueType = Type;
-    template<typename X>
-    void add(const X &x) {
-        _s = _s + x*x;
-    }
-    auto get_result() const {
-        return _s;
+    using AccumType = Type;
+    using InputType = Type;
+
+    void operator()(Type &sum, const Type &x) {
+        sum = sum + x*x;
     }
 };
 
 template<typename Type>
 struct Max {
     static constexpr std::size_t revision = 5;
-    Type _s = {};
-    bool _first = true;
-    using ValueType = Type;
-    template<typename X>
-    void add(const X &x) {
-        if (_first) {
-            _first = false;
-            _s = x;
-        } else {
-            _s = std::max<ValueType>(_s,x);
-        }
+    using AccumType = Type;
+    using InputType = Type;
+    bool _is_first = true;
+
+    void operator()(Type &a, const Type &x) {
+        a = (_is_first | a < x) ? x: a;
+        _is_first = false;
     }
-    void build_result(Row &row) const {
-        row.append(_s);
-    }
-    auto get_result() const {
-        return _s;
-    }
+
 };
 
 template<typename Type>
 struct Min {
     static constexpr std::size_t revision = 6;
-    Type _s = {};
-    bool _first = true;
-    using ValueType = Type;
-    template<typename X>
-    void add(const X &x) {
-        if (_first) {
-            _first = false;
-            _s = x;
-        } else {
-            _s = std::min<ValueType>(_s,x);
-        }
-    }
-    auto get_result() const {
-        return _s;
+    using AccumType = Type;
+    using InputType = Type;
+    bool _is_first = true;
+
+    void operator()(Type &a, const Type &x) {
+        a = (_is_first | a > x) ? x: a;
+        _is_first = false;
     }
 };
 
 template<typename Type>
 struct First {
     static constexpr std::size_t revision = 7;
-    Type _s = {};
-    bool _first = true;
-    using ValueType = Type;
-    template<typename X>
-    void add(const X &x) {
-        if (_first) {
-            _first = false;
-            _s = x;
-        }
-    }
-    auto get_result() const {
-        return _s;
+    using AccumType = Type;
+    using InputType = Type;
+    bool _is_first = true;
+
+    void operator()(Type &a, const Type &x) {
+        a = _is_first ? x: a;
+        _is_first = false;
     }
 };
 
 template<typename Type>
 struct Last {
     static constexpr std::size_t revision = 8;
-    Type _s = {};
-    using ValueType = Type;
-    template<typename X>
-    void add(const X &x) {
-        _s = x;
-    }
-    auto get_result() const {
-        return _s;
+    using AccumType = Type;
+    using InputType = Type;
+
+    void operator()(Type &a, const Type &x) {
+        a = x;
     }
 };
 
-template<typename T, typename ... ArgFns>
-struct Composite {
-    static constexpr std::size_t revision = AggregatedRevision<ArgFns...>::revision;
 
-    using States = std::tuple<ArgFns...>;
-    using Results = std::tuple<decltype(std::declval<ArgFns>().get_result())...>;
-    States _states = {};
-    using ValueType = T;
 
-    template<int index = 0>
-    void add(const ValueType &x) {
-        if constexpr(index >= std::tuple_size_v<States>) {
-            return;
-        } else {
-            auto &st = std::get<index>(_states);
-            st.add(x);
-            add<index+1>(x);
+inline constexpr std::string_view group_concat_default_delimiter{","};
+///Creates list of strings separated by a separator
+/**
+ * @tparam Type type of string, recommended type is std::string_view. You can also
+ * use docdb::Blob if you need to group strings with zeroes. However, result is also
+ * stored as Blob. You can also group-concat std::wstring_view
+ * @tparam delimiter delimiter - it must be specified as refernece to constexpr
+ * object of appropriate type
+ */
+template<typename Type = std::string_view, const std::basic_string_view<typename Type::value_type> *delimiter = &group_concat_default_delimiter>
+struct GroupConcat {
+    static constexpr std::size_t revision = 9;
+    using AccumType = Type;
+    using InputType = Type;
+    using CharType = typename Type::value_type;
+    using StrView = std::basic_string_view<CharType>;
+    std::basic_string<CharType> state;
+
+    void operator()(Type &a, const Type &x) {
+        if (!state.empty()) {
+            state.append(*delimiter);
         }
+        state.append(StrView(x));
+        a = Type(state);
     }
-    auto get_result() const {
-        Results res;
-        auto assign_values = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                   ((std::get<Is>(res) = std::get<Is>(_states).get_result()), ...);
-        };
-        assign_values(std::make_index_sequence<std::tuple_size_v<Results> >{});
-        return res;
+
+
+};
+
+template<typename T, typename ... AgrFns>
+struct Composite {
+    static constexpr std::size_t revision = AggregatedRevision<AgrFns...>::revision;
+
+    using States = std::tuple<AgrFns...>;
+    using AccumType = std::tuple<typename AgrFns::AccumType ...>;
+    using InputTypes = std::tuple<typename AgrFns::InputType ...>;
+    States _states = {};
+    using InputType = T;
+
+    template<std::size_t ... Is>
+    void do_accum(AccumType &acc, const InputType &val, std::index_sequence<Is...>) {
+        (std::get<Is>(_states).operator()(std::get<Is>(acc), static_cast<std::tuple_element_t<Is,InputTypes> >(val)),...);
+    }
+
+    void operator()(AccumType &accum, const InputType &x) {
+        do_accum(accum, x, std::index_sequence_for<AgrFns...>{});
     }
 
 

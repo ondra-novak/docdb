@@ -1,7 +1,7 @@
 #include <iostream>
 #include <docdb/storage.h>
 #include <docdb/indexer.h>
-#include <docdb/aggregator.h>
+
 
 #include "CSVReader.h"
 

@@ -179,6 +179,10 @@ public:
         return to_string(_iter->value());
     }
 
+    RawKey key() const {
+        return RawKey(RowView(raw_key()));
+    }
+
     ///Returns true, if recordset is empty
     /**
      * @retval true recordset is empty
