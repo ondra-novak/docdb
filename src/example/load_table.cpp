@@ -8,10 +8,7 @@
 static docdb::PDatabase open_db() {
     leveldb::Options opts;
     opts.create_if_missing = true;
-    leveldb::DB *out;
-    auto st = leveldb::DB::Open(opts, "example_db", &out);
-    if (!st.ok()) throw docdb::DatabaseError(st);
-    return docdb::Database::create(out);
+    return docdb::Database::create("example_db", opts);
 }
 
 struct Customer {
