@@ -34,6 +34,12 @@ DOCDB_CXX20_CONCEPT(IndexFn, requires{
 });
 
 
+template<std::size_t rev, auto function>
+struct IndexFunction: decltype(function) {
+    static constexpr std::size_t revision = rev;
+};
+
+
 template<DocumentStorageType Storage, typename _IndexFn, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
 DOCDB_CXX20_REQUIRES(IndexFn<_IndexFn, Storage, _ValueDef>)
 class Indexer: public IndexView<Storage, _ValueDef, index_type> {
