@@ -3,6 +3,8 @@
 #define SRC_DOCDB_KEYLOCK_H_
 
 #include "key.h"
+
+#include <condition_variable>
 #include <mutex>
 #include <unordered_map>
 

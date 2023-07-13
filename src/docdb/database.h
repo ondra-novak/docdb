@@ -6,7 +6,6 @@
 #include "batch.h"
 #include "key.h"
 #include "purpose.h"
-#include "task_thread.h"
 #include "exceptions.h"
 
 #include <leveldb/db.h>
@@ -296,22 +295,6 @@ public:
         _dbinst->CompactRange(&f,&t);
     }
 
-    ///Start asynchronous task
-    /**
-     * Creates thread and starts task. If other task is already running, this task is queued
-     * and it is executed once previous task is done. So there is always maximum 1 thread which
-     * executing one task at background. Use this function to start short tasks at background,
-     * do not block the execution for long tasks
-     *
-     * @note This feature is used by aggregators
-     *
-     * @param fn function to executed
-     */
-    template<std::invocable<> Fn>
-    void run_async(Fn &&fn) {
-        _async.run(std::forward<Fn>(fn));
-    }
-
     leveldb::DB& get_level_db() const {return *_dbinst;}
 
     static constexpr KeyspaceID system_table = std::numeric_limits<KeyspaceID>::max();
@@ -325,7 +308,6 @@ protected:
     std::stack<KeyspaceID> _free_ids;
     KeyspaceID _min_free_id = 0;
     mutable std::shared_mutex _mx;
-    TaskThread _async;
 
 };
 
