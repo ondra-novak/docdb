@@ -4,7 +4,7 @@
 
 #include "memdb.h"
 
-#include <docdb/groupby.h>
+#include <docdb/aggregator.h>
 #include <docdb/aggregate_rows.h>
 
 static std::pair<std::string_view,int> words[] = {
@@ -72,7 +72,7 @@ void test1() {
 
     using Storage = docdb::Storage<DocumentDef>;
     using Index = docdb::Indexer<Storage, IndexFn ,docdb::IndexType::multi, IndexDef>;
-    using StatsAggregator = docdb::GroupBy<std::tuple<std::size_t> >::Materialized<Index,
+    using StatsAggregator = docdb::AggregateBy<std::tuple<std::size_t> >::Materialized<Index,
             docdb::AggregateRows<docdb::Composite<int,
                     docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int>
                 > > >;
@@ -87,7 +87,7 @@ void test1() {
         storage.put({c.first,c.second});
     }
 
-    for (auto row: docdb::GroupBy<std::tuple<std::size_t> >::Recordset(index.select_all(), aggrSumFn)){
+    for (auto row: docdb::AggregateBy<std::tuple<std::size_t> >::Recordset(index.select_all(), aggrSumFn)){
         std::cout << std::get<0>(row.key) << ": " << row.value << std::endl;
     }
 

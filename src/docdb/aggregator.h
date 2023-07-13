@@ -1,6 +1,6 @@
 #pragma once
-#ifndef SRC_DOCDB_GROUPBY_H_
-#define SRC_DOCDB_GROUPBY_H_
+#ifndef SRC_DOCDB_AGGREGATOR_H_
+#define SRC_DOCDB_AGGREGATOR_H_
 
 #include "concepts.h"
 
@@ -86,7 +86,7 @@ namespace _details {
  * To use aggregation over recordset, use Aggregate<Collumns...>::Recordset
  */
 template<typename ColumnTuple /*= std::tuple<> */>
-struct GroupBy {
+struct AggregateBy {
 
     using TupleType = typename _details::GetColumns<ColumnTuple>::TupleType;
 
@@ -464,4 +464,4 @@ struct GroupBy {
 
 
 
-#endif /* SRC_DOCDB_GROUPBY_H_ */
+#endif /* SRC_DOCDB_AGGREGATOR_H_ */
