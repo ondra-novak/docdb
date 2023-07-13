@@ -63,6 +63,19 @@ protected:
 
 };
 
+class DeadlockKeyException: public exception {
+public:
+    DeadlockKeyException(std::string key, std::string message)
+        :_key(std::move(key)), _message(std::move(message)) {}
+
+    const std::string &get_key() const {return _key;}
+    const char *what() const noexcept override {return _message.c_str();}
+protected:
+    std::string _key;
+    std::string _message;
+
+};
+
 
 
 }

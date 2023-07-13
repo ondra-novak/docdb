@@ -14,6 +14,7 @@ set(testFiles
     map.cpp
     structured.cpp
     binop.cpp
+    incremental_aggregation.cpp
 )
 
 link_libraries(

@@ -9,7 +9,7 @@ namespace docdb {
 
 
 template<DocumentDef _ValueDef>
-using MapView = IndexViewGen<_ValueDef, IndexViewBaseEmpty>;
+using MapView = IndexViewGen<_ValueDef, IndexViewBaseEmpty<_ValueDef> >;
 
 
 ///Map is simple key-value storage with support of transaction observers

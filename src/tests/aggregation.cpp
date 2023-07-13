@@ -52,9 +52,9 @@ struct IndexFn {
 
 
 
-static auto aggrSumFn = [](int &sum, const docdb::Row &row) {
+static auto aggrSumFn = [sum = 0](const docdb::Row &row) mutable -> const int & {
     auto [v] = row.get<int>();
-    sum+=v;
+    return sum+=v;
 };
 
 inline constexpr std::wstring_view wgroup_concat_default_delimiter{L","};

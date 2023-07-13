@@ -162,6 +162,13 @@ constexpr bool defer_false = DeferFalse<T...>::val;
 
 }
 
+template<typename X>
+DOCDB_CXX20_CONCEPT(AggregateFunction, requires (X fn, const typename X::InputType &input) {
+    {fn(input)} -> std::convertible_to<typename X::ResultType>;
+});
+
+
+
 
 
 #endif /* SRC_DOCDB_CONCEPTS_H_ */

@@ -25,10 +25,8 @@
 #include <cmath>
 namespace docdb {
 
-template<typename X>
-DOCDB_CXX20_CONCEPT(RowAggregateFunction, requires (X fn, typename X::AccumType &acc, const typename X::InputType &input) {
-    {fn(acc,input)};
-});
+
+
 
 
 namespace _details {
@@ -53,23 +51,21 @@ inline constexpr std::size_t aggregated_revision = AggregatedRevision<Args...>::
  * function. If you need to skip column, use Skip aggregation function
  *
  */
-template<RowAggregateFunction ... AgrTypes>
+template<AggregateFunction ... AgrTypes>
 struct AggregateRows {
-    using Accumulator = std::tuple<typename AgrTypes::AccumType ...>;
+    using InputType = Row;
+    using ResultType = std::tuple<typename AgrTypes::ResultType ...>;
     using ParsedRow = std::tuple<typename AgrTypes::InputType ...>;
     static constexpr std::size_t revision = _details::AggregatedRevision<AgrTypes...>::revision;
     std::tuple<AgrTypes ...> _state = {};
 
-
     template<std::size_t ... Is>
-    void do_accumulate(Accumulator &acc, const ParsedRow &in, std::index_sequence<Is...>) {
-        (std::get<Is>(_state).operator()(std::get<Is>(acc), std::get<Is>(in)),...);
+    auto do_accumulate(const ParsedRow &in, std::index_sequence<Is...>) {
+        return ResultType(std::get<Is>(_state)(std::get<Is>(in)) ...);
     }
 
-
-    void operator()(Accumulator &accum, const Row &row) {
-        ParsedRow data = row.get<ParsedRow>();
-        do_accumulate(accum, data, std::index_sequence_for<AgrTypes...>{});
+    ResultType operator()(const Row &row) {
+        return do_accumulate(row.get<ParsedRow>(), std::index_sequence_for<AgrTypes...>{});
     }
 
 
@@ -88,11 +84,12 @@ struct AggregateRows {
 template<typename Type = std::nullptr_t>
 struct Count {
     static constexpr std::size_t revision = 1;
-    using AccumType = std::size_t;
+    using ResultType = std::size_t;
     using InputType = Type;
+    std::size_t _state = 0;
 
-    void operator()(std::size_t &count, const Type &x) {
-        ++count;
+    std::size_t operator()(const Type &) {
+        return ++_state;
     }
 };
 
@@ -103,14 +100,14 @@ struct Count {
 template<typename Type>
 struct Sum {
     static constexpr std::size_t revision = 2;
-    using AccumType = Type;
+    using ResultType = Type;
     using InputType = Type;
+    Type _state = {};
 
-    void operator()(Type &sum, const Type &x) {
-        sum = sum + x;
+    const Type &operator()(const Type &x) {
+        return _state += x;
     }
 };
-
 
 ///Calculate average
 /**
@@ -121,17 +118,15 @@ struct Sum {
 template<typename Type, typename SumType = Type>
 struct Avg {
     static constexpr std::size_t revision = 3;
-    using AccumType = Type;
+    using ResultType = Type;
     using InputType = Type;
-    Sum<SumType> _sum = {};
+    Sum<SumType>  _sum =  {};
     Count<> _count = {};
-    typename Sum<SumType>::AccumType _sum_state = {};
-    typename Count<>::AccumType _count_state = {};
 
-    void operator()(Type &avg, const Type &x) {
-        _sum(_sum_state, x);
-        _count(_count_state, x);
-        avg = static_cast<Type>(_sum/_count);
+    Type operator()(Type &avg, const Type &x) {
+        _sum(static_cast<SumType>(x));
+        _count(std::nullptr_t());
+        return static_cast<Type>(_sum/_count);
     }
 
 };
@@ -143,11 +138,12 @@ struct Avg {
 template<typename Type>
 struct Sum2 {
     static constexpr std::size_t revision = 4;
-    using AccumType = Type;
+    using ResulType = Type;
     using InputType = Type;
+    Type _state = {};
 
-    void operator()(Type &sum, const Type &x) {
-        sum = sum + x*x;
+    const Type &operator()(const Type &x) {
+        return _state += x*x;
     }
 };
 
@@ -158,13 +154,16 @@ struct Sum2 {
 template<typename Type>
 struct Max {
     static constexpr std::size_t revision = 5;
-    using AccumType = Type;
+    using ResultType = Type;
     using InputType = Type;
-    bool _is_first = true;
+    Type _state = {};
+    bool _has_value = false;
 
-    void operator()(Type &a, const Type &x) {
-        a = (_is_first | a < x) ? x: a;
-        _is_first = false;
+
+    const Type &operator()( const Type &x) {
+        _state = (_has_value & _state > x) ? _state : x;
+        _has_value = true;
+        return _state;
     }
 
 };
@@ -176,13 +175,16 @@ struct Max {
 template<typename Type>
 struct Min {
     static constexpr std::size_t revision = 6;
-    using AccumType = Type;
+    using ResultType = Type;
     using InputType = Type;
-    bool _is_first = true;
+    Type _state = {};
+    bool _has_value = false;
 
-    void operator()(Type &a, const Type &x) {
-        a = (_is_first | a > x) ? x: a;
-        _is_first = false;
+
+    const Type &operator()( const Type &x) {
+        _state = (_has_value & _state < x) ? _state : x;
+        _has_value = true;
+        return _state;
     }
 };
 
@@ -193,13 +195,17 @@ struct Min {
 template<typename Type>
 struct First {
     static constexpr std::size_t revision = 7;
-    using AccumType = Type;
+    using ResultType = Type;
     using InputType = Type;
-    bool _is_first = true;
+    Type _state = {};
+    bool _has_value = false;
 
-    void operator()(Type &a, const Type &x) {
-        a = _is_first ? x: a;
-        _is_first = false;
+
+    const Type& operator()(Type &a, const Type &x) {
+        _state = _has_value  ? _state : x;
+        _has_value = true;
+        return _state;
+
     }
 };
 
@@ -210,11 +216,13 @@ struct First {
 template<typename Type>
 struct Last {
     static constexpr std::size_t revision = 8;
-    using AccumType = Type;
+    using ResultType = Type;
     using InputType = Type;
+    Type _state = {};
 
-    void operator()(Type &a, const Type &x) {
-        a = x;
+    const Type &operator()(Type &a, const Type &x) {
+        _state = x;
+        return _state;
     }
 };
 
@@ -226,10 +234,10 @@ struct Last {
 template<typename Type>
 struct Skip {
     static constexpr std::size_t revision = 9;
-    using AccumType = std::nullptr_t;
+    using ResultType = std::nullptr_t;
     using InputType = Type;
 
-    void operator()(std::nullptr_t &, const Type &x) {
+    ResultType operator()(const Type &) {
         //empty
     }
 
@@ -247,18 +255,18 @@ inline constexpr std::string_view group_concat_default_delimiter{","};
 template<typename Type = std::string_view, const std::basic_string_view<typename Type::value_type> *delimiter = &group_concat_default_delimiter>
 struct GroupConcat {
     static constexpr std::size_t revision = 9;
-    using AccumType = Type;
+    using ResultType = Type;
     using InputType = Type;
     using CharType = typename Type::value_type;
     using StrView = std::basic_string_view<CharType>;
-    std::basic_string<CharType> state;
+    std::basic_string<CharType> _state;
 
-    void operator()(Type &a, const Type &x) {
-        if (!state.empty()) {
-            state.append(*delimiter);
+    ResultType operator()(const Type &x) {
+        if (!_state.empty()) {
+            _state.append(*delimiter);
         }
-        state.append(StrView(x));
-        a = Type(state);
+        _state.append(StrView(x));
+        return Type(_state);
     }
 };
 
@@ -273,18 +281,18 @@ struct GroupConcat {
  * constexpr value (for pass double type value)
  * @tparam Agr aggregation function (or any other transformation)
  */
-template<auto val, typename Agr>
+template<auto val, AggregateFunction Agr>
 struct Scale {
     static constexpr std::size_t revision = 10;
-    using AccumType = typename Agr::AccumType;
+    using ResultType = typename Agr::ResultType;
     using InputType = typename Agr::InputType;
     Agr _state = {};
 
-    void operator()(AccumType &a, const InputType &x) {
+    decltype(auto) operator()(const InputType &x) {
         if constexpr(std::is_pointer_v<decltype(val)>) {
-            _state(a, *val * x);
+            return _state(*val * x);
         } else {
-            _state(a, val * x);
+            return _state(val * x);
         }
     }
 };
@@ -296,18 +304,18 @@ struct Scale {
  * @tparam val offset as integral constant or pointer to constexpr value
  * @tparam Agr aggregation function
  */
-template<auto val, typename Agr>
+template<auto val, AggregateFunction Agr>
 struct Offset {
     static constexpr std::size_t revision = 11;
-    using AccumType = typename Agr::AccumType;
+    using ResultType = typename Agr::ResultType;
     using InputType = typename Agr::InputType;
     Agr _state = {};
 
-    void operator()(AccumType &a, const InputType &x) {
+    decltype(auto) operator()(const InputType &x) {
         if constexpr(std::is_pointer_v<decltype(val)>) {
-            _state(a, x + *val);
+            return _state(x + *val);
         } else {
-            _state(a, x + val);
+            return _state(x + val);
         }
     }
 };
@@ -319,46 +327,46 @@ struct Offset {
  * @tparam val pointer to constant or integral constant
  * @tparam Agr aggregation function
  */
-template<auto val, typename Agr>
+template<auto val, AggregateFunction Agr>
 struct Invert {
     static constexpr std::size_t revision = 11;
-    using AccumType = typename Agr::AccumType;
+    using ResultType = typename Agr::ResultType;
     using InputType = typename Agr::InputType;
     Agr _state = {};
 
-    void operator()(AccumType &a, const InputType &x) {
+    decltype(auto) operator()(const InputType &x) {
         if constexpr(std::is_pointer_v<decltype(val)>) {
-            _state(a, *val - x);
+            return _state(*val - x);
         } else {
-            _state(a, *val - x);
+            return _state(*val - x);
         }
     }
 };
 
 
 ///Transform
-template<typename Agr, typename Agr::InputType (*fn)(const typename Agr::InputType &), std::size_t rev=13>
+template<AggregateFunction Agr, typename Agr::InputType (*fn)(const typename Agr::InputType &), std::size_t rev=13>
 struct Transform {
     static constexpr std::size_t revision = rev;
-    using AccumType = typename Agr::AccumType;
+    using ResultType = typename Agr::AccumType;
     using InputType = typename Agr::InputType;
     Agr _state = {};
 
-    void operator()(AccumType &a, const InputType &x) {
-        _state(a, fn(x));
+    decltype(auto) operator()( const InputType &x) {
+        return _state(fn(x));
     }
 };
 
-template<typename From, typename Agr>
+template<typename From, AggregateFunction Agr>
 struct Convert {
     static constexpr std::size_t revision = 12;
-    using AccumType = typename Agr::AccumType;
+    using ResultType = typename Agr::ResultType;
     using InputType = From;
     using TargetType = typename Agr::InputType;
     Agr _state = {};
 
-    void operator()(AccumType &a, const InputType &x) {
-        _state(a, static_cast<TargetType>(x));
+    decltype(auto) operator()(const InputType &x) {
+        return _state(static_cast<TargetType>(x));
     }
 };
 
@@ -377,23 +385,23 @@ struct Convert {
  *  Above example generates 5 columns count,sum, min, max, avg, from single column
  *  value
  */
-template<typename T, typename ... AgrFns>
+template<typename T, AggregateFunction ... AgrFns>
 struct Composite {
     static constexpr std::size_t revision = _details::AggregatedRevision<AgrFns...>::revision;
 
     using States = std::tuple<AgrFns...>;
-    using AccumType = std::tuple<typename AgrFns::AccumType ...>;
+    using ResultType = std::tuple<typename AgrFns::ResultType ...>;
     using InputTypes = std::tuple<typename AgrFns::InputType ...>;
     States _states = {};
     using InputType = T;
 
     template<std::size_t ... Is>
-    void do_accum(AccumType &acc, const InputType &val, std::index_sequence<Is...>) {
-        (std::get<Is>(_states).operator()(std::get<Is>(acc), static_cast<std::tuple_element_t<Is,InputTypes> >(val)),...);
+    ResultType do_accum(const InputType &val, std::index_sequence<Is...>) {
+        return ResultType(std::get<Is>(_states).operator()(static_cast<std::tuple_element_t<Is,InputTypes> >(val))...);
     }
 
-    void operator()(AccumType &accum, const InputType &x) {
-        do_accum(accum, x, std::index_sequence_for<AgrFns...>{});
+    ResultType operator()(const InputType &x) {
+        return do_accum(x, std::index_sequence_for<AgrFns...>{});
     }
 
 

@@ -2,19 +2,14 @@
 #ifndef SRC_DOCDB_GROUPBY_H_
 #define SRC_DOCDB_GROUPBY_H_
 
+#include "concepts.h"
+
 namespace docdb {
+
 
 namespace _details {
 
-//aggregate function -> void operator()(T &accum, Value val)
 
-///If T is lambda function, retrieves type of argument
-     template<typename T> struct DeduceArg;
-
-     template<typename _Res, typename _Tp, bool _Nx, typename A, typename ... Args>
-     struct DeduceArg< _Res (_Tp::*) (A &, Args ...) noexcept(_Nx) > {using type = A;};
-     template<typename _Res, typename _Tp, bool _Nx, typename A, typename ... Args>
-     struct DeduceArg< _Res (_Tp::*) (A &, Args ...) const noexcept(_Nx) > {using type = A;};
 
 
      template<typename X>
@@ -37,6 +32,34 @@ namespace _details {
      template<typename X>
      struct CombineRevision<X> {
          static constexpr std::size_t revision = 1UL<<X::revision;
+     };
+
+     template<typename T, typename X>
+     auto wrap_reference(X &&val) {
+         if constexpr(std::is_reference_v<T>) {
+             return &val;
+         } else {
+             return T(std::forward<X>(val));
+         }
+     }
+
+     template<typename T, typename X>
+     auto unwrap_refernece(X &&val) {
+         if constexpr(std::is_reference_v<T>) {
+             return T(*val);
+         } else {
+             return T(val);
+         }
+     }
+
+     template<typename AggrFn, typename T, bool b>
+     struct AggrResult {
+         using type = std::decay_t<T>;
+     };
+
+     template<typename AggrFn, typename T>
+     struct AggrResult<AggrFn, T, true> {
+         using type = typename AggrFn::ResultType;
      };
 
 }
@@ -90,7 +113,9 @@ struct GroupBy {
     class Recordset {
     public:
 
-        using AggrValueType = typename _details::DeduceArg<decltype(&AggrFn::operator())>::type;
+        using ResultTypeBase = std::invoke_result_t<AggrFn,decltype(std::declval<RC>().begin()->value)>;
+        using ResultType = typename _details::AggrResult<AggrFn, ResultTypeBase, AggregateFunction<AggrFn> >::type;
+
 
         ///Inicialize aggregator
         /**
@@ -106,12 +131,10 @@ struct GroupBy {
 
         ///Structure is returned as result of aggregated iteration
         struct ValueType {
-            ValueType(const Key &k):key(k.get<TupleType>()) {}
-
             ///Key - contains key in type passed as ColumnTuple
             ColumnTuple key;
             ///Value - contains aggregated value
-            AggrValueType value = {};
+            ResultType value;
         };
 
         ///Iterator - allows to read aggregated results (input iterator)
@@ -169,7 +192,6 @@ struct GroupBy {
     protected:
 
         using RCValue = decltype(std::declval<typename RC::Iterator>()->value);
-        static constexpr bool three_args_fn = _details::IteratorContainsID<typename RC::Iterator> && std::invocable<AggrFn, AggrValueType &,RCValue, DocID>;
         RC _rc;
         typename RC::Iterator _iter;
         typename RC::Iterator _end;
@@ -180,23 +202,23 @@ struct GroupBy {
             if (_iter == _end) return false;
             AggrFn aggrFn(_aggrFn);
             _result.reset();
-            _result.emplace(_iter->key);
-            if constexpr (three_args_fn) {
-                aggrFn(_result->value, _iter->value, _iter->id);
-            } else {
-                aggrFn(_result->value, _iter->value);
-            }
+            ColumnTuple kbase(_iter->key.template get<TupleType>());
+            auto cur_val = _details::wrap_reference<ResultTypeBase>(
+                    aggrFn(_iter->value)
+            );
             ++_iter;
             while (_iter != _end) {
                 ColumnTuple k(_iter->key.template get<TupleType>());
-                if (k != _result->key) break;
-                if constexpr (three_args_fn) {
-                    aggrFn(_result->value, _iter->value, _iter->id);
-                } else {
-                    aggrFn(_result->value, _iter->value);
-                }
+                if (k != kbase) break;
+                cur_val = _details::wrap_reference<ResultTypeBase>(
+                    aggrFn(_iter->value)
+                );
                 ++_iter;
             }
+            _result.emplace(ValueType{
+                kbase,
+                _details::unwrap_refernece<ResultTypeBase>(cur_val)
+            });
             return true;
         }
 
@@ -212,15 +234,18 @@ struct GroupBy {
 
 
     template<DocumentDef _ValueDef>
-    using AggregatorView = IndexViewGen<_ValueDef, IndexViewBaseEmpty>;
+    using AggregatorView = IndexViewGen<_ValueDef, IndexViewBaseEmpty<_ValueDef> >;
 
-    template<typename MapSrc, typename AggrFn, DocumentDef _ValueDef = RowDocument, bool auto_update = false>
+    template<typename MapSrc, AggregateFunction AggrFn, DocumentDef _ValueDef = RowDocument, bool auto_update = false>
     class Materialized: public AggregatorView<_ValueDef> {
     public:
 
+        using ResultTypeBase = std::invoke_result_t<AggrFn,decltype(std::declval<MapSrc>().select(std::declval<Key>()).begin()->value)>;
+        using ResultType = typename AggrFn::ResultType;
+
+
         using DocType = typename MapSrc::ValueType;
         using ValueType = typename _ValueDef::Type;
-        using AggrValueType = typename _details::DeduceArg<decltype(&AggrFn::operator())>::type;
 
         using Revision = std::size_t;
         static constexpr Revision revision = AggrFn::revision;
@@ -258,6 +283,8 @@ struct GroupBy {
         }
 
     protected:
+
+
 
         class TaskControl: public AbstractBatchNotificationListener {
         public:
@@ -364,15 +391,22 @@ struct GroupBy {
                 RawKey key(this->_kid, keydata);
                 Row val(RowView(rs.raw_value()));
                 Key agrkey(val);
-                AggrFn aggrFn = {};
-                AggrValueType aggrValue = {};
-                bool any_cycle = false;
-                for (const auto &row: snapview.select(agrkey)) {
-                    aggrFn(aggrValue, row.value);
-                    any_cycle = true;
-                }
-                if (any_cycle) {
-                    ValueType v(aggrValue);
+                auto rc = snapview.select(agrkey);
+                auto iter = rc.begin();
+                auto iterend = rc.end();
+                if (iter != iterend) {
+                    AggrFn aggrFn = {};
+                    auto cur_val = _details::wrap_reference<ResultTypeBase>(
+                            aggrFn(iter->value)
+                    );
+                    ++iter;
+                    while (iter != iterend) {
+                        cur_val = _details::wrap_reference<ResultTypeBase>(
+                            aggrFn(iter->value)
+                        );
+                        ++iter;
+                    }
+                    ValueType v((ResultType((_details::unwrap_refernece<ResultTypeBase>(cur_val)))));
                     auto &buff = b.get_buffer();
                     _ValueDef::to_binary(v, std::back_inserter(buff));
                     b.Put(key, buff);
@@ -386,7 +420,7 @@ struct GroupBy {
         }
 
         auto make_observer() {
-             return [&](Batch &b, const Key &k, const DocType &value, DocID docid, bool erase) {
+             return [&](Batch &b, const Key &k, bool ) {
                  _index_lock.lock_shared();
 
                  TupleType kt = k.get<TupleType>();

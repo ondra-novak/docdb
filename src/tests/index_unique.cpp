@@ -10,7 +10,7 @@ void check_result(const Index &index, const std::pair<std::string_view, int> (&v
     for (const auto &row: index.select_all()) {
         CHECK_LESS(i , N);
         auto [k] = row.key.template get<std::string_view>();
-        auto [v] = row.value.value.get();
+        auto [v] = row.value.get();
         CHECK_EQUAL(k, vals[i].first);
         CHECK_EQUAL(v, vals[i].second);
         ++i;
@@ -57,9 +57,8 @@ void test1() {
     {
         docdb::Batch b;
         storage.put(b, {"aaa", 13}, id);
-        CHECK_EXCEPTION(docdb::DuplicateKeyException, 
-            storage.put(b, {"aaa", 70}, id);
-            db->commit_batch(b));
+        CHECK_EXCEPTION(docdb::DeadlockKeyException, storage.put(b, {"aaa", 70}, id);
+        db->commit_batch(b));
     }
 
     check_result(index, {

@@ -35,7 +35,7 @@ Note that iterators are templates. This is important to note because different p
 
 * **StringDocument** - The document is of type `std::string`
 * **RowDocument** - A document represents a database row that can have multiple columns of different types. More information on the `Row` class
-* **FixedRowDocument<> - An extension to `RowDocument` where we can specify the types of individual columns using template parameters. `FixedRowDocument<int, double, std::string, bool>`
+* **FixedRowDocument<>** - An extension to `RowDocument` where we can specify the types of individual columns using template parameters. `FixedRowDocument<int, double, std::string, bool>`
 * **StructuredDocument** - A structured document that resembles a javascript object in structure, i.e. an object that can store numbers, strings, fields indexed by order and by string. There is a function for conversion from and to JSON format. See `Structured` class
 
 ## Database initialization and database instance

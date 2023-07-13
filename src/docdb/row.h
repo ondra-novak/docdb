@@ -17,7 +17,7 @@ public:
     RowView(const std::string_view &x):std::string_view(x) {}
 };
 
-using RowBuffer = Buffer<char, 64>;
+using RowBuffer = Buffer<char, 40>;
 
 template<typename T>
 struct ConstructVariantHelper {
