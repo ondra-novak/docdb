@@ -36,7 +36,7 @@ public:
     {}
 
 
-    using TransactionObserver = std::function<void(Batch &b, const Key& key, const ValueType &value, bool erase)>;
+    using TransactionObserver = std::function<void(Batch &b, const Key& key, bool erase)>;
 
     void register_transaction_observer(TransactionObserver obs) {
         _tx_observers.push_back(std::move(obs));
@@ -76,25 +76,13 @@ protected:
         _ValueDef::to_binary(val, std::back_inserter(buff));
         key.change_kid(this->_kid);
         b.Put(key, buff);
-        for (const auto &c: _tx_observers) c(b,key,val, false);
+        for (const auto &c: _tx_observers) c(b,key, false);
     }
 
     void clear(Batch &b, Key &key) {
         key.change_kid(this->_kid);
-        //no observers, so map deletion is way more easier
-        if (_tx_observers.empty()) {
-            b.Delete(key);
-            return;
-        }
-        //we need to pickup value from the map to be send to the observer
-        auto lkp = this->find(key);
-        //if not found, nothing to delete
-        if (lkp.has_value()) {
-            //delete key
-            b.Delete(key);
-            //send to observers
-            for (const auto &c: _tx_observers) c(b,key,*lkp, true);
-        }
+        for (const auto &c: _tx_observers) c(b,key,true);
+        b.Delete(key);
     }
 
 

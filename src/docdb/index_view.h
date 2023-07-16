@@ -6,7 +6,6 @@
 #include "recordset.h"
 #include "row.h"
 
-#include "storage_concept.h"
 
 namespace docdb {
 
@@ -58,6 +57,30 @@ enum class IndexType {
 };
 
 
+template<typename T>
+DOCDB_CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
+    {x.get_db() } -> std::convertible_to<PDatabase>;
+    {x.find(std::declval<DocID>())->document } -> std::convertible_to<const typename T::DocType &>;
+    {x.find(std::declval<DocID>()) } -> std::convertible_to<bool>;
+    {x.select_all()} -> std::derived_from<RecordsetBase>;
+    {x.select_from(std::declval<DocID>())} -> std::derived_from<RecordsetBase>;
+});
+
+template<typename T>
+DOCDB_CXX20_CONCEPT(DocumentStorageType , requires(T x) {
+    requires DocumentStorageViewType<T>;
+    {x.register_transaction_observer(std::declval<std::function<void(Batch &, const typename T::Update &)> >())} -> std::same_as<void>;
+    {x.rescan_for(std::declval<std::function<void(Batch &, const typename T::Update &)> >(), std::declval<DocID>())};
+    {x.get_rev()} -> std::same_as<DocID>;
+    {T::Update::old_doc}->std::convertible_to<const typename T::DocType *>;
+    {T::Update::new_doc}->std::convertible_to<const typename T::DocType *>;
+    {T::Update::old_doc_id}->std::convertible_to<DocID>;
+    {T::Update::old_old_doc_id}->std::convertible_to<DocID>;
+    {T::Update::new_doc_id}->std::convertible_to<DocID>;
+});
+
+
+
 template<typename _ValueDef>
 struct ValueAndDocID {
     using ValueType = typename _ValueDef::Type;
@@ -107,11 +130,11 @@ public:
         typename DocDef::Type value;
     };
 
-    class RecordSet : public RecordSetBase {
+    class Recordset : public RecordsetBase {
     public:
-        using RecordSetBase::RecordSetBase;
+        using RecordsetBase::RecordsetBase;
 
-        using Iterator = RecordSetIterator<RecordSet, IteratorValueType >;
+        using Iterator = RecordsetIterator<Recordset, IteratorValueType >;
 
         auto begin() {
             return Iterator(this, false);
@@ -127,8 +150,8 @@ public:
 
     };
 
-    RecordSet create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSet::Config &&config) const {
-        return RecordSet(std::move(iter), std::move(config));
+    Recordset create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, typename Recordset::Config &&config) const {
+        return Recordset(std::move(iter), std::move(config));
     }
 
 };
@@ -146,13 +169,13 @@ public:
         DocID id;
     };
 
-    class RecordSet: public RecordSetBase {
+    class Recordset: public RecordsetBase {
     public:
-        RecordSet(_Storage &stor, std::unique_ptr<leveldb::Iterator> &&iter, typename RecordSetBase::Config &&config)
-        :RecordSetBase(std::move(iter), std::move(config))
+        Recordset(_Storage &stor, std::unique_ptr<leveldb::Iterator> &&iter, typename RecordsetBase::Config &&config)
+        :RecordsetBase(std::move(iter), std::move(config))
         ,_storage(stor) {}
 
-        using Iterator = RecordSetIterator<RecordSet, IteratorValueType >;
+        using Iterator = RecordsetIterator<Recordset, IteratorValueType >;
 
 
         IteratorValueType get_item() const {
@@ -174,9 +197,9 @@ public:
         [[no_unique_address]] DocIDExtract _extract;
     };
 
-    RecordSet create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, RecordSetBase::Config &&config) const {
+    Recordset create_recordset(std::unique_ptr<leveldb::Iterator> &&iter, RecordsetBase::Config &&config) const {
         if constexpr(hide_dup_sz > 0) {
-            config.filter = [prev = std::string()](const RecordSetBase &b) mutable {
+            config.filter = [prev = std::string()](const RecordsetBase &b) mutable {
                 std::string_view r = b.raw_key();
                 if (r.size() <= hide_dup_sz) return false;
                 r = r.substr(0, r.size()-hide_dup_sz);
@@ -185,7 +208,7 @@ public:
                 return true;
             };
         }
-        return RecordSet(_storage, std::move(iter), std::move(config));
+        return Recordset(_storage, std::move(iter), std::move(config));
     }
 
     _Storage &get_storage() const {
@@ -224,7 +247,7 @@ template<typename _ValueDef, typename IndexBase>
 class IndexViewGen: public ViewBase<_ValueDef>, public IndexBase {
 public:
 
-    using RecordSet = typename IndexBase::RecordSet;
+    using Recordset = typename IndexBase::Recordset;
 
     template<typename ... Args>
     IndexViewGen(const PDatabase &db,KeyspaceID kid,Direction dir,const PSnapshot &snap, bool no_cache, Args && ... baseArgs)
@@ -246,7 +269,7 @@ public:
         return IndexViewGen(this->_db, this->_kid, isForward(this->_dir)?Direction::backward:Direction::forward, this->_snap, this->_no_cache, static_cast<const IndexBase &>(*this));
     }
 
-    RecordSet select_all(Direction dir = Direction::normal)const  {
+    Recordset select_all(Direction dir = Direction::normal)const  {
         if (isForward(changeDirection(this->_dir, dir))) {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap,this->_no_cache),{
@@ -262,8 +285,8 @@ public:
         }
     }
 
-    RecordSet select_from(Key &&key, Direction dir = Direction::normal) {return select_from(key,dir);}
-    RecordSet select_from(Key &key, Direction dir = Direction::normal) {
+    Recordset select_from(Key &&key, Direction dir = Direction::normal) {return select_from(key,dir);}
+    Recordset select_from(Key &key, Direction dir = Direction::normal) {
         key.change_kid(this->_kid);
         if (isForward(changeDirection(this->_dir, dir))) {
             return IndexBase::create_recordset(
@@ -280,8 +303,8 @@ public:
             });
         }
     }
-    RecordSet select(Key &&key, Direction dir = Direction::normal) const {return select(key,dir);}
-    RecordSet select(Key &key, Direction dir = Direction::normal) const {
+    Recordset select(Key &&key, Direction dir = Direction::normal) const {return select(key,dir);}
+    Recordset select(Key &key, Direction dir = Direction::normal) const {
         key.change_kid(this->_kid);
         if (isForward(changeDirection(this->_dir,dir))) {
             return IndexBase::create_recordset(
@@ -299,10 +322,10 @@ public:
 
     }
 
-    RecordSet select_between(Key &&from, Key &&to, LastRecord last_record = LastRecord::excluded)const  {return select_between(from, to, last_record);}
-    RecordSet select_between(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) const {return select_between(from, to, last_record);}
-    RecordSet select_between(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) const {return select_between(from, to, last_record);}
-    RecordSet select_between(Key &from, Key &to, LastRecord last_record = LastRecord::excluded)const  {
+    Recordset select_between(Key &&from, Key &&to, LastRecord last_record = LastRecord::excluded)const  {return select_between(from, to, last_record);}
+    Recordset select_between(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) const {return select_between(from, to, last_record);}
+    Recordset select_between(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) const {return select_between(from, to, last_record);}
+    Recordset select_between(Key &from, Key &to, LastRecord last_record = LastRecord::excluded)const  {
         from.change_kid(this->_kid);
         to.change_kid(this->_kid);
         if (from <= to) {
@@ -340,10 +363,10 @@ public:
         }
     }
 
-    RecordSet operator > (Key &&x) const {return select_greater_then(x);}
-    RecordSet operator > (Key &x) const {return select_greater_then(x);}
-    RecordSet select_greater_then (Key &&x) const {return select_less_then (x);}
-    RecordSet select_greater_then (Key &x) const {
+    Recordset operator > (Key &&x) const {return select_greater_then(x);}
+    Recordset operator > (Key &x) const {return select_greater_then(x);}
+    Recordset select_greater_then (Key &&x) const {return select_less_then (x);}
+    Recordset select_greater_then (Key &x) const {
         x.change_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::create_recordset(
@@ -360,10 +383,10 @@ public:
 
         }
     }
-    RecordSet operator < (Key &&x) const {return select_less_then(x);}
-    RecordSet operator < (Key &x) const {return select_less_then(x);}
-    RecordSet select_less_then (Key &&x) const {return select_less_then (x);}
-    RecordSet select_less_then (Key &x) const {
+    Recordset operator < (Key &&x) const {return select_less_then(x);}
+    Recordset operator < (Key &x) const {return select_less_then(x);}
+    Recordset select_less_then (Key &&x) const {return select_less_then (x);}
+    Recordset select_less_then (Key &x) const {
         x.change_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::create_recordset(
@@ -380,10 +403,10 @@ public:
 
         }
     }
-    RecordSet operator >= (Key &&x) const {return select_greater_or_equal_then(x);}
-    RecordSet operator >= (Key &x) const {return select_greater_or_equal_then(x);}
-    RecordSet select_greater_or_equal_then (Key &&x) const {return select_greater_or_equal_then (x);}
-    RecordSet select_greater_or_equal_then (Key &x) const {
+    Recordset operator >= (Key &&x) const {return select_greater_or_equal_then(x);}
+    Recordset operator >= (Key &x) const {return select_greater_or_equal_then(x);}
+    Recordset select_greater_or_equal_then (Key &&x) const {return select_greater_or_equal_then (x);}
+    Recordset select_greater_or_equal_then (Key &x) const {
         x.change_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::create_recordset(
@@ -400,10 +423,10 @@ public:
 
         }
     }
-    RecordSet operator <= (Key &&x) const {return select_less_or_equal_then(x);}
-    RecordSet operator <= (Key &x) const {return select_less_or_equal_then(x);}
-    RecordSet select_less_or_equal_then (Key &&x) const {return select_less_or_equal_then (x);}
-    RecordSet select_less_or_equal_then (Key &x) const {
+    Recordset operator <= (Key &&x) const {return select_less_or_equal_then(x);}
+    Recordset operator <= (Key &x) const {return select_less_or_equal_then(x);}
+    Recordset select_less_or_equal_then (Key &&x) const {return select_less_or_equal_then (x);}
+    Recordset select_less_or_equal_then (Key &x) const {
         x.change_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::create_recordset(
@@ -420,10 +443,10 @@ public:
 
         }
     }
-    RecordSet operator == (Key &&x) const {return select_equal_to(x);}
-    RecordSet operator == (Key &x) const {return select_equal_to(x);}
-    RecordSet select_equal_to (Key &&x) const {return select_equal_to (x);}
-    RecordSet select_equal_to (Key &x) const {return select(x);}
+    Recordset operator == (Key &&x) const {return select_equal_to(x);}
+    Recordset operator == (Key &x) const {return select_equal_to(x);}
+    Recordset select_equal_to (Key &&x) const {return select_equal_to (x);}
+    Recordset select_equal_to (Key &x) const {return select(x);}
 
 };
 

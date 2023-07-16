@@ -28,18 +28,18 @@ void test1() {
 
         auto d = view.find(d2);
         CHECK(d.has_value());
-        CHECK_EQUAL(d->content,"world");
+        CHECK_EQUAL(d->document,"world");
         d = view.find(d4);
         CHECK(d.has_value());
-        CHECK_EQUAL(d->content,"foo");
+        CHECK_EQUAL(d->document,"foo");
         d =view.find(d3);
         CHECK(d.has_value());
-        CHECK_EQUAL(d->content,"bar");
+        CHECK_EQUAL(d->document,"bar");
 
         auto d3_new = storage.put("baz", d3);
         d = view.find(d3_new);
         CHECK(d.has_value());
-        CHECK_EQUAL(d->content,"baz");
+        CHECK_EQUAL(d->document,"baz");
         CHECK_EQUAL(d->previous_id,d3);
 
         storage.compact();
@@ -64,7 +64,7 @@ void test1() {
         {
             CHECK_EQUAL(row.id, pt->id);
             CHECK_EQUAL(row.previous_id, pt->prevId);
-            CHECK_EQUAL(row.content, pt->text);
+            CHECK_EQUAL(row.document, pt->text);
             pt++;
         }
 

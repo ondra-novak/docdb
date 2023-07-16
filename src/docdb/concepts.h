@@ -15,7 +15,7 @@ namespace docdb {
 /*
  Some IDEs (Eclipse for example) fails to parse concepts
  So we introduce a macro as workaround
- Please add any other macros emited by IDEs' parsers if you
+ Please add any other macros emitted by IDEs' parsers if you
  find self in the same situation
 */
 

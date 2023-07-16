@@ -309,6 +309,17 @@ public:
 
 }
 
+
+inline leveldb::Slice to_slice(const std::string_view &v) {
+    return {v.data(), v.size()};
+}
+
+inline std::string_view to_string(const leveldb::Slice &slice) {
+    return {slice.data(), slice.size()};
+}
+
+
+
 template<typename Stream, std::size_t N>
 Stream &operator << (Stream &s, const docdb::Buffer<char, N> &buffer) {
     return s << buffer.operator std::string_view();

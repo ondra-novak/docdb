@@ -10,31 +10,6 @@
 #include "index_view.h"
 namespace docdb {
 
-template<typename ValueDef>
-class AggregatedValue: public FoundRecord<ValueDef> {
-public:
-
-    AggregatedValue(Batch &b, RawKey &rk, RawKey &sysk, FoundRecord<ValueDef> &&v)
-        :FoundRecord<ValueDef>(std::move(v)),b(b),key(std::move(rk)),sysk(std::move(sysk)) {}
-    void put(const typename ValueDef::Type &new_val) {
-        auto &buff = b.get_buffer();
-        ValueDef::to_binary(new_val, std::back_inserter(buff));
-        b.Put(key, buff);
-        b.Put(sysk,"");
-    }
-
-    void erase() {
-        b.Delete(key);
-        b.Put(sysk,"");
-    }
-
-protected:
-    Batch &b;
-    RawKey key;
-    RawKey sysk;
-
-
-};
 
 template<typename Fn, typename ValueDef>
 DOCDB_CXX20_CONCEPT(AggrMergeFn, requires(Fn fn, FoundRecord<ValueDef> value) {
@@ -43,8 +18,8 @@ DOCDB_CXX20_CONCEPT(AggrMergeFn, requires(Fn fn, FoundRecord<ValueDef> value) {
 
 template<DocumentDef _ValueDef>
 struct AggregatorEmitTemplate {
-    template<typename MergeFn>
-    AggregatedValue<_ValueDef> operator()(Key);
+    struct Unspec{};
+    Unspec operator()(Key);
     DocID id() const;
     DocID prev_id() const;
 };
@@ -64,7 +39,52 @@ struct IncAggregatorFunction: decltype(function) {
 template<DocumentDef _ValueDef>
 using MapView = IndexViewGen<_ValueDef, IndexViewBaseEmpty<_ValueDef> >;
 
-
+///Implements materialized aggregated view where aggregation are done incrementally
+/**
+ * This type of aggregator is ideal for sums and averages, whethever you can update
+ * aggregation depend on whether the document is added or removed. You can also
+ * perform other aggregations in environment, where documents are not removed.
+ * Aggregation must be performed incrementally. Non-incremental aggreagation
+ * will not work properly
+ *
+ * Incremental aggregator works as an unique index. During indexing, you
+ * can read the current value for the given key and you can put update of the
+ * value. For example if you calculates sum aggregation, you just add new value
+ * to a current sum and put the new sum value back to the index
+ *
+ * @tparam Storage Source storage type
+ * @tparam _IndexFn Index function see below
+ * @tparam _ValueDef Definition of value (document type), default is RowDocument
+ *
+ * The index function is a callable class of following declaration
+ *
+ * @code
+ * struct IndexFn {
+ *      static constexpr IndexRevision revision = 1;
+ *      template<typename Emit>
+ *      void operator()(Emit emit, const Document &doc) const {
+ *          auto key = ....; //key from doc
+ *          auto value = ....;
+ *          auto cur_value_row = emit(key);
+ *          if (emit.erase) {
+ *              if (cur_value_row) {
+ *                  auto cur_value = cur_value_row.get<>();
+ *                  auto new_value = cur_value - value;
+ *                  cur_value_row.put(new_value);
+ *              }
+ *          } else {
+ *              if (cur_value_row) {
+ *                  auto cur_value = cur_value_row.get<>();
+ *                  auto new_value = cur_value + value;
+ *                  cur_value_row.put(new_value);
+ *              } else {
+ *                  cur_value_row.put(value);
+ *              }
+ *          }
+ *      }
+ * };
+ * @endcode
+ */
 template<DocumentStorageType Storage, typename _IndexFn, DocumentDef _ValueDef = RowDocument>
 DOCDB_CXX20_REQUIRES(IndexFn<_IndexFn, Storage, _ValueDef>)
 class IncrementalAggregator: public MapView<_ValueDef> {
@@ -100,6 +120,9 @@ public:
         while (false);
         this->_storage.register_transaction_observer(make_observer());
     }
+
+    IncrementalAggregator(const IncrementalAggregator &) = delete;
+    IncrementalAggregator &operator=(const IncrementalAggregator &) = delete;
 
 
 
@@ -148,6 +171,8 @@ public:
             _b.Delete(_key);
         }
 
+        CurrentValue(const CurrentValue &) = delete;
+        CurrentValue &operator=(const CurrentValue &) = delete;
 
     protected:
         IncrementalAggregator &_owner;

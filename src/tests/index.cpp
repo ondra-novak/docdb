@@ -48,7 +48,7 @@ void test1() {
        CHECK_EQUAL(x.id, 2);
        auto [v] = x.value.get<std::size_t>();
        CHECK_EQUAL(v, 5);
-       CHECK_EQUAL(index1.get_document(x)->content, "world");
+       CHECK_EQUAL(index1.get_document(x)->document, "world");
        fnd++;
     }
 
@@ -62,7 +62,7 @@ void test1() {
                 auto &x = *iter;
                 CHECK_EQUAL(x.id,3);
                 auto docref = index2.get_document(x);
-                CHECK_EQUAL(docref->content, "bar");
+                CHECK_EQUAL(docref->document, "bar");
             }
             ++iter;
             CHECK(iter != recordset.end());
@@ -70,17 +70,18 @@ void test1() {
                 auto &x = *iter;
                 CHECK_EQUAL(x.id,4);
                 auto docref = index2.get_document(x);
-                CHECK_EQUAL(docref->content, "foo");
+                CHECK_EQUAL(docref->document, "foo");
             }
             ++iter;
             CHECK(iter == recordset.end());
         }
         {
+            auto [index1_view, storage_view] = docdb::make_snapshot(index1,storage);
             docdb::DocID id = 2;
-            auto lk = index1.find({"world",id});
+            auto lk = index1_view.find({"world",id});
             CHECK(lk);
-            auto docref = storage.find(id);
-            CHECK_EQUAL(docref->content, "world");
+            auto docref = storage_view.find(id);
+            CHECK_EQUAL(docref->document, "world");
         }
         storage.put("world2",d2);
         {

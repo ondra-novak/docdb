@@ -65,7 +65,8 @@ public:
         this->_storage.register_transaction_observer(make_observer());
     }
 
-
+    Indexer(const Indexer &) = delete;
+    Indexer &operator=(const Indexer &) = delete;
 
     using TransactionObserver = std::function<void(Batch &b, const Key& key, bool erase)>;
 

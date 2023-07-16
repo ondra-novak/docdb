@@ -2,7 +2,6 @@
 #ifndef SRC_DOCDB_RECORDSET_H_
 #define SRC_DOCDB_RECORDSET_H_
 #include "key.h"
-#include "leveldb_adapters.h"
 
 #include <leveldb/iterator.h>
 #include <memory>
@@ -12,6 +11,9 @@
 
 
 namespace docdb {
+
+
+
 
 enum class Direction {
     ///iterate forward
@@ -78,8 +80,8 @@ static constexpr bool isForward(Direction dir) {
 
 
 
-template<typename RecordSet, typename ValueType>
-class RecordSetIterator{
+template<typename Recordset, typename ValueType>
+class RecordsetIterator{
 public:
 
     using iterator_category = std::input_iterator_tag;
@@ -88,10 +90,10 @@ public:
     using pointer = void;
     using reference = void;
 
-    RecordSetIterator () = default;
-    RecordSetIterator (RecordSet *coll, bool is_end):_coll(coll), _is_end(is_end || _coll->empty()) {}
-    RecordSetIterator (const RecordSetIterator &other):_coll(other._coll),_is_end(other._is_end) {}
-    RecordSetIterator &operator=(const RecordSetIterator &other) {
+    RecordsetIterator () = default;
+    RecordsetIterator (Recordset *coll, bool is_end):_coll(coll), _is_end(is_end || _coll->empty()) {}
+    RecordsetIterator (const RecordsetIterator &other):_coll(other._coll),_is_end(other._is_end) {}
+    RecordsetIterator &operator=(const RecordsetIterator &other) {
         if (this != &other) {
             _coll = other._coll;
             _is_end = other._is_end;
@@ -99,17 +101,17 @@ public:
         }
     }
 
-    bool operator==(const RecordSetIterator &other) const {
+    bool operator==(const RecordsetIterator &other) const {
         return _coll == other._coll && _is_end == other._is_end;
     }
-    RecordSetIterator &operator++() {
+    RecordsetIterator &operator++() {
         _is_end = !_coll->next();
         _val.reset();
         return *this;
     }
 
-    RecordSetIterator operator++(int) {
-        RecordSetIterator ret = *this;
+    RecordsetIterator operator++(int) {
+        RecordsetIterator ret = *this;
         _is_end = !_coll->next();
         _val.reset();
         return ret;
@@ -124,7 +126,7 @@ public:
     }
 
 protected:
-    RecordSet *_coll = nullptr;
+    Recordset *_coll = nullptr;
     bool _is_end = true;
     mutable std::optional<ValueType> _val;
     const ValueType &get_value() const {
@@ -138,13 +140,13 @@ protected:
 
 
 
-class RecordSetBase {
+class RecordsetBase {
 
 
 public:
 
     ///Filter function - returns false to skip record
-    using Filter = std::function<bool(const RecordSetBase &)>;
+    using Filter = std::function<bool(const RecordsetBase &)>;
 
     struct Config {
         std::string_view range_start;
@@ -154,7 +156,7 @@ public:
         Filter filter = {};
     };
 
-    RecordSetBase(std::unique_ptr<leveldb::Iterator> &&iter, const Config &config)
+    RecordsetBase(std::unique_ptr<leveldb::Iterator> &&iter, const Config &config)
         :_iter(std::move(iter))
         ,_range_beg(config.range_start)
         ,_range_end(config.range_end)
@@ -292,10 +294,10 @@ public:
      * More filters can be added
      */
     template<typename Fn>
-    DOCDB_CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, const RecordSetBase &>, bool>)
+    DOCDB_CXX20_REQUIRES(std::convertible_to<std::invoke_result_t<Fn, const RecordsetBase &>, bool>)
     void add_filter(Fn &&fn) {
         if (_filter) {
-            _filter = [a = std::move(_filter), b = std::move(fn)](const RecordSetBase &rc){
+            _filter = [a = std::move(_filter), b = std::move(fn)](const RecordsetBase &rc){
                 return a(rc) && b(rc);
             };
         } else {

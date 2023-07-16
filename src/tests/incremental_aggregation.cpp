@@ -3,7 +3,7 @@
 
 #include "memdb.h"
 
-#include <docdb/inc_aggr.h>
+#include <docdb/incremental_aggregator.h>
 
 static std::pair<std::string_view,int> words[] = {
         {"feed",56},

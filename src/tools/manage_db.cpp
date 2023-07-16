@@ -113,7 +113,7 @@ static void print_list_tables(const docdb::PDatabase &db) {
             purpose_text = buff;
         }
         int kid = row.second.first;
-        docdb::RecordSetBase rc(db->make_iterator(),{
+        docdb::RecordsetBase rc(db->make_iterator(),{
                 docdb::RawKey(kid),
                 docdb::RawKey(kid+1),
                 docdb::FirstRecord::included,
@@ -391,7 +391,7 @@ struct RecordsetList {
                 from, to,docdb::FirstRecord::included,docdb::LastRecord::excluded
         }), p(p), db(db), _dir(docdb::Direction::forward) {}
 
-    docdb::RecordSetBase rc;
+    docdb::RecordsetBase rc;
     docdb::Purpose p;
     docdb::PDatabase db;
 
@@ -565,7 +565,7 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
                         std::cerr << "Replaced document: " << r->previous_id << std::endl;
                     }
                     std::cout << "```" <<std::endl;
-                    std::cout << make_printable(r->content,false, true) << std::endl;
+                    std::cout << make_printable(r->document,false, true) << std::endl;
                     std::cout << "```" <<std::endl;
                     std::cerr << std::endl;
                 }
@@ -575,7 +575,7 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
     } else {
         auto r =db->get_as_document<docdb::FoundRecord<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(iter->second.first, id),{});
         if (r) {
-            std::cout << make_printable(r->content,false, true) << std::endl;
+            std::cout << make_printable(r->document,false, true) << std::endl;
         } else {
             std::cerr << "Document was not found in the collection: " << name << std::endl;
         }

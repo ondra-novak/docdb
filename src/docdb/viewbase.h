@@ -164,6 +164,36 @@ protected:
 
 };
 
+namespace _details {
+
+    template<typename T, typename ... Args>
+    PSnapshot create_snapshot_object(const T &view, const Args & ...) {
+        return view.get_db()->make_snapshot();
+    }
+}
+
+///create snapshot for multiple views
+/**
+ * @param views multiple views, indexes or storages to make snapshot
+ * @return tuple carrying current snapshot (read only views) for given views, indexes and storages
+ */
+template<typename ... Args>
+auto make_snapshot(const Args &... views) {
+    PSnapshot snap = _details::create_snapshot_object(views...);
+    return std::make_tuple(views.get_snapshot(snap,false)...);
+}
+
+///create snapshot for multiple views. Read data will not be cached
+/**
+ * @param views multiple views, indexes or storages to make snapshot
+ * @return tuple carrying current snapshot (read only views) for given views, indexes and storages
+ */
+template<typename ... Args>
+auto make_snapshot_nocache(const Args &... views) {
+    PSnapshot snap = _details::create_snapshot_object(views...);
+    return std::make_tuple(views.get_snapshot(snap,true)...);
+}
+
 
 }
 

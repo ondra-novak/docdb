@@ -232,7 +232,7 @@ public:
         auto next = docrow.id+1;
         while (cur < next && !_next_id.compare_exchange_weak(cur, next, std::memory_order_relaxed));
         DocRecordT<_DocDef> d = DocRecordDef<_DocDef>::from_binary(docrow.data.data(), docrow.data.data()+docrow.data.size());
-        const DocType *doc = d.has_value?&d.content:nullptr;
+        const DocType *doc = d.has_value?&d.document:nullptr;
         write(docrow.id, b, doc, d.previous_id);
     }
 
@@ -240,7 +240,7 @@ public:
       void rescan_for(const TransactionObserver &observer, DocID start_doc = 0) {
           Batch b;
           for (const auto &vdoc: this->select_from(start_doc, Direction::forward)) {
-              const DocType *doc =  vdoc.deleted?nullptr:&vdoc.content;
+              const DocType *doc =  vdoc.deleted?nullptr:&vdoc.document;
               if constexpr(std::is_void_v<decltype(update_for(observer, b, vdoc.id, doc, vdoc.previous_id))>) {
                   update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
               } else {
@@ -272,7 +272,7 @@ public:
     void compact(std::size_t n=0, bool deleted = false) {
         Batch b;
         std::unordered_map<DocID, std::size_t> refs;
-        RecordSetBase rs(this->_db->make_iterator({},true), {
+        RecordsetBase rs(this->_db->make_iterator({},true), {
                 RawKey(this->_kid+1),
                 RawKey(this->_kid),
                 FirstRecord::excluded,

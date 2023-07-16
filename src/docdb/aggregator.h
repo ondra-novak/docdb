@@ -6,6 +6,17 @@
 
 namespace docdb {
 
+template<typename T>
+DOCDB_CXX20_CONCEPT(AggregatorSource, requires(T x) {
+    typename T::ValueType;
+    {x.get_db()} -> std::convertible_to<PDatabase>;
+    {x.register_transaction_observer([](Batch &b, const Key& key, bool erase){})};
+    {x.rescan_for([](Batch &b, const Key& key, bool erase){})};
+    {x.select(std::declval<Key>()) } -> std::derived_from<RecordsetBase>;
+    {x.update() };
+});
+
+
 
 namespace _details {
 
@@ -236,7 +247,7 @@ struct AggregateBy {
     template<DocumentDef _ValueDef>
     using AggregatorView = IndexViewGen<_ValueDef, IndexViewBaseEmpty<_ValueDef> >;
 
-    template<typename MapSrc, AggregateFunction AggrFn, DocumentDef _ValueDef = RowDocument, bool auto_update = false>
+    template<AggregatorSource MapSrc, AggregateFunction AggrFn, DocumentDef _ValueDef = RowDocument, bool auto_update = false>
     class Materialized: public AggregatorView<_ValueDef> {
     public:
 
@@ -262,6 +273,9 @@ struct AggregateBy {
                }
                this->_source.register_transaction_observer(make_observer());
            }
+
+        Materialized(const Materialized &) = delete;
+        Materialized &operator=(const Materialized &) = delete;
 
         Revision get_revision() const {
             auto k = this->_db->get_private_area_key(this->_kid);
@@ -378,7 +392,7 @@ struct AggregateBy {
 
         void run_aggregate(PSnapshot snapshot, unsigned char b1, unsigned char b2) {
             auto snapview = _source.get_snapshot(snapshot);
-            RecordSetBase rs(this->_db->make_iterator(snapshot, true),{
+            RecordsetBase rs(this->_db->make_iterator(snapshot, true),{
                     Database::get_private_area_key(this->_kid, b1),
                     Database::get_private_area_key(this->_kid, b2),
                     FirstRecord::included,
