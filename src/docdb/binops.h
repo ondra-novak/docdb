@@ -288,6 +288,14 @@ public:
         }
     }
 
+    auto begin() const {
+        return top().begin();
+    }
+
+    auto end() const {
+        return top().end();
+    }
+
 protected:
     std::stack<Set> _stack;
     void release_set(Set &a, Set &b) {
