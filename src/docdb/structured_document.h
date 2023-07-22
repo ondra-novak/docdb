@@ -505,7 +505,7 @@ struct StructuredDocument {
             } else if constexpr(std::is_same_v<Type, std::string>) {
                 return string_to_binary(index, v, iter);
             } else if constexpr(std::is_same_v<Type, std::string_view>) {
-                return string_to_binary(find_index<std::string>(), v, iter);
+                return string_to_binary(find_index<std::string>() << 4, v, iter);
             } else if constexpr(std::is_same_v<Type, std::wstring>) {
                 return wstring_to_binary(index, v, iter);
             } else if constexpr(std::is_same_v<Type, Structured::KeyPairs>) {
