@@ -196,6 +196,9 @@ public:
      */
     bool purge(DocID del_id) {
         Batch b;
+        return purge(b, del_id);
+    }
+    bool purge(Batch &b, DocID del_id) {
         std::string tmp;
         RawKey kk(this->_kid, del_id);
         if (this->_db->get(kk, tmp)) {
@@ -313,6 +316,29 @@ public:
         }
     }
 
+
+    ///Restore from backup
+    /**
+     * @param backup_storage rvalue reference to Storage object which contains backup
+     * documents. This storage can be filled by external tool during restoration process,
+     * It is also possible to use manage_db to fill this storage.
+     *
+     * @note function is not MT safe. Do not put any document until the restore is complete
+     *
+     * @note function also erases content of backup collection
+     */
+    void restore_backup(Storage<_DocDef> &&backup_storage) {
+        Batch b;
+        for (const auto &row: backup_storage.select_all()) {
+            auto tdoc = this->find(row.id);
+            if (tdoc) continue;
+            RawKey key(this->_kid, row.id);
+            const DocType *doc = row.has_value?&row.document:nullptr;
+            write(row.id, b, doc, row.previous_id);
+            b.Delete(RawKey(backup_storage.get_kid(), row.id));
+            this->_db->commit_batch(b);
+        }
+    }
 
 protected:
 
