@@ -6,6 +6,7 @@
 #include "database.h"
 #include "keylock.h"
 #include "exceptions.h"
+#include "docid.h"
 
 #include "index_view.h"
 namespace docdb {
@@ -44,20 +45,38 @@ public:
     using DocType = typename Storage::DocType;
     using ValueType = typename _ValueDef::Type;
 
+    ///Construct indexer
+    /**
+     * @param storage reference to storage, which being indexed
+     * @param name name of collection where index is stored
+     * @param sync_max_thread_count Enables storing last seen document id
+     * and specifies maximum count of thread performing a write at
+     * same time. Note that if this value is zero, feature is disabled. Storing last
+     * seen document can be useful when changes in storage can be done without notifying the
+     * indexer to perform index. Once the indexer is connected to the storage, it can
+     * run indexing for newly added documents. Without this feature, it is excepted
+     * that indexer will never disconnected from its storage. Disable of this feature can
+     * increase performance slightly
+     */
+    Indexer(Storage &storage, std::string_view name, unsigned int sync_max_thread_count = 0)
+        :Indexer(storage, storage.get_db()->open_table(name, _purpose), sync_max_thread_count) {}
 
-    Indexer(Storage &storage, std::string_view name)
-        :Indexer(storage, storage.get_db()->open_table(name, _purpose)) {}
-
-    Indexer(Storage &storage, KeyspaceID kid)
+    Indexer(Storage &storage, KeyspaceID kid, unsigned int sync_max_thread_count)
         :IndexView<Storage, _ValueDef, index_type>(storage.get_db(), kid, Direction::forward, {}, false,storage)
          ,_listener(this)
+         ,_lsmask(LastSeenDocID::threads_to_mask(sync_max_thread_count))
     {
         auto k = this->_db->get_private_area_key(this->_kid);
         auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
         do {
             if (doc.has_value()) {
                 auto [rev] = doc->template get<IndexRevision>();
-                if (rev == revision) break;
+                if (rev == revision) {
+                    if (_lsmask) {
+                        DocID id = LastSeenDocID::get_max_docid(this->_db, this->_kid);
+                        this->_storage.rescan_for(make_observer(), id);
+                    }
+                }
             }
             reindex();
         }
@@ -181,6 +200,7 @@ protected:
     using KeyLocker = std::conditional_t<index_type == IndexType::unique, KeyLock, std::nullptr_t>;
     KeyLocker _locker;
     Listener _listener;
+    LastSeenDocID::KeyType _lsmask;
 
     using Update = typename Storage::Update;
 
@@ -193,6 +213,9 @@ protected:
                 }
                 if (update.new_doc) {
                     indexFn(Emit<false>(*this, b, IndexedDoc{update.new_doc_id, update.old_doc_id}), *update.new_doc);
+                    if (_lsmask) {
+                        LastSeenDocID::store_DocID(b, this->_kid, update.new_doc_id, _lsmask);
+                    }
                 }
             }
         };

@@ -4,6 +4,7 @@
 
 #include "exceptions.h"
 #include "storage_view.h"
+#include "docid.h"
 
 namespace docdb {
 
@@ -14,12 +15,29 @@ public:
     using DocType = typename _DocDef::Type;
     using DocRecord = typename StorageView<_DocDef>::DocRecord;
 
-    Storage(const PDatabase &db, const std::string_view &name)
-        :Storage(db,db->open_table(name, Purpose::storage)) {}
+    ///Construct storage
+    /**
+     * @param db database instance
+     * @param name name of collection where storage is stored
+     * @param sync_max_thread_count specifies maximum count of threads making writes simultaneously
+     * (more accurately, maximum pending batches at time). This value is 255 by default. If you
+     * need more pending batches at time, you can increase this value up to 65535. The value
+     * specifies count of unique keys which can be assigned to each pending batch. If there
+     * are more pending batches than available unique keys, the result can be that
+     * some document won't be indexed during recovery phase at the startup.
+     *
+     * Each batch records its associated document id. When application stars, the object
+     * can determine last stored document id by exploring recovery area and finding maximum.
+     *
+     */
+    Storage(const PDatabase &db, const std::string_view &name, unsigned int sync_max_thread_count = 255)
+        :Storage(db,db->open_table(name, Purpose::storage), sync_max_thread_count) {}
 
-    Storage(const PDatabase &db, KeyspaceID kid)
+    Storage(const PDatabase &db, KeyspaceID kid, unsigned int sync_max_thread_count = 255)
         :StorageView<_DocDef>(db,kid, Direction::forward, {},false)
-        ,_cmt_obs(*this) {
+        ,_cmt_obs(*this)
+        ,_lsmask(LastSeenDocID::threads_to_mask(sync_max_thread_count))
+        {
         init_id();
     }
     Storage(const Storage &) = delete;
@@ -374,6 +392,7 @@ protected:
     std::vector<TransactionObserver> _transaction_observers;
     std::atomic<DocID> _next_id = 1;
     CommitObservers _cmt_obs;
+    LastSeenDocID::KeyType _lsmask;
 
     void notify_observers(Batch &b, const Update &up) {
         for (const auto &x: _transaction_observers) {
@@ -382,7 +401,20 @@ protected:
     }
 
     void init_id() {
-        _next_id = this->get_last_document_id()+1;
+        if (_lsmask) {
+            _next_id = LastSeenDocID::get_max_docid(this->_db, this->_kid)+1;
+            Batch b;
+            for (const auto &row : this->select_from(_next_id, Direction::forward)) {
+                const DocType *doc = row.has_value?&row.document:nullptr;
+                update_for([&](auto &b, const auto &update){
+                           notify_observers(b, update);
+                }, b, row.id, doc, row.previous_id);
+                LastSeenDocID::store_DocID(b, this->_kid, row.id, _lsmask);
+                _next_id = row.id+1;
+            }
+        } else {
+            _next_id = this->get_last_document_id()+1;
+        }
     }
 
     DocID write(Batch &b, const DocType *doc, DocID update_id) {
@@ -405,6 +437,9 @@ protected:
         update_for([&](auto &b, const auto &update){
             notify_observers(b, update);
         }, b, id, doc, prev_id);
+        if (_lsmask) {
+            LastSeenDocID::store_DocID(b, this->_kid, id, _lsmask);
+        }
     }
 
     template<typename Fn>
