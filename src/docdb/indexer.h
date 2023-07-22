@@ -106,9 +106,6 @@ public:
 
         DocID id() const {return _docinfo.cur_doc;}
         DocID prev_id() const {return _docinfo.prev_doc;}
-        std::optional<ValueType> find(Key &key) const {
-
-        }
 
     protected:
         Indexer &_owner;
@@ -148,7 +145,7 @@ public:
             } else {
                 _b.Put(key, buffer);
             }
-            _owner.notify_tx_observers(_b, key, value, _docinfo.cur_doc, deleting);
+            _owner.notify_tx_observers(_b, key, deleting);
         }
     };
 
@@ -167,7 +164,7 @@ protected:
     public:
         Indexer *owner = nullptr;
         Listener(Indexer *owner):owner(owner) {}
-        virtual void before_commit(Batch &b) override {}
+        virtual void before_commit(Batch &) override {}
         virtual void after_commit(std::size_t rev) noexcept override {
             if constexpr(index_type == IndexType::unique) {
                 owner->_locker.unlock_keys(rev);
@@ -209,10 +206,7 @@ protected:
         b.Put(Database::get_private_area_key(this->_kid), Row(revision));
         this->_db->commit_batch(b);
     }
-    void reindex_from(DocID doc) {
-    }
-
-    void notify_tx_observers(Batch &b, const Key &key, const ValueType &value, DocID id, bool erase) {
+    void notify_tx_observers(Batch &b, const Key &key, bool erase) {
         for (const auto &f: _tx_observers) {
             f(b, key, erase);
         }
