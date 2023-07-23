@@ -400,11 +400,10 @@ struct AggregateBy {
             });
             Batch b;
             while (!rs.empty()) {
-                auto k = rs.key();
-                auto [kid, bank, keydata] = k.get<KeyspaceID, unsigned char, Row>();
+                auto k = rs.raw_key();
+                auto [kid, bank, keydata] = Key::extract<KeyspaceID, unsigned char, Row>(k);
                 RawKey key(this->_kid, keydata);
-                Row val(RowView(rs.raw_value()));
-                Key agrkey(val);
+                Key agrkey(Blob(rs.raw_value()));
                 auto rc = snapview.select(agrkey);
                 auto iter = rc.begin();
                 auto iterend = rc.end();
@@ -427,7 +426,7 @@ struct AggregateBy {
                 } else {
                     b.Delete(key);
                 }
-                b.Delete(k);
+                b.Delete(to_slice(k));
                 this->_db->commit_batch(b);
                 rs.next();
             }

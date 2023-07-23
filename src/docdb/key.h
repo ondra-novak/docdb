@@ -82,7 +82,6 @@ public:
     template<typename ... Types>
     auto get() const {
         std::string_view me(*this);
-        me = me.substr(sizeof(KeyspaceID));
         return this->extract<Types...>(me);
     }
 
