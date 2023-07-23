@@ -202,8 +202,7 @@ public:
         std::string tmp;
         RawKey kk(this->_kid, del_id);
         if (this->_db->get(kk, tmp)) {
-            Row rw((RowView(tmp)));
-            auto [old_doc_id, bin] = rw.get<DocID, Blob>();
+            auto [old_doc_id, bin] = Row::extract<DocID, Blob>(tmp);
             auto beg = bin.begin();
             auto end = bin.end();
             if (beg != end) {
@@ -285,10 +284,8 @@ public:
         bool changes = false;
         if (!rs.empty()) {
             do {
-                Key k(RowView(rs.raw_key()));
-                Row v(RowView(rs.raw_value()));
-                auto [cur_doc] = k.get<DocID>();
-                auto [prev_doc, doc] = v.get<DocID, Blob>();
+                auto [cur_doc] = Key::extract<DocID>(rs.raw_key());
+                auto [prev_doc, doc] = Row::extract<DocID, Blob>(rs.raw_value());
 
                 auto iter = refs.find(cur_doc);
                 std::size_t level = -1;
@@ -438,8 +435,7 @@ protected:
         if (prev_id) {
             std::string tmp;
             if (this->_db->get(RawKey(this->_kid, prev_id), tmp)) {
-                Row rw((RowView(tmp)));
-                auto [old_old_doc_id, bin] = rw.get<DocID, Blob>();
+                auto [old_old_doc_id, bin] = Row::extract<DocID, Blob>(tmp);
                 auto beg = bin.begin();
                 auto end = bin.end();
                 if (beg != end) {

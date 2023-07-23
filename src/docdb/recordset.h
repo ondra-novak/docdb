@@ -182,7 +182,7 @@ public:
     }
 
     RawKey key() const {
-        return RawKey(RowView(raw_key()));
+        return RawKey(raw_key());
     }
 
     ///Returns true, if recordset is empty

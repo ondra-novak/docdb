@@ -177,7 +177,7 @@ public:
         IteratorValueType(std::string_view raw_key, std::string_view raw_value)
             :DocRecord(DocRecordDef<_DocDef>::from_binary(raw_value.begin(),raw_value.end()))
              {
-                Key k ((RowView(raw_key)));
+                Key k = Key::from_string(raw_key);
                 id  = std::get<0>(k.get<DocID>());
              }
     };

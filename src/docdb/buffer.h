@@ -26,6 +26,8 @@ public:
     using view_type = std::conditional_t<std::is_trivial_v<T> && std::is_standard_layout_v<T>,
             std::basic_string_view<T>, std::span<T> >;
 
+    using const_iterator = const T *;
+    using iterator = const_iterator;
 
     operator view_type() const {return {_begin, _len};}
 

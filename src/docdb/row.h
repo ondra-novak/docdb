@@ -4,18 +4,13 @@
 
 #include "buffer.h"
 #include "serialize.h"
+
+#include <algorithm>
 #include <variant>
 #include <ieee754.h>
 #include <cstdint>
 
 namespace docdb {
-
-
-class RowView : public std::string_view {
-public:
-    using std::string_view::string_view;
-    RowView(const std::string_view &x):std::string_view(x) {}
-};
 
 using RowBuffer = Buffer<char, 40>;
 
@@ -33,22 +28,17 @@ class Row {
 public:
 
     Row() = default;
-    Row(const RowView &x):_data(x) {}
     template<typename ... Args>
     Row(const Args & ... args) {
         serialize_items(back_inserter(), args...);
     }
 
     operator leveldb::Slice() const {
-       return std::visit([](const auto &x) -> leveldb::Slice {
-            return {x.data(),x.size()};
-        }, _data);
+        return {_data.data(),_data.size()};
     }
 
     operator std::string_view() const {
-       return std::visit([](const auto &x) -> std::string_view {
-            return {x.data(),x.size()};
-        }, _data);
+        return {_data.data(),_data.size()};
     }
 
     ///Retrieve internal mutable buffer
@@ -59,12 +49,7 @@ public:
      * @return mutable buffer
      */
     RowBuffer &mutable_buffer() {
-        if (!std::holds_alternative<RowBuffer>(_data)) {
-            std::string_view s = (*this);
-            _data = RowBuffer(s);
-        }
-        RowBuffer &v = std::get<RowBuffer>(_data);
-        return v;
+        return _data;
 
     }
 
@@ -76,78 +61,33 @@ public:
      * @return mutable pointer
      */
     char *mutable_ptr() {
-        return mutable_buffer().data();
+        return _data.data();
     }
 
     ///Retrieve size of internal buffer
     std::size_t size() const {
-        return std::visit([](const auto &x){return x.size();},_data);
+        return _data.size();
     }
 
     ///Determines, whether internal buffer is empty
     bool empty() const {
-        return std::visit([](const auto &x){return x.empty();},_data);
+        return _data.empty();
     }
 
     ///Clears content and switches to read-write mode
     void clear() {
-        if (!std::holds_alternative<RowBuffer>(_data)) {
-            _data = RowBuffer();
-        } else {
-            std::get<RowBuffer>(_data).clear();
-        }
+        _data.clear();
     }
 
-    ///Is view?
-    /**
-     * @retval true current value is view of other row, or string. It means
-     * that row actually refers some outside buffer. To detach
-     * from the buffer, call mutable_buffer() or clear();
-     * @retval false current value is not view
-     *
-     */
-    bool is_view() const {
-        return std::holds_alternative<RowView>(_data);
-    }
-
-    /**
-     * @retval true current value is mutable
-     * @retval false current value is views
-     */
-    bool is_mutable() const {
-        return std::holds_alternative<RowBuffer>(_data);
-    }
-
-    ///Resize the buffer
-    /**
-     * @param sz new size. If the size is larger than current size,
-     * the Row will be switched to read-write mode;
-     * @param init initialization value
-     */
     void resize(std::size_t sz, char init = 0) {
-        if (std::holds_alternative<RowView>(_data)) {
-            RowView &view = std::get<RowView>(_data);
-            if (sz < view.size()) {
-                std::string_view x = view;
-                _data = RowView(x.substr(0, sz));
-            } else {
-                RowBuffer &newbuf = mutable_buffer();
-                newbuf.resize(sz,init);
-            }
-        } else if (std::holds_alternative<RowBuffer>(_data)) {
-            RowBuffer &buff = std::get<RowBuffer>(_data);
-            buff.resize(sz, init);
-        }
+        _data.resize(sz, init);
     }
 
-    auto begin() const {
-        return std::visit([](const auto &x){return x.begin();}, _data);
+    RowBuffer::const_iterator begin() const {
+        return _data.begin();
     }
-    auto end() const {
-        return std::visit([](const auto &x){return x.end();}, _data);
-    }
-    RowView view() const {
-        return RowView(*this);
+    RowBuffer::const_iterator end() const {
+        return _data.end();
     }
 
     ///Serialize items into binary container
@@ -170,7 +110,7 @@ public:
             },val);
         } else if constexpr(std::is_null_pointer_v<X> || std::is_same_v<X, std::monostate>) {
             //empty;
-        } else if constexpr(std::is_same_v<X, Row> || std::is_same_v<X, RowView> || std::is_base_of_v<Blob, X>) {
+        } else if constexpr(std::is_same_v<X, Row> || std::is_base_of_v<Blob, X>) {
             iter = std::copy(val.begin(), val.end(), iter);
         } else if constexpr(std::is_same_v<bool, X>) {
             *iter++ = val?static_cast<char>(1):static_cast<char>(0);
@@ -297,12 +237,12 @@ public:
              });
          } else if constexpr(std::is_null_pointer_v<T> || std::is_same_v<T, std::monostate>) {
              return T();
-         } else if constexpr(std::is_base_of_v<Blob, T> || std::is_base_of_v<RowView, T>) {
+         } else if constexpr(std::is_base_of_v<Blob, T>) {
              T var(at, sz);
              at = end;
              return T(var);
          } else if constexpr(std::is_base_of_v<Row, T>) {
-             auto v = deserialize_item<RowView>(at, end);
+             auto v = deserialize_item<Blob>(at, end);
              return T(v);
          } else if constexpr(std::is_same_v<bool, T>) {
              if (sz == 0) return false;
@@ -413,13 +353,10 @@ public:
 
 protected:
     auto back_inserter() -> decltype(std::back_inserter(std::declval<RowBuffer &>())) {
-        if (std::holds_alternative<RowBuffer>(_data)) {
-            return std::back_inserter(std::get<RowBuffer>(_data));
-        }
-        throw std::invalid_argument("ROW: Can't append in t read-only mode. Use clear()");
+       return std::back_inserter(_data);
     }
 
-    std::variant<RowBuffer, RowView> _data;
+    RowBuffer _data;
 
 };
 
@@ -431,7 +368,6 @@ class FixedT: public T {
 public:
 
     FixedT() = default;
-    FixedT(const RowView &view):T(view) {}
     FixedT(const Args & ... args): T(args...) {}
 
     auto get() const {
@@ -458,16 +394,10 @@ struct _TRowDocument {
     using Type = T;
     template<typename Iter>
     static T from_binary(Iter beg, Iter end) {
-        if constexpr(std::is_convertible_v<Iter, const char *>) {
-            const char *bptr = beg;
-            const char *eptr = end;
-            return RowView(bptr, eptr-bptr);
-        } else {
-            T out;
-            auto &buf = out.mutable_buffer();
-            std::copy(beg, end, std::back_inserter(buf));
-            return out;
-        }
+        T out;
+        auto &buf = out.mutable_buffer();
+        std::copy(beg, end, std::back_inserter(buf));
+        return out;
     }
     template<typename Iter>
     static auto to_binary(const T &row, Iter iter) {

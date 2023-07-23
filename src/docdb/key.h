@@ -30,7 +30,7 @@ public:
     template<typename ... Args >
     RawKey(KeyspaceID id, const Args & ...  args):Row(id, args...) {}
 
-    RawKey(const RowView &view):Row(view) {}
+    RawKey(std::string_view data):Row(Blob(data)) {}
 
 
     ///Consider current key as prefix. Calculates key for prefix end
@@ -86,6 +86,13 @@ public:
         return this->extract<Types...>(me);
     }
 
+    ///Get content of key (skip keyspaceid);
+    template<typename ... Types>
+    static auto extract(std::string_view me)  {
+        me = me.substr(sizeof(KeyspaceID));
+        return Row::extract<Types...>(me);
+    }
+
     auto size() const {
         return Row::size() - sizeof(KeyspaceID);
     }
@@ -124,8 +131,11 @@ class Key: public RawKey {
 public:
     template<typename ... Args>
     Key(const Args & ... args):RawKey(0, args...) {}
+    Key(const RawKey &raw_key):RawKey(raw_key) {}
 
-    Key(const RowView &other):RawKey(other) {}
+    static Key from_string(const std::string_view &str_key) {
+        return RawKey(str_key);
+    }
 };
 
 template<typename ... Args>
