@@ -168,6 +168,10 @@ public:
             iter = std::visit([&](const auto &v){
                 return serialize_items(iter, v);
             },val);
+        } else if constexpr(ArrayType<X>::is_type) {
+            for (const auto &x: val) iter = serialize_items(iter, x);
+        } else if constexpr(std::is_same_v<X, char>) {  
+            *iter++=val;
         } else if constexpr(std::is_null_pointer_v<X> || std::is_same_v<X, std::monostate>) {
             //empty;
         } else if constexpr(std::is_same_v<X, Row> || std::is_same_v<X, RowView> || std::is_base_of_v<Blob, X>) {
@@ -295,7 +299,14 @@ public:
                      return T(deserialize_item<Type>(at, end));
                  }
              });
-         } else if constexpr(std::is_null_pointer_v<T> || std::is_same_v<T, std::monostate>) {
+        } else if constexpr(ArrayType<T>::is_type) {
+            T var;
+            for (auto &x: var) x = deserialize_item<T>(at, end);
+            return var;   
+        } else if constexpr(std::is_same_v<T, char>) {
+            if (at == end) return ' ';
+            return *at++;
+        } else if constexpr(std::is_null_pointer_v<T> || std::is_same_v<T, std::monostate>) {
              return T();
          } else if constexpr(std::is_base_of_v<Blob, T> || std::is_base_of_v<RowView, T>) {
              T var(at, sz);

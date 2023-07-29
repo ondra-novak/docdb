@@ -61,6 +61,28 @@ public:
 };
 
 
+template<std::size_t count>
+using FixedBlob = std::span<unsigned char, count>;
+template<std::size_t count>
+using FixedString = std::span<char, count>;
+template<typename T>
+DOCDB_CXX20_CONCEPT(IsFixedString, requires(T x) {
+    (T::extent != std::dynamic_extent && sizeof(typename T::element_type) == 1);
+    {x.data()} -> std::same_as<typename T::pointer>;
+});
+
+
+template<typename T>
+struct ArrayType {static constexpr bool is_type = false;};
+
+template<typename T, std::size_t sz>
+struct ArrayType<std::array<T, sz> > {
+    static constexpr bool is_type = true;
+    static constexpr std::size_t size = sz;
+    using Type = T;
+};
+
+
 
 using LocalizedString = LocalizedBasicString<char>;
 using LocalizedWString = LocalizedBasicString<wchar_t>;
