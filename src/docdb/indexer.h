@@ -10,14 +10,6 @@
 #include "index_view.h"
 namespace docdb {
 
-using IndexerRevision = std::size_t;
-struct IndexerState  {
-        IndexerRevision indexer_revision;
-        DocID storage_revision;
-};
-
-
-
 template<DocumentDef _ValueDef>
 struct IndexerEmitTemplate {
     void operator()(Key,typename _ValueDef::Type);
@@ -30,8 +22,14 @@ struct IndexerEmitTemplate {
 template<typename T, typename Storage, typename _ValueDef>
 DOCDB_CXX20_CONCEPT(IndexFn, requires{
    requires std::invocable<T, IndexerEmitTemplate<_ValueDef>, typename Storage::DocType>;
-   {T::revision} -> std::convertible_to<IndexerRevision>;
+   {T::revision} -> std::convertible_to<IndexRevision>;
 });
+
+
+template<std::size_t rev, auto function>
+struct IndexFunction: decltype(function) {
+    static constexpr std::size_t revision = rev;
+};
 
 
 template<DocumentStorageType Storage, typename _IndexFn, IndexType index_type = IndexType::multi, DocumentDef _ValueDef = RowDocument>
@@ -40,7 +38,7 @@ class Indexer: public IndexView<Storage, _ValueDef, index_type> {
 public:
 
     static constexpr _IndexFn indexFn = {};
-    static constexpr IndexerRevision revision = _IndexFn::revision;
+    static constexpr IndexRevision revision = _IndexFn::revision;
     static constexpr Purpose _purpose = index_type == IndexType::multi || index_type == IndexType::unique_hide_dup?Purpose::index:Purpose::unique_index;
 
     using DocType = typename Storage::DocType;
@@ -54,28 +52,23 @@ public:
         :IndexView<Storage, _ValueDef, index_type>(storage.get_db(), kid, Direction::forward, {}, false,storage)
          ,_listener(this)
     {
-        auto stored_state = get_stored_state();
-        _last_written_rev = stored_state.storage_revision;
-        if (stored_state.indexer_revision != revision) {
+        auto k = this->_db->get_private_area_key(this->_kid);
+        auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
+        do {
+            if (doc.has_value()) {
+                auto [rev] = doc->template get<IndexRevision>();
+                if (rev == revision) break;
+            }
             reindex();
-        } else {
-            reindex_from(stored_state.storage_revision);
         }
+        while (false);
         this->_storage.register_transaction_observer(make_observer());
     }
 
+    Indexer(const Indexer &) = delete;
+    Indexer &operator=(const Indexer &) = delete;
 
-    IndexerState get_stored_state() const {
-        auto k = this->_db->get_private_area_key(this->_kid);
-        auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
-        if (doc.has_value()) {
-            auto [cur_rev, stor_rev] = doc->template get<IndexerRevision, DocID>();
-            return {cur_rev,stor_rev};
-        }
-        else return {0,0};
-    }
-
-    using TransactionObserver = std::function<void(Batch &b, const Key& key, const ValueType &value, DocID docId, bool erase)>;
+    using TransactionObserver = std::function<void(Batch &b, const Key& key, bool erase)>;
 
     void register_transaction_observer(TransactionObserver obs) {
         _tx_observers.push_back(std::move(obs));
@@ -87,7 +80,7 @@ public:
             if (b.is_big()) {
                 this->_db->commit_batch(b);
             }
-            obs(b, x.key, x.value, x.id, false);
+            obs(b, x.key, false);
         }
         this->_db->commit_batch(b);
     }
@@ -124,17 +117,14 @@ public:
             auto &buffer = _b.get_buffer();
             auto buff_iter = std::back_inserter(buffer);
             if constexpr(index_type == IndexType::unique && !deleting) {
-               auto st =  _owner._locker.lock_key(_b.get_revision(), key, _docinfo.cur_doc, _docinfo.prev_doc);
-               if (!st.locked) {
-                   throw make_exception(key, _owner._db, _docinfo.cur_doc, st.locked_for);
+               if (!_owner._locker.lock_key(_b.get_revision(), key)) {
+                   throw make_deadlock_exception(key, _owner._db);
                }
-               if (!st.replaced) {
-                   std::string tmp;
-                   if (_owner._db->get(key, tmp)) {
-                       auto [r] = Row::extract<DocID>(tmp);
-                       if (r != _docinfo.cur_doc && r != _docinfo.prev_doc) {
-                           throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
-                       }
+               std::string tmp;
+               if (_owner._db->get(key, tmp)) {
+                   auto [r] = Row::extract<DocID>(tmp);
+                   if (r != _docinfo.cur_doc && r != _docinfo.prev_doc) {
+                       throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
                    }
                }
             }
@@ -155,13 +145,17 @@ public:
             } else {
                 _b.Put(key, buffer);
             }
-            _owner.notify_tx_observers(_b, key, value, _docinfo.cur_doc, deleting);
+            _owner.notify_tx_observers(_b, key, deleting);
         }
     };
 
 
     void update() {
         //empty, as the index don't need update, but some object may try to call it
+    }
+    bool try_update() {
+       //empty, as the index don't need update, but some object may try to call it
+        return true;
     }
 
 protected:
@@ -170,9 +164,7 @@ protected:
     public:
         Indexer *owner = nullptr;
         Listener(Indexer *owner):owner(owner) {}
-        virtual void before_commit(Batch &b) override {
-            owner->close_pending_rev(b);
-        }
+        virtual void before_commit(Batch &) override {}
         virtual void after_commit(std::size_t rev) noexcept override {
             if constexpr(index_type == IndexType::unique) {
                 owner->_locker.unlock_keys(rev);
@@ -186,19 +178,14 @@ protected:
     };
 
     std::vector<TransactionObserver> _tx_observers;
-    using KeyLocker = std::conditional_t<index_type == IndexType::unique, KeyLock<DocID>, std::nullptr_t>;
+    using KeyLocker = std::conditional_t<index_type == IndexType::unique, KeyLock, std::nullptr_t>;
     KeyLocker _locker;
     Listener _listener;
-    std::atomic<DocID> _last_written_rev = 0;
-    std::atomic<std::size_t> _pending_writes = {0};
-
-
 
     using Update = typename Storage::Update;
 
     auto make_observer() {
         return [&](Batch &b, const Update &update) {
-            record_pending_rev(update.new_doc_id);
             b.add_listener(&_listener);
             {
                 if (update.old_doc) {
@@ -211,40 +198,17 @@ protected:
         };
     }
 
-    void record_pending_rev(DocID id) {
-        _pending_writes.fetch_add(1, std::memory_order_relaxed);
-        auto cur_id = _last_written_rev.load(std::memory_order_relaxed);
-        while (cur_id < id
-                && !_last_written_rev.compare_exchange_weak(cur_id, id, std::memory_order_relaxed));
-    }
-
-    void close_pending_rev(Batch &b) {
-        auto cur_id = _last_written_rev.load(std::memory_order_relaxed);
-        if (_pending_writes.fetch_sub(1, std::memory_order_relaxed) == 1) {
-            //this is last pending write
-            //so now update revision and last_written_rev
-            //revision is +1 from last written doc
-            b.Put(Database::get_private_area_key(this->_kid), Row(revision, cur_id+1));
-        }
-    }
-
-    void update_revision() {
-        Batch b;
-        update_rev(b);
-        this->_db->commit_batch(b);
-    }
 
     void reindex() {
         this->_db->clear_table(this->_kid, false);
-        reindex_from(0);
+        this->_storage.rescan_for(make_observer(), 0);
+        Batch b;
+        b.Put(Database::get_private_area_key(this->_kid), Row(revision));
+        this->_db->commit_batch(b);
     }
-    void reindex_from(DocID doc) {
-        this->_storage.rescan_for(make_observer(), doc);
-    }
-
-    void notify_tx_observers(Batch &b, const Key &key, const ValueType &value, DocID id, bool erase) {
+    void notify_tx_observers(Batch &b, const Key &key, bool erase) {
         for (const auto &f: _tx_observers) {
-            f(b, key, value, id, erase);
+            f(b, key, erase);
         }
     }
 
@@ -270,6 +234,15 @@ protected:
         message.append(". Indexed document: ").append(std::to_string(stored));
         message.append(". Conflicting document: ").append(std::to_string(income));
         return DuplicateKeyException(std::string(std::string_view(key)), std::move(message));
+
+    }
+
+    static DeadlockKeyException make_deadlock_exception(Key key, const PDatabase &db) {
+        std::string message("Deadlock (key locking): ");
+        auto name = db->name_from_id(key.get_kid());
+        if (name.has_value()) message.append(*name);
+        else message.append("Unknown table KID ").append(std::to_string(static_cast<int>(key.get_kid())));
+        return DeadlockKeyException(std::string(std::string_view(key)), std::move(message));
 
     }
 };

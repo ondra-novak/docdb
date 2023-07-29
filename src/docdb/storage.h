@@ -196,11 +196,13 @@ public:
      */
     bool purge(DocID del_id) {
         Batch b;
+        return purge(b, del_id);
+    }
+    bool purge(Batch &b, DocID del_id) {
         std::string tmp;
         RawKey kk(this->_kid, del_id);
         if (this->_db->get(kk, tmp)) {
-            Row rw((RowView(tmp)));
-            auto [old_doc_id, bin] = rw.get<DocID, Blob>();
+            auto [old_doc_id, bin] = Row::extract<DocID, Blob>(tmp);
             auto beg = bin.begin();
             auto end = bin.end();
             if (beg != end) {
@@ -232,7 +234,7 @@ public:
         auto next = docrow.id+1;
         while (cur < next && !_next_id.compare_exchange_weak(cur, next, std::memory_order_relaxed));
         DocRecordT<_DocDef> d = DocRecordDef<_DocDef>::from_binary(docrow.data.data(), docrow.data.data()+docrow.data.size());
-        const DocType *doc = d.has_value?&d.content:nullptr;
+        const DocType *doc = d.has_value?&d.document:nullptr;
         write(docrow.id, b, doc, d.previous_id);
     }
 
@@ -240,7 +242,7 @@ public:
       void rescan_for(const TransactionObserver &observer, DocID start_doc = 0) {
           Batch b;
           for (const auto &vdoc: this->select_from(start_doc, Direction::forward)) {
-              const DocType *doc =  vdoc.deleted?nullptr:&vdoc.content;
+              const DocType *doc =  vdoc.deleted?nullptr:&vdoc.document;
               if constexpr(std::is_void_v<decltype(update_for(observer, b, vdoc.id, doc, vdoc.previous_id))>) {
                   update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
               } else {
@@ -272,7 +274,7 @@ public:
     void compact(std::size_t n=0, bool deleted = false) {
         Batch b;
         std::unordered_map<DocID, std::size_t> refs;
-        RecordSetBase rs(this->_db->make_iterator({},true), {
+        RecordsetBase rs(this->_db->make_iterator({},true), {
                 RawKey(this->_kid+1),
                 RawKey(this->_kid),
                 FirstRecord::excluded,
@@ -282,10 +284,8 @@ public:
         bool changes = false;
         if (!rs.empty()) {
             do {
-                Key k(RowView(rs.raw_key()));
-                Row v(RowView(rs.raw_value()));
-                auto [cur_doc] = k.get<DocID>();
-                auto [prev_doc, doc] = v.get<DocID, Blob>();
+                auto [cur_doc] = Key::extract<DocID>(rs.raw_key());
+                auto [prev_doc, doc] = Row::extract<DocID, Blob>(rs.raw_value());
 
                 auto iter = refs.find(cur_doc);
                 std::size_t level = -1;
@@ -313,6 +313,29 @@ public:
         }
     }
 
+
+    ///Restore from backup
+    /**
+     * @param backup_storage rvalue reference to Storage object which contains backup
+     * documents. This storage can be filled by external tool during restoration process,
+     * It is also possible to use manage_db to fill this storage.
+     *
+     * @note function is not MT safe. Do not put any document until the restore is complete
+     *
+     * @note function also erases content of backup collection
+     */
+    void restore_backup(Storage<_DocDef> &&backup_storage) {
+        Batch b;
+        for (const auto &row: backup_storage.select_all()) {
+            auto tdoc = this->find(row.id);
+            if (tdoc) continue;
+            RawKey key(this->_kid, row.id);
+            const DocType *doc = row.has_value?&row.document:nullptr;
+            write(row.id, b, doc, row.previous_id);
+            b.Delete(RawKey(backup_storage.get_kid(), row.id));
+            this->_db->commit_batch(b);
+        }
+    }
 
 protected:
 
@@ -412,8 +435,7 @@ protected:
         if (prev_id) {
             std::string tmp;
             if (this->_db->get(RawKey(this->_kid, prev_id), tmp)) {
-                Row rw((RowView(tmp)));
-                auto [old_old_doc_id, bin] = rw.get<DocID, Blob>();
+                auto [old_old_doc_id, bin] = Row::extract<DocID, Blob>(tmp);
                 auto beg = bin.begin();
                 auto end = bin.end();
                 if (beg != end) {

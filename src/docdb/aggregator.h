@@ -1,394 +1,475 @@
 #pragma once
 #ifndef SRC_DOCDB_AGGREGATOR_H_
 #define SRC_DOCDB_AGGREGATOR_H_
-#include "aggregrator_source_concept.h"
-#include "database.h"
-#include "index_view.h"
-#include <atomic>
+
+#include "concepts.h"
 
 namespace docdb {
 
-template<typename ValueType>
-class AggregatedResult {
-public:
-
-
-    AggregatedResult():_has_value(false) {}
-    template<typename Arg, typename ... Args>
-    AggregatedResult(Arg && p1, Args && ... px)
-        :_value(std::forward<Arg>(p1), std::forward<Args>(px)...)
-        ,_has_value(true) {}
-
-    AggregatedResult(const AggregatedResult &other)
-        :_has_value(other._has_value) {
-        if (_has_value) {
-            ::new(&_value) ValueType(other._value);
-        }
-    }
-    AggregatedResult(AggregatedResult &&other)
-        :_has_value(other._has_value) {
-        if (_has_value) {
-            ::new(&_value) ValueType(std::move(other._value));
-        }
-    }
-    AggregatedResult &operator=(const AggregatedResult &other) {
-        if (this != &other) {
-            this->~AggregatedResult();
-            ::new(this) AggregatedResult(other);
-        }
-        return *this;
-    }
-
-    AggregatedResult &operator=(AggregatedResult &&other) {
-        if (this != &other) {
-            this->~AggregatedResult();
-            ::new(this) AggregatedResult(std::move(other));
-        }
-        return *this;
-    }
-    ~AggregatedResult(){
-        if (_has_value) _value.~ValueType();
-    }
-
-
-    union {
-        ValueType _value;
-    };
-    const bool _has_value;
-};
-
-template<DocumentDef _ValueDef>
-using AggregatorView = IndexViewGen<_ValueDef, IndexViewBaseEmpty>;
-
-using AggregatorRevision = std::size_t;
-
-class AggregatedKey: public RawKey {
-public:
-    template<typename ... Args>
-    AggregatedKey(const Args & ... args):RawKey(0, KeyspaceID(0), args...) {}
-
-    void change_kid(const RawKey &src) {
-        std::copy(src.begin(), src.end(), this->mutable_ptr());
-    }
-    Key get_as_key() const {
-        return Key(RowView(std::string_view(*this).substr(sizeof(KeyspaceID))));
-    }
-
-
-};
-
-struct KeyReduceEmitTemplate {
-    void operator()(AggregatedKey key, const Key &value);
-    static constexpr bool erase = false;
-};
-
-
-///Defines update mode for the aggregation
-enum class UpdateMode {
-    /**
-     * Update must be performed by calling a function update()
-     */
-    manual,
-     /**
-      * Update is automatic by starting background task, when one
-      * or many keys are invalidated.
-      *
-      * You can still run manual update by calling function update() if you
-      * need to ensure, that all calculations are done in time
-      */
-    automatic
-};
-
-template<typename T, typename Storage>
-DOCDB_CXX20_CONCEPT(KeyReduceFn, requires{
-    std::invocable<T, KeyReduceEmitTemplate, Key, const typename Storage::DocType &, DocID>
-        && std::invocable<T, KeyReduceEmitTemplate, Key, const typename Storage::DocType &>
-        && std::invocable<T, KeyReduceEmitTemplate, Key>;
-   {T::revision} -> std::convertible_to<AggregatorRevision>;
-});
-
-template<typename T, typename Storage>
-DOCDB_CXX20_CONCEPT(AggregatorFn, requires{
-    std::invocable<T, const Storage &, Key>;
-   {T::revision} -> std::convertible_to<AggregatorRevision>;
+template<typename T>
+DOCDB_CXX20_CONCEPT(AggregatorSource, requires(T x) {
+    typename T::ValueType;
+    {x.get_db()} -> std::convertible_to<PDatabase>;
+    {x.register_transaction_observer([](Batch &b, const Key& key, bool erase){})};
+    {x.rescan_for([](Batch &b, const Key& key, bool erase){})};
+    {x.select(std::declval<Key>()) } -> std::derived_from<RecordsetBase>;
+    {x.update() };
 });
 
 
 
-template<AggregatorSource MapSrc, typename _KeyReduceFn, typename _AggregatorFn,
-                UpdateMode update_mode, typename _ValueDef = RowDocument>
-DOCDB_CXX20_REQUIRES(KeyReduceFn<_KeyReduceFn, MapSrc> && AggregatorFn<_AggregatorFn, MapSrc>)
-class Aggregator: public AggregatorView<_ValueDef> {
-public:
+namespace _details {
 
-    static constexpr _KeyReduceFn keyReduceFn = {};
-    static constexpr _AggregatorFn aggregatorFn = {};
-    static constexpr AggregatorRevision revision = _KeyReduceFn::revision + 0x9e3779b9 + (_AggregatorFn::revision<<6) + (_AggregatorFn::revision>>2);
-    using ValueType = typename _ValueDef::Type;
-    using DocType = typename MapSrc::ValueType;
 
-    ///Construct aggregator
+
+
+     template<typename X>
+     DOCDB_CXX20_CONCEPT(IteratorContainsID, requires(X x) {
+        {x->id} -> std::convertible_to<DocID>;
+     });
+
+     template<typename T> struct GetColumns {
+         using TupleType = typename T::TupleType;
+     };
+
+     template<typename ... Items> struct GetColumns<std::tuple<Items...> > {
+         using TupleType = std::tuple<Items...>;
+     };
+
+     template<typename X, typename ... Args>
+     struct CombineRevision {
+         static constexpr std::size_t revision = CombineRevision <Args...>::revision + 1UL<<X::revision;
+     };
+     template<typename X>
+     struct CombineRevision<X> {
+         static constexpr std::size_t revision = 1UL<<X::revision;
+     };
+
+     template<typename T, typename X>
+     auto wrap_reference(X &&val) {
+         if constexpr(std::is_reference_v<T>) {
+             return &val;
+         } else {
+             return T(std::forward<X>(val));
+         }
+     }
+
+     template<typename T, typename X>
+     auto unwrap_refernece(X &&val) {
+         if constexpr(std::is_reference_v<T>) {
+             return T(*val);
+         } else {
+             return T(val);
+         }
+     }
+
+     template<typename AggrFn, typename T, bool b>
+     struct AggrResult {
+         using type = std::decay_t<T>;
+     };
+
+     template<typename AggrFn, typename T>
+     struct AggrResult<AggrFn, T, true> {
+         using type = typename AggrFn::ResultType;
+     };
+
+}
+
+
+///Aggregate tool
+/**
+ * @tparam ColumnTuple This template argument should contain std::tuple<> of types matching
+ * the format of stored key however it can contain less columns for grouping. For example, if
+ * the key has 3 columns, you can specify just 2 column to group by these columns. It is also
+ * possible to define own type, which can accept the std::tuple<> and define coparison operator
+ * to implement non-standard grouping. In this case, your type must contain `using TupleType`
+ * which must contain definition of types in columns declared as tuple
+ *
+ * @code
+ * struct MyAggregatedKey {
+ *      using TupleType = std::tuple<std::size_t, double>;
+ *      MyAggregatedKey(const TupleType &init);
+ *      //...
+ * };
+ * @endcode
+ *
+ *
+ * To use aggregation over recordset, use Aggregate<Collumns...>::Recordset
+ */
+template<typename ColumnTuple /*= std::tuple<> */>
+struct AggregateBy {
+
+    using TupleType = typename _details::GetColumns<ColumnTuple>::TupleType;
+
+
+    ///Aggregate recordset
     /**
-     * @param source source index
-     * @param name name of keyspace where materialized aggregation is stored
-     * @param manual_update use true to disable background update. In this case, you
-     * need manually call update() to finish pending aggregations
+     * @tparam RC Recordset to aggregate (for example IndexView::Recordset)
+     * @tparam AggrFn aggregation function. Function must accept two or three arguments.
+     * The first argument must be reference of accumulator, other arguments are index's value
+     * and document id (which is optional).
      *
+     * @code
+     * void fn3(accumulator &a, const ValueType &val, DocID id);
+     * void fn2(accumulator &a, const ValueType &val);
+     * @endcode
+     *
+     * The accumulator type is then deduced as resulting aggregated value. Instance
+     *  of the accumulator must be constructed using default constructor
+     *
+     * For convenience you can use automatic deduction, so if you specify object
+     * without template arguments, it can deduce recordset type and aggregate function
      */
-    Aggregator(MapSrc &source, std::string_view name)
-        :Aggregator(source, source.get_db()->open_table(name, Purpose::aggregation)) {}
-    Aggregator(MapSrc &source, KeyspaceID kid)
-        :AggregatorView<_ValueDef>(source.get_db(), kid, Direction::forward, {}, false)
-        ,_source(source)
-        ,_tcontrol(*this){
-
-        if (get_revision() != revision) {
-            rebuild();
-        }
-        this->_source.register_transaction_observer(make_observer());
-    }
-
-    AggregatorRevision get_revision() const {
-        auto k = this->_db->get_private_area_key(this->_kid);
-        auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
-        if (doc.has_value()) {
-            auto [cur_rev] = doc->template get<AggregatorRevision>();
-            return cur_rev;
-        }
-        else return 0;
-    }
-
-    using TransactionObserver = std::function<void(Batch &b, const AggregatedKey& key, const ValueType &value, DocID docid, bool erase)>;
-
-    void register_transaction_observer(TransactionObserver obs) {
-        _tx_observers.push_back(std::move(obs));
-    }
-
-    template<bool deleting>
-    class Emit {
+    template<typename RC, typename AggrFn>
+    class Recordset {
     public:
-        static constexpr bool erase = deleting;
 
-        Emit(Aggregator &owner, Batch &b)
-            :_owner(owner), _b(b) {}
+        using ResultTypeBase = std::invoke_result_t<AggrFn,decltype(std::declval<RC>().begin()->value)>;
+        using ResultType = typename _details::AggrResult<AggrFn, ResultTypeBase, AggregateFunction<AggrFn> >::type;
 
-        void operator()(AggregatedKey &&key, const Key &value) {put(key, value);}
-        void operator()(AggregatedKey &key, const Key &value) {put(key, value);}
+
+        ///Inicialize aggregator
+        /**
+         * @param rc recordset - must be moved in, or you can use view to call appropriate
+         * select() function to receive recordset
+         * @param aggrFn instance of aggregate function
+         */
+        Recordset(RC rc, AggrFn aggrFn)
+            :_rc(std::move(rc))
+            ,_iter(_rc.begin())
+            ,_end(_rc.end())
+            ,_aggrFn(std::move(aggrFn)) {}
+
+        ///Structure is returned as result of aggregated iteration
+        struct ValueType {
+            ///Key - contains key in type passed as ColumnTuple
+            ColumnTuple key;
+            ///Value - contains aggregated value
+            ResultType value;
+        };
+
+        ///Iterator - allows to read aggregated results (input iterator)
+        /** best usage of this iterator is to use ranged-for
+         *
+         */
+        class Iterator {
+        public:
+            using iterator_category = std::input_iterator_tag;
+            using value_type = ValueType; // crap
+            using difference_type = ptrdiff_t;
+            using pointer = const ValueType *;
+            using reference = const ValueType &;
+
+
+            Iterator() = default;
+            Iterator(Recordset *owner, bool end):_owner(owner), _end(end) {}
+
+            Iterator &operator++() {
+                _end = !_owner->get_next();
+                return *this;
+            }
+            const ValueType &operator *() const {
+                return *_owner->get_value_ptr();
+            }
+            const ValueType *operator ->() const {
+                return _owner->get_value_ptr();
+            }
+            bool operator == (const Iterator &iter) const {
+                return _owner == iter._owner && _end == iter._end;
+            }
+
+        protected:
+            Recordset *_owner = nullptr;
+            bool _end = true;
+        };
+
+        ///get begin iterator
+        /** as this iterator is single pass input iterator, it returns instance which
+         * is marked as "not end". However reading through iterator changes state of underlying
+         * recordset
+         *
+         * @return iterator
+         *
+         * @note function automatically fetches the first item.
+         */
+        Iterator begin()  {return Iterator(this,!get_next());}
+        ///get end iterator
+        /**
+         * @return instance of iterator which marks end of iteration
+         */
+        Iterator end() {return Iterator(this, true);}
+
 
     protected:
-        Aggregator &_owner;
-        Batch &_b;
 
+        using RCValue = decltype(std::declval<typename RC::Iterator>()->value);
+        RC _rc;
+        typename RC::Iterator _iter;
+        typename RC::Iterator _end;
+        AggrFn _aggrFn;
+        std::optional<ValueType> _result;
 
-        void put(AggregatedKey &key, const Key &value) {
-            key.change_kid(Database::get_private_area_key(_owner._kid));
-            key.append(_b.get_revision());
-            auto &buffer = _b.get_buffer();
-            auto buff_iter = std::back_inserter(buffer);
-            _ValueDef::to_binary(value, buff_iter);
-            _b.Put(key, buffer);
+        bool get_next() {
+            if (_iter == _end) return false;
+            AggrFn aggrFn(_aggrFn);
+            _result.reset();
+            ColumnTuple kbase(_iter->key.template get<TupleType>());
+            auto cur_val = _details::wrap_reference<ResultTypeBase>(
+                    aggrFn(_iter->value)
+            );
+            ++_iter;
+            while (_iter != _end) {
+                ColumnTuple k(_iter->key.template get<TupleType>());
+                if (k != kbase) break;
+                cur_val = _details::wrap_reference<ResultTypeBase>(
+                    aggrFn(_iter->value)
+                );
+                ++_iter;
+            }
+            _result.emplace(ValueType{
+                kbase,
+                _details::unwrap_refernece<ResultTypeBase>(cur_val)
+            });
+            return true;
+        }
+
+        const ValueType *get_value_ptr() const {
+            return &(*_result);
         }
     };
 
 
-    ~Aggregator() {
-        join();
-    }
+    template<typename RC, typename AggrFn>
+    Recordset(RC rc, AggrFn aggrFn)->Recordset<RC, AggrFn>;
 
-    ///Perform manual update
-    /**Manual update still is possible in automatic mode.
-     */
-    void update() {
-        _source.update();
-        this->do_update();
-    }
 
-    ///Synchronizes current thread with finishing of background tasks
-    /**
-     * It is used in destructor, but you can use it anywhere you need. This
-     * blocks current thread until background update is finished. Note that
-     * function works with automatic background updates, not updates called
-     * manually by the update() function.
-     *
-     * @note If many records are being inserted which triggers more and
-     * more updates, the function cannot unblock. You need to stop pushing
-     * new updates.
-     */
-    void join() {
-        int v;
-        v = _pending.load(std::memory_order_relaxed);
-        while (v) {
-            _pending.wait(v, std::memory_order_relaxed);
-            v = _pending.load(std::memory_order_relaxed);
-        }
-    }
 
-protected:
+    template<DocumentDef _ValueDef>
+    using AggregatorView = IndexViewGen<_ValueDef, IndexViewBaseEmpty<_ValueDef> >;
 
-    class TaskControl: public AbstractBatchNotificationListener {
+    template<AggregatorSource MapSrc, AggregateFunction AggrFn, DocumentDef _ValueDef = RowDocument, bool auto_update = false>
+    class Materialized: public AggregatorView<_ValueDef> {
     public:
-        TaskControl(Aggregator &owner):_owner(owner) {}
-        TaskControl(const TaskControl &owner) = delete;
-        TaskControl &operator=(const TaskControl &owner) = delete;
 
-        virtual void after_commit(std::size_t) noexcept override {
-            if (_owner.mark_dirty()) {
-                if constexpr(update_mode == UpdateMode::automatic) {
-                    ++_owner._pending;
-                    _owner._db->run_async([this] {
+        using ResultTypeBase = std::invoke_result_t<AggrFn,decltype(std::declval<MapSrc>().select(std::declval<Key>()).begin()->value)>;
+        using ResultType = typename AggrFn::ResultType;
+
+
+        using DocType = typename MapSrc::ValueType;
+        using ValueType = typename _ValueDef::Type;
+
+        using Revision = std::size_t;
+        static constexpr Revision revision = AggrFn::revision;
+
+        Materialized(MapSrc &source, std::string_view name)
+               :Materialized(source, source.get_db()->open_table(name, Purpose::aggregation)) {}
+        Materialized(MapSrc &source, KeyspaceID kid)
+               :AggregatorView<_ValueDef>(source.get_db(), kid, Direction::forward, {}, false)
+               ,_source(source)
+               ,_tcontrol(*this) {
+
+               if (get_revision() != revision) {
+                   rebuild();
+               }
+               this->_source.register_transaction_observer(make_observer());
+           }
+
+        Materialized(const Materialized &) = delete;
+        Materialized &operator=(const Materialized &) = delete;
+
+        Revision get_revision() const {
+            auto k = this->_db->get_private_area_key(this->_kid);
+            auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
+            if (doc.has_value()) {
+                auto [cur_rev] = doc->template get<Revision>();
+                return cur_rev;
+            }
+            else return 0;
+        }
+
+        void update() {
+            _source.update();
+            update(false);
+        }
+        void try_update() {
+            _source.try_update();
+            update(true);
+        }
+
+    protected:
+
+
+
+        class TaskControl: public AbstractBatchNotificationListener {
+        public:
+            TaskControl(Materialized &owner):_owner(owner) {}
+            TaskControl(const TaskControl &owner) = delete;
+            TaskControl &operator=(const TaskControl &owner) = delete;
+
+            virtual void after_commit(std::size_t) noexcept override {
+                _owner.after_commit();
+            }
+            virtual void before_commit(Batch &b) override {
+                if (_e) {
+                    std::exception_ptr e = std::move(_e);
+                    std::rethrow_exception(e);
+                }
+            }
+            virtual void after_rollback(std::size_t rev) noexcept override {
+                _owner.after_rollback();
+            }
+
+
+
+
+        protected:
+            Materialized &_owner;
+            std::exception_ptr _e;
+        };
+
+        MapSrc &_source;
+        TaskControl _tcontrol;
+        std::shared_mutex _index_lock;
+        std::atomic_flag _update_lock;
+        unsigned char _bank = 0;
+        bool dirty = false;
+
+        void after_commit() {
+            dirty = true;
+            _index_lock.unlock_shared();
+            if constexpr (auto_update) {
+                if (!_update_lock.test_and_set()) {
+                    std::thread thr([this]{
                         try {
-                            _owner.run_aggregation();
+                            while (update_lk());
                         } catch (...) {
-                            _e = std::current_exception();
+                            //todo handle exception
                         }
-                        auto &ref = _owner._pending;
-                        if (--ref == 0) {
-                            ref.notify_all();
-                        }
+                        _update_lock.clear();
+                        _update_lock.notify_one();
                     });
                 }
             }
+
         }
-        virtual void before_commit(Batch &b) override {
-            if (_e) {
-                std::exception_ptr e = std::move(_e);
-                std::rethrow_exception(e);
+        void after_rollback() {
+            _index_lock.unlock_shared();
+        }
+
+        bool update(bool non_block) {
+            if (_update_lock.test_and_set()) {
+                if (non_block) return false;
+                do {
+                    _update_lock.wait(true);
+                } while (_update_lock.test_and_set());
+            }
+            try {
+                update_lk();    //we don't need to know, whether dirty is set
+                _update_lock.clear();
+                _update_lock.notify_one();
+                return true;
+            } catch (...) {
+                _update_lock.clear();
+                _update_lock.notify_one();
+                throw;
+            }
+
+        }
+
+        bool update_lk() {
+            std::unique_lock ilk(_index_lock);
+            if (!dirty) {
+                return false;
+            }
+            dirty = false;
+            auto b = _bank;
+            _bank = 1-b;
+            auto snapshot = this->_db->make_snapshot();
+            ilk.unlock();
+            run_aggregate(snapshot, b,b+1);
+            return true;
+        }
+
+        void run_aggregate(PSnapshot snapshot, unsigned char b1, unsigned char b2) {
+            auto snapview = _source.get_snapshot(snapshot);
+            RecordsetBase rs(this->_db->make_iterator(snapshot, true),{
+                    Database::get_private_area_key(this->_kid, b1),
+                    Database::get_private_area_key(this->_kid, b2),
+                    FirstRecord::included,
+                    LastRecord::excluded
+            });
+            Batch b;
+            while (!rs.empty()) {
+                auto k = rs.raw_key();
+                auto [kid, bank, keydata] = Key::extract<KeyspaceID, unsigned char, Row>(k);
+                RawKey key(this->_kid, keydata);
+                Key agrkey(Blob(rs.raw_value()));
+                auto rc = snapview.select(agrkey);
+                auto iter = rc.begin();
+                auto iterend = rc.end();
+                if (iter != iterend) {
+                    AggrFn aggrFn = {};
+                    auto cur_val = _details::wrap_reference<ResultTypeBase>(
+                            aggrFn(iter->value)
+                    );
+                    ++iter;
+                    while (iter != iterend) {
+                        cur_val = _details::wrap_reference<ResultTypeBase>(
+                            aggrFn(iter->value)
+                        );
+                        ++iter;
+                    }
+                    ValueType v((ResultType((_details::unwrap_refernece<ResultTypeBase>(cur_val)))));
+                    auto &buff = b.get_buffer();
+                    _ValueDef::to_binary(v, std::back_inserter(buff));
+                    b.Put(key, buff);
+                } else {
+                    b.Delete(key);
+                }
+                b.Delete(to_slice(k));
+                this->_db->commit_batch(b);
+                rs.next();
             }
         }
-        virtual void after_rollback(std::size_t rev) noexcept override {}
 
+        auto make_observer() {
+             return [&](Batch &b, const Key &k, bool ) {
+                 _index_lock.lock_shared();
 
+                 TupleType kt = k.get<TupleType>();
+                 ColumnTuple ct(kt);
+                 Row vrw(kt);
+                 Row krw(ct);
+                 auto &buff = b.get_buffer();
+                 RowDocument::to_binary(krw, std::back_inserter(buff));
+                 auto dk = Database::get_private_area_key(this->_kid, _bank,  krw);
+                 b.Put(dk, buff);
+                 b.add_listener(&_tcontrol);
+             };
+         }
+        void update_revision() {
+            Batch b;
+            b.Put(this->_db->get_private_area_key(this->_kid), Row(revision));
+            this->_db->commit_batch(b);
+        }
 
+        void rebuild() {
+            this->_db->clear_table(this->_kid, false);
+            this->_db->clear_table(this->_kid, true);
+            this->_source.rescan_for(make_observer());
+            update_revision();
+        }
 
-    protected:
-        Aggregator &_owner;
-        std::exception_ptr _e;
     };
 
-    MapSrc &_source;
-    std::vector<TransactionObserver> _tx_observers;
-    TaskControl _tcontrol;
-    //object has been market dirty, must be updated
-    //in automatic mode, this also indicates, that background thread is scheduled
-    std::atomic<bool> _dirty = {true};
-    //count of pending background requests. It is possible to have 2 of them, one processing, other pending
-    std::atomic<int> _pending = {0};
-    //locks aggregation to be procesed one thread at time
-    std::mutex _mx;
-
-    bool mark_dirty() {
-        bool need = false;
-        return _dirty.compare_exchange_strong(need, true,std::memory_order_relaxed);
-    }
-
-    bool do_update() {
-        std::lock_guard _(_mx);
-        bool need = true;
-        if (!_dirty.compare_exchange_strong(need, false, std::memory_order_relaxed)) {
-            return false;
-        }
-        run_aggregation();
-        return true;
-    }
-
-
-    void run_aggregation() {
-        Batch b;
-        RecordSetBase rs(this->_db->make_iterator({}, this->_no_cache), {
-                Database::get_private_area_key(this->_kid),
-                Database::get_private_area_key(this->_kid+1),
-                FirstRecord::excluded,
-                LastRecord::excluded
-        });
-
-        RawKey prev_key((RowView()));
-
-        while (!rs.empty()) {
-            std::string_view keydata = rs.raw_key();
-            std::string_view valuedata = rs.raw_value();
-            keydata = keydata.substr(sizeof(KeyspaceID), keydata.length()-sizeof(KeyspaceID)- sizeof(std::size_t));
-            RawKey nk((RowView(keydata)));
-            if (nk != prev_key) {
-                prev_key = nk;
-                prev_key.mutable_buffer();
-                AggregatedResult<ValueType> r = aggregatorFn(_source, Key(RowView(valuedata)));
-                if (r._has_value) {
-                    auto &buff = b.get_buffer();
-                    _ValueDef::to_binary(r._value, std::back_inserter(buff));
-                    b.Put(nk, buff);
-                    notify_tx_observers(b, nk, r._value, false);
-                } else {
-                    if (_tx_observers.empty()) {
-                        b.Delete(nk);
-                    } else {
-                        auto prev = this->find(nk);
-                        if (prev.has_value()) {
-                            b.Delete(nk);
-                            notify_tx_observers(b, nk, *prev, true);
-                        }
-                    }
-                }
-            }
-            b.Delete(to_slice(rs.raw_key()));
-            rs.next();
-        }
-        this->_db->commit_batch(b);
-
-    }
-
-    template<typename ... Args>
-    void call_emit(bool erase, Batch &b, const Key &k, Args  ... args) {
-        if (erase) {
-            keyReduceFn(Emit<true>(*this, b), Key(RowView(k)), args...);
-        } else {
-            keyReduceFn(Emit<false>(*this, b), Key(RowView(k)), args...);
-        }
-    }
-
-    auto make_observer() {
-         return [&](Batch &b, const Key &k, const DocType &value, DocID docid, bool erase) {
-             if constexpr(std::invocable<_KeyReduceFn, Emit<false>, Key>) {
-                 call_emit(erase, b, k);
-             }else if constexpr(std::invocable<_KeyReduceFn, Emit<false>, Key, const DocType &>) {
-                 call_emit(erase, b, k, value);
-             }else if constexpr(std::invocable<_KeyReduceFn, Emit<false>, Key, const DocType &, DocID>) {
-                 call_emit(erase, b, k, value, docid);
-             } else {
-                 struct X{};
-                 static_assert(defer_false<X>, "Key reduce function has unsupported prototype");
-             }
-             b.add_listener(&_tcontrol);
-         };
-     }
-    void update_revision() {
-        Batch b;
-        b.Put(this->_db->get_private_area_key(this->_kid), Row(revision));
-        this->_db->commit_batch(b);
-    }
-
-    void rebuild() {
-        this->_db->clear_table(this->_kid, false);
-        this->_source.rescan_for(make_observer());
-        update_revision();
-    }
-
-    void notify_tx_observers(Batch &b, const AggregatedKey &key, const ValueType &value, bool erase) {
-        for (const auto &f: _tx_observers) {
-            f(b, key, value, 0, erase);
-        }
-    }
+    template<typename MapSrc, typename AggrFn, DocumentDef _ValueDef = RowDocument>
+    class MaterializedAutoUpdate: public Materialized<MapSrc,AggrFn, _ValueDef, true> {
+    public:
+        using Materialized<MapSrc,AggrFn, _ValueDef, true>::Materialized;
+    };
 
 };
 
-template<typename ... Args>
-struct ReduceKey {
-    static constexpr int revision = 1;
-    template<typename Emit, typename Val>
-    void operator()(Emit emit, Key key, const Val &) const {
-        auto kk = key.get<Args...>();
-        emit(kk, kk);
-    }
-};
 
 
 }

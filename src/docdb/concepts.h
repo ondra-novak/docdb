@@ -15,7 +15,7 @@ namespace docdb {
 /*
  Some IDEs (Eclipse for example) fails to parse concepts
  So we introduce a macro as workaround
- Please add any other macros emited by IDEs' parsers if you
+ Please add any other macros emitted by IDEs' parsers if you
  find self in the same situation
 */
 
@@ -161,6 +161,13 @@ template<typename ... T>
 constexpr bool defer_false = DeferFalse<T...>::val;
 
 }
+
+template<typename X>
+DOCDB_CXX20_CONCEPT(AggregateFunction, requires (X fn, const typename X::InputType &input) {
+    {fn(input)} -> std::convertible_to<typename X::ResultType>;
+});
+
+
 
 
 

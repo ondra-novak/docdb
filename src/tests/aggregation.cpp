@@ -1,10 +1,11 @@
 #include "check.h"
 #include "../docdb/storage.h"
 #include "../docdb/indexer.h"
-#include "../docdb/aggregator.h"
+
 #include "memdb.h"
 
-#include "../docdb/aggregate_rows.h"
+#include <docdb/aggregator.h>
+#include <docdb/aggregate_rows.h>
 
 static std::pair<std::string_view,int> words[] = {
         {"feed",56},
@@ -49,6 +50,18 @@ struct IndexFn {
     }
 };
 
+
+
+static auto aggrSumFn = [sum = 0](const docdb::Row &row) mutable -> const int & {
+    auto [v] = row.get<int>();
+    return sum+=v;
+};
+
+inline constexpr std::wstring_view wgroup_concat_default_delimiter{L","};
+template struct docdb::GroupConcat<>;
+template struct docdb::GroupConcat<docdb::Blob>;
+template struct docdb::GroupConcat<std::wstring_view,&wgroup_concat_default_delimiter>;
+
 void test1() {
 
     using DocumentDef = docdb::FixedRowDocument<std::string_view, int>;
@@ -59,11 +72,10 @@ void test1() {
 
     using Storage = docdb::Storage<DocumentDef>;
     using Index = docdb::Indexer<Storage, IndexFn ,docdb::IndexType::multi, IndexDef>;
-    using StatsAggregator = docdb::Aggregator<Index,
-            docdb::ReduceKey<std::size_t>,
+    using StatsAggregator = docdb::AggregateBy<std::tuple<std::size_t> >::Materialized<Index,
             docdb::AggregateRows<docdb::Composite<int,
                     docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int>
-                > >, docdb::UpdateMode::manual>;
+                > > >;
 
 
     Storage storage(db, "test_storage");
@@ -71,16 +83,19 @@ void test1() {
     StatsAggregator aggr(index, "test_aggr");
 
 
-
     for (auto c: words) {
         storage.put({c.first,c.second});
+    }
+
+    for (auto row: docdb::AggregateBy<std::tuple<std::size_t> >::Recordset(index.select_all(), aggrSumFn)){
+        std::cout << std::get<0>(row.key) << ": " << row.value << std::endl;
     }
 
     aggr.update();
 
     for (const auto &x: aggr.select_all()) {
         auto [k] = x.key.get<std::size_t>();
-        auto [count, sum, min, max] = x.value.get<int, int,int, int>();
+        auto [count, sum, min, max] = x.value.get<std::size_t, int,int, int>();
         std::cout << k << ": count=" << count << ", sum=" << sum  << ", max=" << max <<", min=" << min << std::endl;
     }
 
@@ -92,7 +107,7 @@ void test1() {
     std::cout << "---------------" << std::endl;
     for (const auto &x: aggr.select_all()) {
         auto [k] = x.key.get<std::size_t>();
-        auto [count, sum, min, max] = x.value.get<int, int,int, int>();
+        auto [count, sum, min, max] = x.value.get<std::size_t, int,int, int>();
         std::cout << k << ": count=" << count << ", sum=" << sum  << ", max=" << max <<", min=" << min << std::endl;
     }
 }

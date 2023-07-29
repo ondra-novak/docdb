@@ -26,6 +26,8 @@ public:
     using view_type = std::conditional_t<std::is_trivial_v<T> && std::is_standard_layout_v<T>,
             std::basic_string_view<T>, std::span<T> >;
 
+    using const_iterator = const T *;
+    using iterator = const_iterator;
 
     operator view_type() const {return {_begin, _len};}
 
@@ -308,6 +310,17 @@ public:
 
 
 }
+
+
+inline leveldb::Slice to_slice(const std::string_view &v) {
+    return {v.data(), v.size()};
+}
+
+inline std::string_view to_string(const leveldb::Slice &slice) {
+    return {slice.data(), slice.size()};
+}
+
+
 
 template<typename Stream, std::size_t N>
 Stream &operator << (Stream &s, const docdb::Buffer<char, N> &buffer) {

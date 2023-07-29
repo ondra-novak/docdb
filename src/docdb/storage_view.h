@@ -31,7 +31,7 @@ template<typename _DocDef>
 struct DocRecord_Def {
     using DocType = typename _DocDef::Type;
     ///Contains document itself
-    DocType content = {};
+    DocType document = {};
     ///Contains ID of a document which has been replaced
     DocID previous_id = 0;
     ///Contains true if this record is deleted document
@@ -44,8 +44,8 @@ struct DocRecord_Def {
     DocRecord_Def(Iter b, Iter e):has_value(std::distance(b ,e) > static_cast<std::ptrdiff_t>(sizeof(DocID))) {
         previous_id = Row::deserialize_item<DocID>(b, e);
         if (has_value) {
-            content =  _DocDef::from_binary(b,e);
-            deleted = document_is_deleted<_DocDef>(content);
+            document =  _DocDef::from_binary(b,e);
+            deleted = document_is_deleted<_DocDef>(document);
         } else {
             deleted = true;
         }
@@ -71,32 +71,32 @@ struct DocRecord_Un {
      *
      */
     union {
-        DocType content;
+        DocType document;
     };
     ///Contains ID of a document which has been replaced
     DocID previous_id = 0;
-    ///contains true, if the content contains a value, when false, do not access this variable
+    ///contains true, if the document contains a value, when false, do not access this variable
     const bool has_value = false;
     ///contains true, if the document is marked as deleted
     bool erased = true;
 
 
     DocRecord_Un(DocID previous_id):previous_id(previous_id)  {}
-    ~DocRecord_Un() {if (has_value) content.~DocType();}
+    ~DocRecord_Un() {if (has_value) document.~DocType();}
     template<typename Iter>
     DocRecord_Un(Iter b, Iter e):has_value(load_info(b,e,previous_id)) {
         erased = document_is_deleted<_DocDef>(b, e);
         if (has_value) {
             const_cast<bool &>(has_value) = true;
-            ::new(&content) DocType(_DocDef::from_binary(b,e));
+            ::new(&document) DocType(_DocDef::from_binary(b,e));
         }
     }
     DocRecord_Un(const DocRecord_Un &other)
         :previous_id(other.previous_id),has_value(other.has_value), erased(other.erased) {
-        if (has_value) new(&content) DocType(other.content);
+        if (has_value) new(&document) DocType(other.document);
     }
     DocRecord_Un(DocRecord_Un &&other):previous_id(other.previous_id),has_value(other.has_value), erased(other.erased) {
-        if (has_value) new(&content) DocType(std::move(other.content));
+        if (has_value) new(&document) DocType(std::move(other.document));
     }
     DocRecord_Un &operator=(const DocRecord_Un &other) {
         if (this != &other) {
@@ -135,7 +135,7 @@ struct DocRecordDef {
     static Iter to_binary(const Type &type, Iter iter) {
         Row::serialize_items(iter, type.previous_id);
         if (type.deleted) return iter;
-        return _DocDef::to_binary(type.content, iter);
+        return _DocDef::to_binary(type.document, iter);
     }
 
 };
@@ -160,6 +160,10 @@ public:
         return StorageView(this->_db, this->_kid, this->_dir, this->_db->make_snapshot(), no_cache);
     }
 
+    StorageView get_snapshot(PSnapshot snap, bool no_cache = true) const {
+        return StorageView(this->_db, this->_kid, this->_dir, snap, no_cache);
+    }
+
     StorageView reverse() const {
         return StorageView(this->_db, this->_kid, isForward(this->_dir)?Direction::backward:Direction::forward, this->_snap, this->_no_cache);
     }
@@ -173,7 +177,7 @@ public:
         IteratorValueType(std::string_view raw_key, std::string_view raw_value)
             :DocRecord(DocRecordDef<_DocDef>::from_binary(raw_value.begin(),raw_value.end()))
              {
-                Key k ((RowView(raw_key)));
+                Key k = Key::from_string(raw_key);
                 id  = std::get<0>(k.get<DocID>());
              }
     };
@@ -181,11 +185,11 @@ public:
 
 
     ///Iterator
-    class RecordSet: public RecordSetBase {
+    class Recordset: public RecordsetBase {
     public:
-        using RecordSetBase::RecordSetBase;
+        using RecordsetBase::RecordsetBase;
 
-        using Iterator = RecordSetIterator<RecordSet, IteratorValueType>;
+        using Iterator = RecordsetIterator<Recordset, IteratorValueType>;
 
         auto begin() {
             return Iterator {this, false};
@@ -202,14 +206,14 @@ public:
     };
 
     ///Scan whole storage
-    RecordSet select_all(Direction dir=Direction::normal) const {
+    Recordset select_all(Direction dir=Direction::normal) const {
         if (isForward(changeDirection(this->_dir, dir))) {
-            return RecordSet(this->_db->make_iterator(this->_snap, this->_no_cache),{
+            return Recordset(this->_db->make_iterator(this->_snap, this->_no_cache),{
                     RawKey(this->_kid),RawKey(this->_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
-            return RecordSet(this->_db->make_iterator(this->_snap, this->_no_cache),{
+            return Recordset(this->_db->make_iterator(this->_snap, this->_no_cache),{
                     RawKey(this->_kid+1),RawKey(this->_kid),
                     FirstRecord::excluded, LastRecord::included
             });
@@ -217,14 +221,14 @@ public:
     }
 
     ///Scan from given document for given direction
-    RecordSet select_from(DocID start_pt, Direction dir = Direction::normal) const {
+    Recordset select_from(DocID start_pt, Direction dir = Direction::normal) const {
         if (isForward(changeDirection(this->_dir, dir))) {
-            return RecordSet(this->_db->make_iterator(this->_snap, this->_no_cache),{
+            return Recordset(this->_db->make_iterator(this->_snap, this->_no_cache),{
                     RawKey(this->_kid, start_pt),RawKey(this->_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
-            return RecordSet(this->_db->make_iterator(this->_snap, this->_no_cache),{
+            return Recordset(this->_db->make_iterator(this->_snap, this->_no_cache),{
                     RawKey(this->_kid, start_pt),RawKey(this->_kid),
                     FirstRecord::included, LastRecord::excluded
             });
@@ -232,8 +236,8 @@ public:
     }
 
     ///Scan for range
-    RecordSet select_range(DocID start_id, DocID end_id, LastRecord last_record = LastRecord::excluded) const {
-        return RecordSet(this->_db->make_iterator(false,this->_snap),{
+    Recordset select_range(DocID start_id, DocID end_id, LastRecord last_record = LastRecord::excluded) const {
+        return Recordset(this->_db->make_iterator(false,this->_snap),{
                 RawKey(this->_kid, start_id),RawKey(this->_kid, end_id),
                 FirstRecord::included, last_record
         });
@@ -251,7 +255,7 @@ public:
     }
 
     template<std::invocable<ExportedDocument> Fn>
-    static void export_documents(RecordSet &rc, Fn &&export_fn) {
+    static void export_documents(Recordset &rc, Fn &&export_fn) {
         ExportedDocument x;
         while (!rc.empty()) {
             auto [tmp1, id] = Row::extract<KeyspaceID, DocID>(rc.raw_key());

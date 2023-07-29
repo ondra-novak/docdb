@@ -113,7 +113,7 @@ static void print_list_tables(const docdb::PDatabase &db) {
             purpose_text = buff;
         }
         int kid = row.second.first;
-        docdb::RecordSetBase rc(db->make_iterator(),{
+        docdb::RecordsetBase rc(db->make_iterator(),{
                 docdb::RawKey(kid),
                 docdb::RawKey(kid+1),
                 docdb::FirstRecord::included,
@@ -391,7 +391,7 @@ struct RecordsetList {
                 from, to,docdb::FirstRecord::included,docdb::LastRecord::excluded
         }), p(p), db(db), _dir(docdb::Direction::forward) {}
 
-    docdb::RecordSetBase rc;
+    docdb::RecordsetBase rc;
     docdb::Purpose p;
     docdb::PDatabase db;
 
@@ -409,9 +409,8 @@ struct RecordsetList {
             --count;
             switch (p) {
                 case docdb::Purpose::storage: {
-                    docdb::Key k((docdb::RowView(rc.raw_key())));
                     auto v = rc.raw_value();
-                    auto [id] = k.get<docdb::DocID>();
+                    auto [id] = docdb::Key::extract<docdb::DocID>(rc.raw_key());
                     auto [prev_id, doc] = docdb::Row::extract<docdb::DocID, docdb::Blob>(v);
                     _cols.push_back({
                         std::to_string(id),
@@ -426,9 +425,8 @@ struct RecordsetList {
                     auto rw = rc.raw_key();
                     auto docidstr = rw.substr(rw.length()-sizeof(docdb::DocID));
                     auto [id] = docdb::Row::extract<docdb::DocID>(docidstr);
-                    docdb::Key k(docdb::RowView(rw.substr(0, rw.size()-docidstr.size())));
                     auto val = rc.raw_value();
-                    auto [key] = k.get<docdb::Blob>();
+                    auto [key] = docdb::Key::extract<docdb::Blob>(rw.substr(0, rw.size()-docidstr.size()));
                     _cols.push_back({
                         std::to_string(id),
                         make_printable(key,false, false),
@@ -438,8 +436,7 @@ struct RecordsetList {
                     list_keys.push_back(std::string(key));
                 } break;
                 case docdb::Purpose::unique_index: {
-                    docdb::Key k((docdb::RowView(rc.raw_key())));
-                    auto [key] = k.get<docdb::Blob>();
+                    auto [key] = docdb::Key::extract<docdb::Blob>(rc.raw_key());
                     auto v = rc.raw_value();
                     auto [id, doc] = docdb::Row::extract<docdb::DocID, docdb::Blob>(v);
                     _cols.push_back({
@@ -451,8 +448,7 @@ struct RecordsetList {
                     list_keys.push_back(std::string(key));
                 }break;;
                 case docdb::Purpose::private_area: {
-                    docdb::Key k((docdb::RowView(rc.raw_key())));
-                    auto [dummy, key] = k.get<docdb::KeyspaceID, docdb::Blob>();
+                    auto [dummy, key] = docdb::Key::extract<docdb::KeyspaceID, docdb::Blob>(rc.raw_key());
                     auto v = rc.raw_value();
                     _cols.push_back({
                         std::string(),
@@ -462,8 +458,7 @@ struct RecordsetList {
                     list_keys.push_back(std::string(key));
                 } break;
                 default: {
-                    docdb::Key k((docdb::RowView(rc.raw_key())));
-                    auto [key] = k.get<docdb::Blob>();
+                    auto [key] = docdb::Key::extract<docdb::Blob>(rc.raw_key());
                     auto v = rc.raw_value();
                     _cols.push_back({
                         std::string(),
@@ -565,7 +560,7 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
                         std::cerr << "Replaced document: " << r->previous_id << std::endl;
                     }
                     std::cout << "```" <<std::endl;
-                    std::cout << make_printable(r->content,false, true) << std::endl;
+                    std::cout << make_printable(r->document,false, true) << std::endl;
                     std::cout << "```" <<std::endl;
                     std::cerr << std::endl;
                 }
@@ -575,7 +570,7 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
     } else {
         auto r =db->get_as_document<docdb::FoundRecord<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(iter->second.first, id),{});
         if (r) {
-            std::cout << make_printable(r->content,false, true) << std::endl;
+            std::cout << make_printable(r->document,false, true) << std::endl;
         } else {
             std::cerr << "Document was not found in the collection: " << name << std::endl;
         }
@@ -618,7 +613,7 @@ static void command_seek(const docdb::PDatabase &db, std::string name, const std
         if (id == 0) throw std::invalid_argument("The document ID must be number greater than zero");
         cur_recordset = std::make_unique<RecordsetList>(db, nfo.first, nfo.second, dir, docdb::Row(id));
     } else {
-        cur_recordset = std::make_unique<RecordsetList>(db, nfo.first, nfo.second, dir, docdb::RowView(args[1]));
+        cur_recordset = std::make_unique<RecordsetList>(db, nfo.first, nfo.second, dir, docdb::Row(docdb::Blob(args[1])));
     }
 
     cur_recordset->print_page();

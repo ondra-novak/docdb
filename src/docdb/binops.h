@@ -70,9 +70,9 @@ public:
         bool is_inverted() const {return _inverted;}
 
         void clear() {
-             std::vector<Item>::clear();
-             _inverted = false;
-         }
+            std::vector<Item>::clear();
+            _inverted = false;
+        }
 
 
     protected:
@@ -112,8 +112,8 @@ public:
     Ret push_unsorted(const Set &set) {
         return push_unsorted(Set(set));
     }
-    template<RecordsetType RecordSet, RecordsetStackMapFn<ValueT, RecordSet> FN = EmptyMap>
-    Ret push(RecordSet &&rc, FN fn = empty_map_fn) {
+    template<RecordsetType Recordset, RecordsetStackMapFn<ValueT, Recordset> FN = EmptyMap>
+    Ret push(Recordset &&rc, FN fn = empty_map_fn) {
         Set out = empty_set();
         for (const auto &rw: rc) {
             out.emplace_back(Item{rw.id, fn(rw)});
@@ -286,6 +286,14 @@ public:
             _last_a = std::move(_stack.top());
             _stack.pop();
         }
+    }
+
+    auto begin() const {
+        return top().begin();
+    }
+
+    auto end() const {
+        return top().end();
     }
 
 protected:

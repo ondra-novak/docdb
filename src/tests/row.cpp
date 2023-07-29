@@ -11,13 +11,6 @@ static_assert(docdb::DocumentDef<docdb::RowDocument> );
 
 void test_basics() {
 
-    docdb::Row x(docdb::RowView("hello"));
-    CHECK_EQUAL(std::string_view(x) ,"hello");
-    CHECK(x.is_view());
-    *x.mutable_ptr() = 'z';
-    CHECK_EQUAL(std::string_view(x) ,"zello");
-    CHECK(!x.is_view());
-
     docdb::Row y({true,"hello","world",42});
 
     {
@@ -29,15 +22,6 @@ void test_basics() {
     CHECK_EQUAL(d,42);
     }
 
-    docdb::Row z = docdb::RowView(std::string_view(y));
-    {
-    auto [a,b,c,d] = z.get<bool, std::string, std::string, int>();
-
-    CHECK(a);
-    CHECK_EQUAL(b,"hello");
-    CHECK_EQUAL(c,"world");
-    CHECK_EQUAL(d,42);
-    }
 
     using MyVar = std::variant<int,std::string, bool>;
      MyVar val1(10), val2("ahoj"), val3(true);
@@ -125,7 +109,6 @@ void test_subrow() {
 
     auto [a,b] = rw2.get<int, docdb::Row>();
     CHECK_EQUAL(a, 42);
-    CHECK(b.is_view());
     auto [i,j] = b.get<std::string_view,std::string_view>();
     CHECK_EQUAL(i, "ahoj");
     CHECK_EQUAL(j, "nazdar");
@@ -133,8 +116,7 @@ void test_subrow() {
 
 void test_keys(){
     docdb::Key k(1,2,"aaa");
-    docdb::Key k2(k.view());
-    CHECK(k2.is_view());
+    docdb::Key k2(k);
     {
     auto [a,b,c] = k2.get<int,int,std::string_view>();
     CHECK_EQUAL(a,1);
@@ -142,7 +124,6 @@ void test_keys(){
     CHECK_EQUAL(c,"aaa");
     }
     auto k3=k2.prefix_end();
-    CHECK(!k3.is_view());
     {
     auto [a,b,c] = k3.get<int,int,std::string_view>();
     CHECK_EQUAL(a,1);
@@ -161,7 +142,6 @@ void test_document() {
         const char text[] = "ahoj\0nazdar";
         std::string_view textstr(text, sizeof(text));
         docdb::Row row = docdb::RowDocument::from_binary(textstr.begin(), textstr.end());
-        CHECK(row.is_view());
         auto [a,b] = row.get<std::string_view, std::string_view>();
         CHECK_EQUAL(a,"ahoj");
         CHECK_EQUAL(b,"nazdar");
@@ -171,7 +151,6 @@ void test_document() {
         const char text[] = "ahoj\0nazdar";
         std::string textstr(text, sizeof(text));
         docdb::Row row = docdb::RowDocument::from_binary(textstr.begin(), textstr.end());
-        CHECK(!row.is_view());
         auto [a,b] = row.get<std::string_view, std::string_view>();
         CHECK_EQUAL(a,"ahoj");
         CHECK_EQUAL(b,"nazdar");
@@ -181,8 +160,7 @@ void test_document() {
         docdb::Row rw(1,2,3);
         std::string s;
         docdb::RowDocument::to_binary(rw, std::back_inserter(s));
-        docdb::Row rw2((docdb::RowView(s)));
-        auto [a,b,c] = rw2.get<int,int,int>();
+        auto [a,b,c] = docdb::Row::extract<int,int,int>(s);
         CHECK_EQUAL(a,1);
         CHECK_EQUAL(b,2);
         CHECK_EQUAL(c,3);

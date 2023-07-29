@@ -9,21 +9,20 @@ int main() {
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
     docdb::Map<docdb::StringDocument> m(db, "test_map");
 
-    void (*testfn)(docdb::Batch &, const docdb::Key &, const std::string_view &);
+    void (*testfn)(docdb::Batch &, const docdb::Key &);
 
 
-    m.register_transaction_observer([&](docdb::Batch &b, const docdb::Key &k, const std::string_view &doc, bool) {
-        testfn(b, k, doc);
+    m.register_transaction_observer([&](docdb::Batch &b, const docdb::Key &k, bool) {
+        testfn(b, k);
     });
 
     static bool called = false;
 
 
-    auto testfn_Hello = [](docdb::Batch &b, const docdb::Key &k, const std::string_view &v) {
+    auto testfn_Hello = [](docdb::Batch &b, const docdb::Key &k) {
         called = true;
         auto [kv] = k.get<std::size_t>();
         CHECK_EQUAL(kv, 42);
-        CHECK_EQUAL(v, "Hello");
     };
 
     testfn = testfn_Hello;
@@ -33,11 +32,10 @@ int main() {
     called = false;
 
 
-    testfn = [](docdb::Batch &b, const docdb::Key &k, const std::string_view &v) {
+    testfn = [](docdb::Batch &b, const docdb::Key &k) {
         called = true;
         auto [kv] = k.get<std::size_t>();
         CHECK_EQUAL(kv, 56);
-        CHECK_EQUAL(v, "World");
     };
 
     m.put({std::size_t(56)},"World");
