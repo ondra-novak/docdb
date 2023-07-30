@@ -25,7 +25,7 @@ struct AggregatorEmitTemplate {
 };
 
 template<typename T, typename Storage, typename _ValueDef>
-DOCDB_CXX20_CONCEPT(IndexFn, requires{
+DOCDB_CXX20_CONCEPT(IndexAggrFn, requires{
    requires std::invocable<T, AggregatorEmitTemplate<_ValueDef>, typename Storage::DocType>;
    {T::revision} -> std::convertible_to<IndexRevision>;
 });
@@ -86,7 +86,7 @@ using MapView = IndexViewGen<_ValueDef, IndexViewBaseEmpty<_ValueDef> >;
  * @endcode
  */
 template<DocumentStorageType Storage, typename _IndexFn, DocumentDef _ValueDef = RowDocument>
-DOCDB_CXX20_REQUIRES(IndexFn<_IndexFn, Storage, _ValueDef>)
+DOCDB_CXX20_REQUIRES(IndexAggrFn<_IndexFn, Storage, _ValueDef>)
 class IncrementalAggregator: public MapView<_ValueDef> {
 public:
 
