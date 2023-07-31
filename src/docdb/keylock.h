@@ -32,6 +32,17 @@ public:
         Rev rev;
     };
 
+    enum LockState {
+        //key is locked ok
+        ok,
+        //key is already locked for this batch
+        already_locked,
+        //key is locked for different batch and deadlock happened
+        deadlock,
+        //key is locked - valid for trylock
+        locked
+    };
+
     struct KeyHashRevWait: KeyHashRev {
         bool waiting = false;
     };
@@ -43,7 +54,7 @@ public:
      * @retval true success
      * @retval false failure, deadlock
      */
-    bool lock_key(std::size_t rev, const RawKey &key) {
+    LockState lock_key(std::size_t rev, const RawKey &key) {
         KeyHashRevWait kk{{key, rev}};
         kk.kh.mutable_buffer(); //ensure it is copied
         std::unique_lock lk(_mx);
@@ -59,13 +70,13 @@ public:
                         return item.rev == rev;
                     }));
                 }
-                return true;
+                return ok;
             }
             if (iter->rev == rev) {
-                return false;
+                return already_locked;
             }
             if (!waiting) {
-                if (check_deadlock(iter->rev, rev)) return false;
+                if (check_deadlock(iter->rev, rev)) return deadlock;
                 _waitings.push_back(kk);
                 waiting = true;
             }
@@ -81,7 +92,7 @@ public:
      * @retval true success
      * @retval false failure, somebody already locked the key previously
      */
-    bool try_lock_key(std::size_t rev, const RawKey &key) {
+    LockState try_lock_key(std::size_t rev, const RawKey &key) {
         std::hash<std::string_view> hasher;
         Key kh = hasher(key);
         std::unique_lock lk(_mx);
@@ -90,12 +101,12 @@ public:
         });
         if (iter == _lst.end()) {
             _lst.push_back(KeyHashRevWait{{kh, rev}});
-            return true;
+            return ok;
         }
         if (iter->rev == rev) {
-            return false;
+            return already_locked;
         }
-        return false;
+        return locked;
     }
 
     ///Unlock all keys owned by given batch's revision

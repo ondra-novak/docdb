@@ -107,7 +107,8 @@ protected:
 
     void init_if_found() {
         if (_found) {
-            ::new(&_storage) ValueType(_ValueDef::from_binary(_buff.begin(), _buff.end()));
+            auto at = _buff.begin();
+            ::new(&_storage) ValueType(_ValueDef::from_binary(at, _buff.end()));
             _inited =true;
         }
     }

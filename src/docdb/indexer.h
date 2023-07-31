@@ -117,7 +117,7 @@ public:
             auto &buffer = _b.get_buffer();
             auto buff_iter = std::back_inserter(buffer);
             if constexpr(index_type == IndexType::unique && !deleting) {
-               if (!_owner._locker.lock_key(_b.get_revision(), key)) {
+               if (_owner._locker.lock_key(_b.get_revision(), key) == KeyLock::deadlock) {
                    throw make_deadlock_exception(key, _owner._db);
                }
                std::string tmp;

@@ -94,7 +94,7 @@ public:
 
     static constexpr _IndexFn indexFn = {};
     static constexpr IndexRevision revision = _IndexFn::revision;
-    static constexpr Purpose _purpose = Purpose::unique_index;
+    static constexpr Purpose _purpose = Purpose::map;
 
     using DocType = typename Storage::DocType;
     using ValueType = typename _ValueDef::Type;
@@ -149,12 +149,43 @@ public:
         DocID prev_doc;
     };
 
+    struct TempStorage {
+        std::mutex _mx;
+        std::map<std::pair<std::size_t, RawKey>, ValueType> _kv;
+        void erase_rev(std::size_t rev) {
+            std::lock_guard _(_mx);
+            auto from = _kv.lower_bound({rev,{0}});
+            auto to = _kv.lower_bound({rev+1,{0}});
+            _kv.erase(from,to);
+        }
+        void set(std::size_t rev, const RawKey &key, const ValueType &v) {
+            std::lock_guard _(_mx);
+            auto r = _kv.insert({{rev, key}, v});
+            if (!r.second) r.first->second = v;
+        }
+        std::optional<ValueType> get(std::size_t rev, const RawKey &key) {
+            std::lock_guard _(_mx);
+            auto iter = _kv.find({rev,key});
+            if (iter != _kv.end()) return iter->second;
+            else return {};
+        }
+        void erase(std::size_t rev, const RawKey &key) {
+            std::lock_guard _(_mx);
+            _kv.erase({rev,key});
+        }
+    };
+
     class CurrentValue: public std::optional<ValueType> {
     public:
-        CurrentValue(IncrementalAggregator &owner, Batch &b, RawKey &key)
+        CurrentValue(IncrementalAggregator &owner, Batch &b, RawKey &key, bool from_temp)
         :_owner(owner),_b(b),_key(std::move(key))
         {
-            if (_owner._db->get(_key, _tmp)) {
+            if (from_temp) {
+                auto v = owner._tmpstor.get(b.get_revision(), _key);
+                if (v.has_value()) {
+                    this->emplace(std::move(*v));
+                }
+            } else if (_owner._db->get(_key, _tmp)) {
                 auto at = _tmp.begin();
                 auto end = _tmp.end();
                 this->emplace(_ValueDef::from_binary(at, end));
@@ -166,9 +197,11 @@ public:
             auto iter = std::back_inserter(buff);
             _ValueDef::to_binary(val, iter);
             _b.Put(_key, buff);
+            _owner._tmpstor.set(_b.get_revision(), _key, val);
         }
         void erase() {
             _b.Delete(_key);
+            _owner._tmpstor.erase(_b.get_revision(), _key);
         }
 
         CurrentValue(const CurrentValue &) = delete;
@@ -204,11 +237,17 @@ public:
 
         CurrentValue put(Key &key) {
             key.change_kid(_owner._kid);
-            if (!_owner._locker.lock_key(_b.get_revision(), key)) {
-                throw make_deadlock_exception(key, _owner._db);
+            auto state = _owner._locker.lock_key(_b.get_revision(), key);
+            switch (state) {
+                case KeyLock::deadlock:
+                     throw make_deadlock_exception(key, _owner._db);
+                case KeyLock::already_locked:
+                    return CurrentValue(_owner, _b, key, true);
+                    break;
+                default:
+                    _owner.notify_tx_observers(_b, key, erase);
+                    return CurrentValue(_owner, _b, key, false);
             }
-            _owner.notify_tx_observers(_b, key, erase);
-            return CurrentValue(_owner, _b, key);
         }
     };
 
@@ -227,19 +266,23 @@ protected:
     public:
         IncrementalAggregator *owner = nullptr;
         Listener(IncrementalAggregator *owner):owner(owner) {}
-        virtual void before_commit(Batch &b) override {}
+        virtual void before_commit(Batch &) override {}
 
         virtual void after_commit(std::size_t rev) noexcept override {
             owner->_locker.unlock_keys(rev);
+            owner->_tmpstor.erase_rev(rev);
         };
         virtual void after_rollback(std::size_t rev) noexcept override  {
             owner->_locker.unlock_keys(rev);
+            owner->_tmpstor.erase_rev(rev);
         };
     };
+
 
     Storage &_storage;
     std::vector<TransactionObserver> _tx_observers;
     KeyLock _locker;
+    TempStorage _tmpstor;
     Listener _listener;
 
     using Update = typename Storage::Update;
