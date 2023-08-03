@@ -71,18 +71,19 @@ DOCDB_CXX20_CONCEPT(IsFixedString, requires(T x) {
     {x.data()} -> std::same_as<typename T::pointer>;
 });
 
+template<typename T, std::size_t sz>
+static int is_convertible_to_array(const std::array<T,sz> &val);
+
 
 template<typename T>
-struct ArrayType {static constexpr bool is_type = false;};
-
-template<typename T, std::size_t sz>
-struct ArrayType<std::array<T, sz> > {
-    static constexpr bool is_type = true;
-    static constexpr std::size_t size = sz;
-    using Type = T;
-};
-
-
+DOCDB_CXX20_CONCEPT(IsStdArray, requires(T x){
+    typename T::value_type;
+    {x.size()};
+    {x.begin()};
+    {x.end()};
+    {x.operator[](0)} -> std::same_as<typename T::value_type &>;
+    {is_convertible_to_array(x)};
+});
 
 using LocalizedString = LocalizedBasicString<char>;
 using LocalizedWString = LocalizedBasicString<wchar_t>;

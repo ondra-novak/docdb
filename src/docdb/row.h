@@ -108,9 +108,9 @@ public:
             iter = std::visit([&](const auto &v){
                 return serialize_items(iter, v);
             },val);
-        } else if constexpr(ArrayType<X>::is_type) {
+        } else if constexpr(IsStdArray<X>) {
             for (const auto &x: val) iter = serialize_items(iter, x);
-        } else if constexpr(std::is_same_v<X, char>) {  
+        } else if constexpr(std::is_same_v<X, char>) {
             *iter++=val;
         } else if constexpr(std::is_null_pointer_v<X> || std::is_same_v<X, std::monostate>) {
             //empty;
@@ -239,10 +239,11 @@ public:
                      return T(deserialize_item<Type>(at, end));
                  }
              });
-        } else if constexpr(ArrayType<T>::is_type) {
+        } else if constexpr(IsStdArray<T>) {
             T var;
-            for (auto &x: var) x = deserialize_item<T>(at, end);
-            return var;   
+            using ItemType = typename T::value_type;
+            for (auto &x: var) x = deserialize_item<ItemType>(at, end);
+            return var;
         } else if constexpr(std::is_same_v<T, char>) {
             if (at == end) return ' ';
             return *at++;
