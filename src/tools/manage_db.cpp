@@ -180,6 +180,7 @@ std::string make_printable(const std::string_view &s, bool space, bool doc) {
             using DocDef = docdb::StructuredDocument<docdb::Structured::validate_source|docdb::Structured::use_string_view>;
             auto b = s.begin();
             auto sdoc = DocDef::from_binary(b, s.end());
+            if (b != s.end()) throw 42;
             return sdoc.to_json();
         } catch (...) {
             //
