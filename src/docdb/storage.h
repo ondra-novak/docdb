@@ -244,7 +244,7 @@ public:
           for (const auto &vdoc: this->select_from(start_doc, Direction::forward)) {
               const DocType *doc =  vdoc.deleted?nullptr:&vdoc.document;
               if constexpr(std::is_void_v<decltype(update_for(observer, b, vdoc.id, doc, vdoc.previous_id))>) {
-                  update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
+                  update_for(observer, b, vdoc.id, doc, vdoc.previous_id, true);
               } else {
                   bool rep = update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
                   if (!rep) break;
@@ -431,7 +431,7 @@ protected:
     }
 
     template<typename Fn>
-    auto update_for(Fn &&fn, Batch &b, DocID id, const DocType *doc, DocID prev_id) {
+    auto update_for(Fn &&fn, Batch &b, DocID id, const DocType *doc, DocID prev_id, bool missing_previous_is_ok = false) {
         if (prev_id) {
             std::string tmp;
             if (this->_db->get(RawKey(this->_kid, prev_id), tmp)) {
@@ -448,6 +448,10 @@ protected:
                 fn(b, Update{doc,nullptr,id,prev_id,old_old_doc_id});
                 return;
             } else {
+                if (missing_previous_is_ok) {
+                    fn(b, Update{doc,nullptr,id,prev_id,0});
+                    return;
+                }
                 throw ReferencedDocumentNotFoundException(prev_id);
             }
         }

@@ -10,8 +10,8 @@ template<typename T>
 DOCDB_CXX20_CONCEPT(AggregatorSource, requires(T x) {
     typename T::ValueType;
     {x.get_db()} -> std::convertible_to<PDatabase>;
-    {x.register_transaction_observer([](Batch &b, const Key& key, bool erase){})};
-    {x.rescan_for([](Batch &b, const Key& key, bool erase){})};
+    {x.register_transaction_observer([](Batch &, const Key& , bool ){})};
+    {x.rescan_for([](Batch &, const Key& , bool ){})};
     {x.select(std::declval<Key>()) } -> std::derived_from<RecordsetBase>;
     {x.update() };
 });
@@ -309,13 +309,13 @@ struct AggregateBy {
             virtual void after_commit(std::size_t) noexcept override {
                 _owner.after_commit();
             }
-            virtual void before_commit(Batch &b) override {
+            virtual void before_commit(Batch &) override {
                 if (_e) {
                     std::exception_ptr e = std::move(_e);
                     std::rethrow_exception(e);
                 }
             }
-            virtual void after_rollback(std::size_t rev) noexcept override {
+            virtual void after_rollback(std::size_t ) noexcept override {
                 _owner.after_rollback();
             }
 
