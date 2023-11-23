@@ -23,7 +23,7 @@ extern int _rl_screenwidth, _rl_screenheight;
 
 class Logger: public leveldb::Logger {
 public:
-    virtual void Logv(const char* format, std::va_list ap) override {
+    virtual void Logv(const char* format, va_list ap) override {
         vsnprintf(buff,sizeof(buff), format, ap);
         std::cerr << buff << std::endl;
     }
@@ -32,7 +32,7 @@ protected:
 };
 class EmptyLogger: public leveldb::Logger {
 public:
-    virtual void Logv(const char* , std::va_list ) override {
+    virtual void Logv(const char* , va_list ) override {
     }
 };
 

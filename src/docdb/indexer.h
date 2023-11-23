@@ -9,6 +9,8 @@
 #include "docid.h"
 
 #include "index_view.h"
+
+
 namespace docdb {
 
 template<DocumentDef _ValueDef>

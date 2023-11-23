@@ -3,6 +3,9 @@
 #define SRC_DOCDB_AGGREGATOR_H_
 
 #include "concepts.h"
+#include "waitable_atomic.h"
+
+#include <thread>
 
 namespace docdb {
 
@@ -10,8 +13,8 @@ template<typename T>
 DOCDB_CXX20_CONCEPT(AggregatorSource, requires(T x) {
     typename T::ValueType;
     {x.get_db()} -> std::convertible_to<PDatabase>;
-    {x.register_transaction_observer([](Batch &b, const Key& key, bool erase){})};
-    {x.rescan_for([](Batch &b, const Key& key, bool erase){})};
+    {x.register_transaction_observer(std::declval<std::function<void(Batch &b, const Key& key, bool erase)> >())};
+    {x.rescan_for(std::declval<std::function<void(Batch &b, const Key& key, bool erase)> >())};
     {x.select(std::declval<Key>()) } -> std::derived_from<RecordsetBase>;
     {x.update() };
 });
@@ -138,7 +141,7 @@ struct AggregateBy {
             :_rc(std::move(rc))
             ,_iter(_rc.begin())
             ,_end(_rc.end())
-            ,_aggrFn(std::move(aggrFn)) {}
+            ,_aggrFn(std::forward<AggrFn>(aggrFn)) {}
 
         ///Structure is returned as result of aggregated iteration
         struct ValueType {
@@ -240,9 +243,9 @@ struct AggregateBy {
 
 
     template<typename RC, typename AggrFn>
-    Recordset(RC rc, AggrFn aggrFn)->Recordset<RC, AggrFn>;
-
-
+    static auto make_recordset(RC &&rc, AggrFn &&aggrfn) {
+        return Recordset<RC, AggrFn>(std::forward<RC>(rc), std::forward<AggrFn>(aggrfn));
+    }
 
     template<DocumentDef _ValueDef>
     using AggregatorView = IndexViewGen<_ValueDef, IndexViewBaseEmpty<_ValueDef> >;
@@ -330,7 +333,7 @@ struct AggregateBy {
         MapSrc &_source;
         TaskControl _tcontrol;
         std::shared_mutex _index_lock;
-        std::atomic_flag _update_lock;
+        waitable_atomic<bool>_update_lock;
         unsigned char _bank = 0;
         bool dirty = false;
 
@@ -338,15 +341,15 @@ struct AggregateBy {
             dirty = true;
             _index_lock.unlock_shared();
             if constexpr (auto_update) {
-                if (!_update_lock.test_and_set()) {
+                if (!_update_lock.exchange(true)) {
                     std::thread thr([this]{
                         try {
                             while (update_lk());
                         } catch (...) {
                             //todo handle exception
                         }
-                        _update_lock.clear();
-                        _update_lock.notify_one();
+                        _update_lock.store(false);
+                        _update_lock.notify_all();
                     });
                 }
             }
@@ -357,20 +360,20 @@ struct AggregateBy {
         }
 
         bool update(bool non_block) {
-            if (_update_lock.test_and_set()) {
+            if (_update_lock.exchange(true)) {
                 if (non_block) return false;
                 do {
                     _update_lock.wait(true);
-                } while (_update_lock.test_and_set());
+                } while (_update_lock.exchange(true));
             }
             try {
                 update_lk();    //we don't need to know, whether dirty is set
-                _update_lock.clear();
-                _update_lock.notify_one();
+                _update_lock.store(false);
+                _update_lock.notify_all();
                 return true;
             } catch (...) {
-                _update_lock.clear();
-                _update_lock.notify_one();
+                _update_lock.store(false);
+                _update_lock.notify_all();
                 throw;
             }
 

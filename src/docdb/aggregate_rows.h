@@ -239,6 +239,7 @@ struct Skip {
 
     ResultType operator()(const Type &) {
         //empty
+        return nullptr;
     }
 
 };

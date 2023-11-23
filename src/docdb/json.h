@@ -239,7 +239,7 @@ inline Iter Structured::to_json(Iter iter, int flags) const {
 
        }
         return iter;
-    }, *this);
+    }, static_cast<const StructVariant &>(*this));
 
 }
 
