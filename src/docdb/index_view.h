@@ -509,10 +509,10 @@ using IndexView =
         IndexViewGen<_ValueDef,IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromKey<_ValueDef>, index_type==IndexType::unique_hide_dup?sizeof(DocID):0> >,
         IndexViewGen<ValueAndDocIDDocument<_ValueDef>, IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromValue<_ValueDef> > > >;
 
-}
+
 
 using IndexRevision = std::size_t;
-
+}
 
 
 

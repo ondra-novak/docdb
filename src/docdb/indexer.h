@@ -236,17 +236,17 @@ protected:
             f(b, key, erase);
         }
     }
-
+/*
     void check_for_dup_key(const Key &key, DocID prev_doc, DocID cur_doc) {
         std::string tmp;
         if (this->_db->get(key, tmp)) {
             auto [srcid] = Row::extract<DocID>(tmp);
             if (srcid != prev_doc) {
-                throw DuplicateKeyException(key, this->_db, cur_doc, srcid);
+                throw make_exception(key, this->_db, cur_doc, srcid);
             }
         }
     }
-
+*/
     void update_rev(Batch &) {
         //empty
     }

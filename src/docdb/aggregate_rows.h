@@ -161,7 +161,7 @@ struct Max {
 
 
     const Type &operator()( const Type &x) {
-        _state = (_has_value & _state > x) ? _state : x;
+        _state = (_has_value & (_state > x)) ? _state : x;
         _has_value = true;
         return _state;
     }
@@ -182,7 +182,7 @@ struct Min {
 
 
     const Type &operator()( const Type &x) {
-        _state = (_has_value & _state < x) ? _state : x;
+        _state = (_has_value & (_state < x)) ? _state : x;
         _has_value = true;
         return _state;
     }

@@ -354,7 +354,7 @@ protected:
         virtual void before_commit(docdb::Batch &) override {}
         virtual void after_rollback(std::size_t ) noexcept override {}
 
-        void reg_observer(CommitObserver &obs) {
+        void reg_observer(CommitObserver &&obs) {
             std::lock_guard lk(_mx);
             _observers.emplace_back(std::move(obs));
             _any_observers = true;

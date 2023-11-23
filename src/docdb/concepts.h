@@ -32,12 +32,14 @@ concept same_or_reference_of = std::is_same_v<std::remove_reference_t<T>, U>;
 struct WriteIteratorConcept {
     char &operator *();
     WriteIteratorConcept &operator++();
+    WriteIteratorConcept operator++(int);
 
 };
 
 struct ReadIteratorConcept {
     const char &operator *() const;
     ReadIteratorConcept &operator++();
+    ReadIteratorConcept operator++(int);
 };
 
 
