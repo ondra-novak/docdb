@@ -117,14 +117,13 @@ public:
     }
 
     template<typename T, typename X>
-    DOCDB_CXX20_REQUIRES(std::convertible_to<X, Structured &> || std::convertible_to<X, const Structured &>)
-    friend T get(X &&me) {
+    static T get(X &&me) {
         return std::visit([&](const auto &v) -> T {
             using U = std::decay_t<decltype(v)>;
             if constexpr(std::is_same_v<U, T>) {
                 return v;
             } else if constexpr(std::is_same_v<U, Link> || std::is_same_v<U,SharedLink> ){
-                return get<T>(*v);
+                return v->template as<T>();
             } else if constexpr(std::is_constructible_v<T,U> && !std::is_same_v<U,std::nullptr_t>) {
                 return T(v);
             } else {
@@ -135,11 +134,11 @@ public:
 
     template<typename T>
     T as() const {
-        return get<T>(*this);
+        return get<T>(static_cast<const StructVariant &>(*this));
     }
     template<typename T>
     T as() {
-        return get<T>(*this);
+        return get<T>(static_cast<StructVariant &>(*this));
     }
 
 
@@ -307,7 +306,8 @@ public:
             } else {
                 return false;
             }
-        }, *this, other);
+        }, static_cast<const StructVariant &>(*this),
+           static_cast<const StructVariant &>(other));
     }
 
     std::string to_string() const {
@@ -327,7 +327,7 @@ public:
             else {
                 return to_json();
             }
-        }, *this);
+        }, static_cast<const StructVariant &>(*this));
     }
 
     std::wstring to_wstring() const {
@@ -358,7 +358,7 @@ public:
                 }
                 return out;
             }
-        }, *this);
+        }, static_cast<const StructVariant &>(*this));
     }
 
     static constexpr int flagWideStrings = 1;
@@ -528,7 +528,7 @@ struct StructuredDocument {
             }
 
 
-        }, val);
+        }, vval);
     }
 
     class ValidationFailed: public std::exception {

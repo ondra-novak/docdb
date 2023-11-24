@@ -11,7 +11,6 @@
 
 namespace docdb {
 
-
 /*
  Some IDEs (Eclipse for example) fails to parse concepts
  So we introduce a macro as workaround
@@ -33,12 +32,14 @@ concept same_or_reference_of = std::is_same_v<std::remove_reference_t<T>, U>;
 struct WriteIteratorConcept {
     char &operator *();
     WriteIteratorConcept &operator++();
+    WriteIteratorConcept operator++(int);
 
 };
 
 struct ReadIteratorConcept {
     const char &operator *() const;
     ReadIteratorConcept &operator++();
+    ReadIteratorConcept operator++(int);
 };
 
 
@@ -77,6 +78,16 @@ DOCDB_CXX20_CONCEPT(IsContainer, requires(T x) {
 });
 
 template<typename T>
+DOCDB_CXX20_CONCEPT(IsOptional, requires(T x) {
+   typename T::value_type;
+   T();
+   T(std::declval<typename T::value_type>());
+   {x.has_value()}->std::same_as<bool>;
+   x.value();
+   x.emplace(std::declval<typename T::value_type>());
+});
+
+template<typename T>
 DOCDB_CXX20_CONCEPT(HasReserveFunction, requires(T x) {
     {x.reserve(std::declval<std::size_t>())};
 });
@@ -86,6 +97,10 @@ template<typename T>
 DOCDB_CXX20_CONCEPT(IsVariant,requires {
     typename std::variant_size<T>::type;
 });
+struct DocumentWrapperConstructor {
+    bool operator()(std::string &);
+};
+
 ///DocumentWrapper
 /**
  * Object responsible to store document and keep its binary data. There is
@@ -96,7 +111,7 @@ DOCDB_CXX20_CONCEPT(IsVariant,requires {
  * @tparam T
  */
 template<typename T>
-DOCDB_CXX20_CONCEPT(DocumentWrapper, std::is_constructible_v<T, decltype([](std::string &)->bool{return true;})>);
+DOCDB_CXX20_CONCEPT(DocumentWrapper, std::is_constructible_v<T, DocumentWrapperConstructor>);
 
 
 
@@ -160,15 +175,16 @@ struct DeferFalse {
 template<typename ... T>
 constexpr bool defer_false = DeferFalse<T...>::val;
 
-}
+
 
 template<typename X>
 DOCDB_CXX20_CONCEPT(AggregateFunction, requires (X fn, const typename X::InputType &input) {
     {fn(input)} -> std::convertible_to<typename X::ResultType>;
 });
 
-
+}
 
 
 
 #endif /* SRC_DOCDB_CONCEPTS_H_ */
+

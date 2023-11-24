@@ -160,7 +160,7 @@ public:
                 for (auto i = beg; i != end; ++i) {
                     iter = serialize_items(iter, *i);
                 }
-                serialize_items(iter, Type{});
+                iter = serialize_items(iter, Type{});
             }
         } else if constexpr(std::is_same_v<std::decay_t<X>, const char *>) {
             const char *c = val;
@@ -180,6 +180,13 @@ public:
             for (std::uint16_t i = 0; i < count; ++i) {
                 iter = serialize_items(iter, *x);
                 std::advance(x,1);
+            }
+        } else if constexpr(IsOptional<X>) {
+            if (val.has_value()) {
+                *iter++ = '\x01';
+                iter = serialize_items(iter, val.value());
+            } else {
+                *iter++ = '\0';
             }
         } else {
             iter = CustomSerializer<X>::serialize(val, iter);
@@ -274,6 +281,14 @@ public:
                  ++at;
              }
              return var;
+         } else if constexpr(IsOptional<T>) {
+             bool has_value = *at != '\0';
+             ++at;
+             if (has_value) {
+                 return T(deserialize_item<typename T::value_type>(at, end));
+             } else {
+                 return T();
+             }
          } else if constexpr(std::is_convertible_v<double,T>) {
              auto bin_val = deserialize_item<std::uint64_t>(at, end);
              std::uint64_t mask = (std::uint64_t(1)<<63);

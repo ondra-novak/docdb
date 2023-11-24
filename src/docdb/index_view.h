@@ -68,7 +68,7 @@ DOCDB_CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
 
 template<typename T>
 DOCDB_CXX20_CONCEPT(DocumentStorageType , requires(T x) {
-    requires DocumentStorageViewType<T>;
+   requires DocumentStorageViewType<T>;
     {x.register_transaction_observer(std::declval<std::function<void(Batch &, const typename T::Update &)> >())} -> std::same_as<void>;
     {x.rescan_for(std::declval<std::function<void(Batch &, const typename T::Update &)> >(), std::declval<DocID>())};
     {x.get_rev()} -> std::same_as<DocID>;
@@ -509,10 +509,10 @@ using IndexView =
         IndexViewGen<_ValueDef,IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromKey<_ValueDef>, index_type==IndexType::unique_hide_dup?sizeof(DocID):0> >,
         IndexViewGen<ValueAndDocIDDocument<_ValueDef>, IndexViewBaseWithStorage<_Storage, ExtractDocumentIDFromValue<_ValueDef> > > >;
 
-}
+
 
 using IndexRevision = std::size_t;
-
+}
 
 
 
