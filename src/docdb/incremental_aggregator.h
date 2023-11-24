@@ -239,9 +239,9 @@ public:
             key.change_kid(_owner._kid);
             auto state = _owner._locker.lock_key(_b.get_revision(), key);
             switch (state) {
-                case KeyLock::deadlock:
+                case KeyLock<>::deadlock:
                      throw make_deadlock_exception(key, _owner._db);
-                case KeyLock::already_locked:
+                case KeyLock<>::already_locked:
                     return CurrentValue(_owner, _b, key, true);
                     break;
                 default:
@@ -281,7 +281,7 @@ protected:
 
     Storage &_storage;
     std::vector<TransactionObserver> _tx_observers;
-    KeyLock _locker;
+    KeyLock<> _locker;
     TempStorage _tmpstor;
     Listener _listener;
 

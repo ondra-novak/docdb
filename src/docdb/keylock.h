@@ -12,7 +12,7 @@ namespace docdb {
 
 ///Prevents the thread to continue, if there is pending operation with given key
 /**
- * It uses to control multi-threading operations, while operations above keys must
+ * It used to control multi-threading operations, while operations above keys must
  * be serialized. If there is pending operation with a key, the object blocks
  * execution until the key is unlocked.
  *
@@ -21,6 +21,7 @@ namespace docdb {
  * check status of locking
  *
  */
+template<typename KeyInfo = std::monostate>
 class KeyLock {
 public:
 
@@ -30,6 +31,7 @@ public:
     struct KeyHashRev {
         Key kh;
         Rev rev;
+        KeyInfo info;
     };
 
     enum LockState {
@@ -47,16 +49,19 @@ public:
         bool waiting = false;
     };
 
-    ///Lock the key
+    ///Lock the key, check duplicates
     /**
      * @param rev batch revision
-     * @param key key to lock
-     * @retval true success
-     * @retval false failure, deadlock
+     * @param key key
+     * @param info associated data
+     * @param fn function is called, when key is already locked for this revision,
+     * it conatins stored associated data. Function must decide, if this
+     * is valid situation. It returns true, when this is valid situation,
+     * @return state
      */
-    LockState lock_key(std::size_t rev, const RawKey &key) {
-        KeyHashRevWait kk{{key, rev}};
-        kk.kh.mutable_buffer(); //ensure it is copied
+    template<typename Fn>
+    LockState lock_key(std::size_t rev, const RawKey &key, const KeyInfo &info, Fn &&fn) {
+        KeyHashRevWait kk{{key, rev, info}};
         std::unique_lock lk(_mx);
         bool waiting = false;
         while(true) {
@@ -73,6 +78,10 @@ public:
                 return ok;
             }
             if (iter->rev == rev) {
+                if (fn(iter->info)) {
+                    iter->info = info;
+                    return ok;
+                }
                 return already_locked;
             }
             if (!waiting) {
@@ -83,6 +92,18 @@ public:
             iter->waiting = true;
             _cond.wait(lk);
         }
+    }
+
+    ///Lock the key
+    /**
+     * @param rev batch revision
+     * @param key key to lock
+     * @retval true success
+     * @retval false failure, deadlock
+     */
+    LockState lock_key(std::size_t rev, const RawKey &key) {
+        KeyInfo empty = {};
+        return lock_key(rev,key,empty,[](auto &&){return false;});
     }
 
     ///Try lock the key, do not block
@@ -138,7 +159,7 @@ protected:
         //find what I am owning
         for (const KeyHashRevWait &own: _lst) {
             if (own.rev == req) {
-                //found ownership, now we need find who is waiting for us
+                //found ownership, now we need find who is waiting for it
                 for (const KeyHashRev &wt: _waitings) {
                     //found that this key is waited by someone
                     if (wt.kh == own.kh) {

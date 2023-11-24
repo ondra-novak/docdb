@@ -57,7 +57,7 @@ void test1() {
     {
         docdb::Batch b;
         storage.put(b, {"aaa", 13}, id);
-        CHECK_EXCEPTION(docdb::DeadlockKeyException, storage.put(b, {"aaa", 70}, id);
+        CHECK_EXCEPTION(docdb::DuplicateKeyException, storage.put(b, {"aaa", 70}, id);
         db->commit_batch(b));
     }
 

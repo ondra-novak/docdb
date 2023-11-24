@@ -58,8 +58,11 @@ public:
         auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
         do {
             if (doc.has_value()) {
-                auto [rev] = doc->template get<IndexRevision>();
-                if (rev == revision) break;
+                auto [rev, id] = doc->template get<IndexRevision, DocID>();
+                if (rev == revision) {
+                    _last_seen_id = id;
+                    storage.rescan_for(make_observer(), id+1);
+                }
             }
             reindex();
         }
@@ -87,11 +90,13 @@ public:
         this->_db->commit_batch(b);
     }
 
-
     struct IndexedDoc {
         DocID cur_doc;
         DocID prev_doc;
     };
+
+    using KeyLocker = std::conditional_t<index_type == IndexType::unique, KeyLock<DocID>, std::nullptr_t>;
+
 
     template<bool deleting>
     class Emit {
@@ -119,16 +124,26 @@ public:
             auto &buffer = _b.get_buffer();
             auto buff_iter = std::back_inserter(buffer);
             if constexpr(index_type == IndexType::unique && !deleting) {
-               if (_owner._locker.lock_key(_b.get_revision(), key) == KeyLock::deadlock) {
-                   throw make_deadlock_exception(key, _owner._db);
-               }
-               std::string tmp;
-               if (_owner._db->get(key, tmp)) {
+                DocID lkrev;
+                auto st = _owner._locker.lock_key(_b.get_revision(),
+                        key, _docinfo.cur_doc, [&](DocID lk){
+                    lkrev = lk;
+                    return lk == _docinfo.prev_doc;
+                });
+                if (st == KeyLocker::deadlock) {
+                    throw make_deadlock_exception(key, _owner._db);
+                }
+                if (st == KeyLocker::already_locked ){
+                    throw make_exception(key, _owner._db, _docinfo.cur_doc, lkrev);
+                }
+
+                std::string tmp;
+                if (_owner._db->get(key, tmp)) {
                    auto [r] = Row::extract<DocID>(tmp);
-                   if (r != _docinfo.cur_doc && r != _docinfo.prev_doc) {
+                   if (r < _docinfo.cur_doc && r != _docinfo.prev_doc) {
                        throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
                    }
-               }
+                }
             }
             //check for duplicate key
             if constexpr(index_type == IndexType::multi || index_type == IndexType::unique_hide_dup) {
@@ -166,7 +181,9 @@ protected:
     public:
         Indexer *owner = nullptr;
         Listener(Indexer *owner):owner(owner) {}
-        virtual void before_commit(Batch &) override {}
+        virtual void before_commit(Batch &b) override {
+            owner->update_rev(b);
+        }
         virtual void after_commit(std::size_t rev) noexcept override {
             if constexpr(index_type == IndexType::unique) {
                 owner->_locker.unlock_keys(rev);
@@ -179,10 +196,11 @@ protected:
         };
     };
 
+
     std::vector<TransactionObserver> _tx_observers;
-    using KeyLocker = std::conditional_t<index_type == IndexType::unique, KeyLock, std::nullptr_t>;
     KeyLocker _locker;
     Listener _listener;
+    std::atomic<DocID> _last_seen_id;
 
     using Update = typename Storage::Update;
 
@@ -195,6 +213,7 @@ protected:
                 }
                 if (update.new_doc) {
                     indexFn(Emit<false>(*this, b, IndexedDoc{update.new_doc_id, update.old_doc_id}), *update.new_doc);
+                    update_id(update.new_doc_id);
                 }
             }
         };
@@ -204,28 +223,24 @@ protected:
     void reindex() {
         this->_db->clear_table(this->_kid, false);
         this->_storage.rescan_for(make_observer(), 0);
-        Batch b;
-        b.Put(Database::get_private_area_key(this->_kid), Row(revision));
-        this->_db->commit_batch(b);
     }
     void notify_tx_observers(Batch &b, const Key &key, bool erase) {
         for (const auto &f: _tx_observers) {
             f(b, key, erase);
         }
     }
-/*
-    void check_for_dup_key(const Key &key, DocID prev_doc, DocID cur_doc) {
-        std::string tmp;
-        if (this->_db->get(key, tmp)) {
-            auto [srcid] = Row::extract<DocID>(tmp);
-            if (srcid != prev_doc) {
-                throw make_exception(key, this->_db, cur_doc, srcid);
-            }
-        }
+
+    void update_id(DocID id) {
+        DocID cur = _last_seen_id.load(std::memory_order_relaxed);
+        DocID m;
+        do {
+             m = std::max(id, cur);
+        } while (!_last_seen_id.compare_exchange_strong(cur, m, std::memory_order_relaxed));
     }
-*/
-    void update_rev(Batch &) {
-        //empty
+
+    void update_rev(Batch &b) {
+        auto k = this->_db->get_private_area_key(this->_kid);
+        b.Put(k, Row(revision, _last_seen_id.load(std::memory_order_relaxed)));
     }
 
     static DuplicateKeyException make_exception(Key key, const PDatabase &db, DocID income, DocID stored) {

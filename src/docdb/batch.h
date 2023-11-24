@@ -96,23 +96,16 @@ public:
         _sync = true;
     }
 
+    ///Adds listener, which receives notification about transaction state
+    /**
+     * @param listener listener - each listener can be added only once,
+     * duplicate attempts are ignoredTransactionObserverFunction
+     *
+     */
     void add_listener(AbstractBatchNotificationListener *listener) {
-        std::size_t bloom;
-        if constexpr(sizeof(AbstractBatchNotificationListener *) == 4) {
-            auto bit = ((reinterpret_cast<std::uintptr_t>(listener) * 2654435769ull) >> 28) & 0x1F;
-            bloom  = 1<<bit;
-        } else {
-            auto bit = ((reinterpret_cast<std::uintptr_t>(listener) * 11400714819323198485ull) >> 58) & 0x3F;
-            bloom  = 1<<bit;
-        }
-        if ((bloom & _ntf_bloom) == 0) {
+        auto iter = std::find(_ntf.begin(), _ntf.end(), listener);
+        if (iter == _ntf.end()) {
             _ntf.push_back(listener);
-            _ntf_bloom |= bloom;
-        } else {
-            auto iter = std::find(_ntf.begin(), _ntf.end(), listener);
-            if (iter == _ntf.end()) {
-                _ntf.push_back(listener);
-            }
         }
     }
 
