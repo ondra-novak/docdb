@@ -68,7 +68,7 @@ DOCDB_CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
 
 template<typename T>
 DOCDB_CXX20_CONCEPT(DocumentStorageType , requires(T x) {
-    requires DocumentStorageViewType<T>;
+   requires DocumentStorageViewType<T>;
     {x.register_transaction_observer(std::declval<std::function<void(Batch &, const typename T::Update &)> >())} -> std::same_as<void>;
     {x.rescan_for(std::declval<std::function<void(Batch &, const typename T::Update &)> >(), std::declval<DocID>())};
     {x.get_rev()} -> std::same_as<DocID>;

@@ -78,6 +78,16 @@ DOCDB_CXX20_CONCEPT(IsContainer, requires(T x) {
 });
 
 template<typename T>
+DOCDB_CXX20_CONCEPT(IsOptional, requires(T x) {
+   typename T::value_type;
+   T();
+   T(std::declval<typename T::value_type>());
+   {x.has_value()}->std::same_as<bool>;
+   x.value();
+   x.emplace(std::declval<typename T::value_type>());
+});
+
+template<typename T>
 DOCDB_CXX20_CONCEPT(HasReserveFunction, requires(T x) {
     {x.reserve(std::declval<std::size_t>())};
 });
