@@ -52,6 +52,7 @@ struct IndexFn {
 
 
 
+
 static auto aggrSumFn = [sum = 0](const docdb::Row &row) mutable -> const int & {
     auto [v] = row.get<int>();
     return sum+=v;
@@ -111,8 +112,62 @@ void test1() {
         std::cout << k << ": count=" << count << ", sum=" << sum  << ", max=" << max <<", min=" << min << std::endl;
     }
 }
+
+struct IndexFn2 {
+    static constexpr int revision = 1;
+    template<typename Emit, typename Doc>
+    void operator()(Emit emit, const Doc &doc)const{
+        auto [number] = doc.get();
+        emit({number},{number});
+    }
+};
+
+
+void test2() {
+    using DocumentDef = docdb::FixedRowDocument<int>;
+    using IndexDef = docdb::FixedRowDocument<int>;
+
+    auto ramdisk = newRamdisk();
+    auto db = docdb::Database::create(createTestDB(ramdisk.get()));
+
+    using Storage = docdb::Storage<DocumentDef>;
+    using Index = docdb::Indexer<Storage, IndexFn2 ,docdb::IndexType::unique, IndexDef>;
+    using StatsAggregator = docdb::AggregateBy<std::tuple<docdb::ValueGroup<100> > >::Materialized<Index,
+            docdb::AggregateRows<docdb::Composite<int,
+                    docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int>
+                > > >;
+
+    int values[] = {125,978,125,758,584,256,336,121,745,985,335,251,125,
+            258,155,125,669,122,258,126,124,365,252,564,236,981,365,233,
+            123,457,114,946,368,159,658,751,581,185,678,916,672,638,285};
+
+    Storage storage(db, "test_storage");
+    Index index(storage, "test_index");
+    StatsAggregator aggr(index, "test_aggr");
+
+
+    for (int a: values) {
+        storage.put(a);
+    }
+
+    for (auto row: docdb::AggregateBy<std::tuple<docdb::ValueGroup<100> > >::make_recordset(index.select_all(), aggrSumFn)){
+        std::cout << std::get<0>(row.key) << ": " << row.value << std::endl;
+    }
+
+    aggr.update();
+
+    for (const auto &x: aggr.select_all()) {
+        auto [k] = x.key.get<int>();
+        auto [count, sum, min, max] = x.value.get<std::size_t, int,int, int>();
+        std::cout << k << ": count=" << count << ", sum=" << sum  << ", max=" << max <<", min=" << min << std::endl;
+    }
+
+
+
+}
 int main() {
 
 
     test1();
+    test2();
 }

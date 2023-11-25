@@ -123,26 +123,28 @@ public:
             key.change_kid(_owner._kid);
             auto &buffer = _b.get_buffer();
             auto buff_iter = std::back_inserter(buffer);
-            if constexpr(index_type == IndexType::unique && !deleting) {
-                DocID lkrev;
-                auto st = _owner._locker.lock_key(_b.get_revision(),
-                        key, _docinfo.cur_doc, [&](DocID lk){
-                    lkrev = lk;
-                    return lk == _docinfo.prev_doc;
-                });
-                if (st == KeyLocker::deadlock) {
-                    throw make_deadlock_exception(key, _owner._db);
-                }
-                if (st == KeyLocker::already_locked ){
-                    throw make_exception(key, _owner._db, _docinfo.cur_doc, lkrev);
-                }
+            if constexpr(index_type == IndexType::unique) {
+                if (deleting) {
+                    DocID lkrev;
+                    auto st = _owner._locker.lock_key(_b.get_revision(),
+                            key, _docinfo.cur_doc, [&](DocID lk){
+                        lkrev = lk;
+                        return lk == _docinfo.prev_doc;
+                    });
+                    if (st == KeyLocker::deadlock) {
+                        throw make_deadlock_exception(key, _owner._db);
+                    }
+                    if (st == KeyLocker::already_locked ){
+                        throw make_exception(key, _owner._db, _docinfo.cur_doc, lkrev);
+                    }
 
-                std::string tmp;
-                if (_owner._db->get(key, tmp)) {
-                   auto [r] = Row::extract<DocID>(tmp);
-                   if (r < _docinfo.cur_doc && r != _docinfo.prev_doc) {
-                       throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
-                   }
+                    std::string tmp;
+                    if (_owner._db->get(key, tmp)) {
+                       auto [r] = Row::extract<DocID>(tmp);
+                       if (r < _docinfo.cur_doc && r != _docinfo.prev_doc) {
+                           throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
+                       }
+                    }
                 }
             }
             //check for duplicate key

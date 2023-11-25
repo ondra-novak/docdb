@@ -59,7 +59,7 @@ public:
         return out;
     }
 
-    KeyspaceID get_kid() {
+    KeyspaceID get_kid() const {
         auto [kid] = Row::get<KeyspaceID>();
         return kid;
     }

@@ -6,6 +6,7 @@
 #include "waitable_atomic.h"
 
 #include <thread>
+#include <cmath>
 
 namespace docdb {
 
@@ -21,6 +22,67 @@ DOCDB_CXX20_CONCEPT(AggregatorSource, requires(T x) {
     {x.update() };
 });
 
+
+template<typename T>
+DOCDB_CXX20_CONCEPT(KeyMapper, requires(T x, KeyspaceID kid) {
+    typename T::SrcKey;
+    typename T::TrgKey;
+    {T::map_key(std::declval<typename T::SrcKey>())} -> std::same_as<typename T::TrgKey>;
+    {T::range_begin(kid, std::declval<typename T::SrcKey>())} -> std::same_as<RawKey>;
+    {T::range_end(kid, std::declval<typename T::SrcKey>())} -> std::same_as<RawKey>;
+});
+
+
+template<typename T>
+DOCDB_CXX20_CONCEPT(IsValueGroup, requires(T x) {
+   {x.key()} ->  std::convertible_to<typename T::value_type>;
+   {x.range_begin()} ->  std::convertible_to<typename T::value_type>;
+   {x.range_end()} ->  std::convertible_to<typename T::value_type>;
+});
+
+template<auto step>
+class ValueGroup {
+public:
+    using value_type = std::decay_t<decltype(step)>;
+    static_assert(std::is_arithmetic_v<value_type>);
+    ValueGroup() = default;
+    explicit ValueGroup(const value_type &v):_val(v) {}
+
+    value_type key() const {return range_begin();}
+    value_type range_begin() const {
+        if constexpr (std::is_floating_point_v<value_type>) {
+            return std::floor(_val/step) * step;
+        } else if constexpr (std::is_unsigned_v<value_type>) {
+            return (_val/step) * step;
+        } else {
+            static_assert(std::is_integral_v<value_type>);
+            auto res = _val/step - bool((_val < 0) & ((_val % step) != 0));
+            return res * step;
+        }
+    }
+    value_type range_end() const {
+        return range_begin() + step;
+    }
+
+    value_type get() const {
+        return _val;
+    }
+protected:
+    value_type _val;
+};
+
+template<auto step>
+class CustomSerializer<ValueGroup<step> > {
+public:
+    template<typename Iter>
+    static Iter serialize(const ValueGroup<step> &x, Iter iter) {
+        return Row::serialize_items(iter, x.get());
+    }
+    template<typename Iter>
+    static ValueGroup<step> deserialize(Iter &at, Iter end) {
+        return ValueGroup<step>(Row::deserialize_item<typename ValueGroup<step>::value_type>(at, end));
+    }
+};
 
 
 namespace _details {
@@ -78,33 +140,100 @@ namespace _details {
          using type = typename AggrFn::ResultType;
      };
 
+
+
+     template<typename ColumnMap>
+     struct MakeKeyMapper_Type {
+         using type = ColumnMap;
+     };
+
+     template<typename T>
+     inline auto convert_map_key_item(const T &ret) {
+         if constexpr(IsValueGroup<T>) {
+             return ret.key();
+         } else {
+             return ret;
+         }
+     }
+     template<typename T>
+     inline auto convert_begin_range_item(const T &ret) {
+         if constexpr(IsValueGroup<T>) {
+             return ret.range_begin();
+         } else {
+             return ret;
+         }
+     }
+     template<typename T>
+     inline auto convert_end_range_item(const T &ret) {
+         if constexpr(IsValueGroup<T>) {
+             return ret.range_end();
+         } else {
+             return ret;
+         }
+     }
+
+     constexpr auto convert_map_key = [](auto &... args) {
+         return std::make_tuple(convert_map_key_item(args)...);
+     };
+     constexpr auto convert_begin_range = [](auto &... args) {
+         return std::make_tuple(convert_begin_range_item(args)...);
+     };
+     constexpr auto convert_end_range = [](auto &... args) {
+         return std::make_tuple(convert_end_range_item(args)...);
+     };
+
+
+     template<typename T> struct IsValueGroupTuple;
+     template<typename ... Args> struct IsValueGroupTuple<std::tuple<Args...> > {
+         static constexpr bool value = (IsValueGroup<Args> || ...);
+     };
+
+     template<typename ... Args>
+     struct MakeKeyMapper_Type<std::tuple<Args...> > {
+         struct type {
+             using SrcKey = std::tuple<Args...>;
+             using TrgKey = decltype(convert_map_key(std::declval<Args &... >() ));
+             static TrgKey map_key(const SrcKey &key) {
+                 if constexpr (IsValueGroupTuple<SrcKey>::value) {
+                     return std::apply(convert_map_key, key);
+                 } else {
+                     return key;
+                 }
+             }
+             static RawKey range_begin(KeyspaceID kid, const SrcKey &key) {
+                 if constexpr (IsValueGroupTuple<SrcKey>::value) {
+                     return RawKey(kid, std::apply(convert_begin_range, key));
+                 } else {
+                     return RawKey(kid, key);
+                 }
+             }
+             static RawKey range_end(KeyspaceID kid, const SrcKey &key) {
+                 if constexpr (IsValueGroupTuple<SrcKey>::value) {
+                     return RawKey(kid, std::apply(convert_end_range, key));
+                 } else {
+                     return RawKey(kid, key).prefix_end();
+                 }
+             }
+         };
+
+     };
+
+     template<typename T>
+     using MakeKeyMapper = typename MakeKeyMapper_Type<T>::type;
+
 }
+
+template<typename T>
+DOCDB_CXX20_CONCEPT(AutoKeyMapper, KeyMapper<_details::MakeKeyMapper<T> >);
 
 
 ///Aggregate tool
-/**
- * @tparam ColumnTuple This template argument should contain std::tuple<> of types matching
- * the format of stored key however it can contain less columns for grouping. For example, if
- * the key has 3 columns, you can specify just 2 column to group by these columns. It is also
- * possible to define own type, which can accept the std::tuple<> and define coparison operator
- * to implement non-standard grouping. In this case, your type must contain `using TupleType`
- * which must contain definition of types in columns declared as tuple
- *
- * @code
- * struct MyAggregatedKey {
- *      using TupleType = std::tuple<std::size_t, double>;
- *      MyAggregatedKey(const TupleType &init);
- *      //...
- * };
- * @endcode
- *
- *
- * To use aggregation over recordset, use Aggregate<Collumns...>::Recordset
- */
-template<typename ColumnTuple /*= std::tuple<> */>
+template<AutoKeyMapper KeyMapper /*= std::tuple<> */>
 struct AggregateBy {
 
-    using TupleType = typename _details::GetColumns<ColumnTuple>::TupleType;
+    using KeyMap = _details::MakeKeyMapper<KeyMapper>;
+    using TargetKey = typename KeyMap::TrgKey;
+    using SourceKey = typename KeyMap::SrcKey;
 
 
     ///Aggregate recordset
@@ -148,7 +277,7 @@ struct AggregateBy {
         ///Structure is returned as result of aggregated iteration
         struct ValueType {
             ///Key - contains key in type passed as ColumnTuple
-            ColumnTuple key;
+            TargetKey key;
             ///Value - contains aggregated value
             ResultType value;
         };
@@ -218,13 +347,15 @@ struct AggregateBy {
             if (_iter == _end) return false;
             AggrFn aggrFn(_aggrFn);
             _result.reset();
-            ColumnTuple kbase(_iter->key.template get<TupleType>());
+            auto srckey = _iter->key.template get<SourceKey>();
+            auto kbase = KeyMap::range_begin(_iter->key.get_kid(), srckey);
             auto cur_val = _details::wrap_reference<ResultTypeBase>(
                     aggrFn(_iter->value)
             );
             ++_iter;
             while (_iter != _end) {
-                ColumnTuple k(_iter->key.template get<TupleType>());
+                auto curkey = _iter->key.template get<SourceKey>();
+                auto k = KeyMap::range_begin(_iter->key.get_kid(), curkey);
                 if (k != kbase) break;
                 cur_val = _details::wrap_reference<ResultTypeBase>(
                     aggrFn(_iter->value)
@@ -232,7 +363,7 @@ struct AggregateBy {
                 ++_iter;
             }
             _result.emplace(ValueType{
-                kbase,
+                KeyMap::map_key(srckey),
                 _details::unwrap_refernece<ResultTypeBase>(cur_val)
             });
             return true;
@@ -245,7 +376,7 @@ struct AggregateBy {
 
 
     template<typename RC, typename AggrFn>
-    static auto make_recordset(RC &&rc, AggrFn &&aggrfn) {
+    static auto make_recordset(RC &&rc, AggrFn aggrfn) {
         return Recordset<RC, AggrFn>(std::forward<RC>(rc), std::forward<AggrFn>(aggrfn));
     }
 
@@ -406,10 +537,11 @@ struct AggregateBy {
             Batch b;
             while (!rs.empty()) {
                 auto k = rs.raw_key();
-                auto [kid, bank, keydata] = Key::extract<KeyspaceID, unsigned char, Row>(k);
-                RawKey key(this->_kid, keydata);
-                Key agrkey(Blob(rs.raw_value()));
-                auto rc = snapview.select(agrkey);
+                auto [kid, bank, trgkey] = Key::extract<KeyspaceID, unsigned char, Row>(k);
+                RawKey key(this->_kid, trgkey);
+                auto range_begin = RawKey(rs.raw_value());
+                auto range_end = KeyMap::range_end(range_begin.get_kid(), range_begin.get<SourceKey>());
+                auto rc = snapview.select_between(range_begin, range_end);
                 auto iter = rc.begin();
                 auto iterend = rc.end();
                 if (iter != iterend) {
@@ -441,13 +573,12 @@ struct AggregateBy {
              return [&](Batch &b, const Key &k, bool ) {
                  _index_lock.lock_shared();
 
-                 TupleType kt = k.get<TupleType>();
-                 ColumnTuple ct(kt);
-                 Row vrw(kt);
-                 Row krw(ct);
+                 SourceKey sk = k.get<SourceKey>();
+                 TargetKey tk = KeyMap::map_key(sk);
+                 RawKey bk = KeyMap::range_begin(k.get_kid(), sk);
                  auto &buff = b.get_buffer();
-                 RowDocument::to_binary(krw, std::back_inserter(buff));
-                 auto dk = Database::get_private_area_key(this->_kid, _bank,  krw);
+                 RowDocument::to_binary(bk, std::back_inserter(buff));
+                 auto dk = Database::get_private_area_key(this->_kid, _bank,  tk);
                  b.Put(dk, buff);
                  b.add_listener(&_tcontrol);
              };
