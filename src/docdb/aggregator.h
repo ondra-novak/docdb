@@ -215,8 +215,11 @@ namespace _details {
                  }
              }
          };
-
      };
+
+     template<typename ... Args>
+     struct MakeKeyMapper_Type<FixedKey<Args...> > : MakeKeyMapper_Type<typename FixedKey<Args...>::AsTuple> {};
+
 
      template<typename T>
      using MakeKeyMapper = typename MakeKeyMapper_Type<T>::type;

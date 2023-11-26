@@ -425,6 +425,8 @@ template<typename T, typename ... Args>
 class FixedType: public T {
 public:
 
+    using AsTuple = std::tuple<Args...>;
+
     FixedType() = default;
     FixedType(const Args & ... args): T(args...) {}
 
