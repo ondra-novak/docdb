@@ -192,7 +192,7 @@ namespace _details {
      struct MakeKeyMapper_Type<std::tuple<Args...> > {
          struct type {
              using SrcKey = std::tuple<Args...>;
-             using TrgKey = decltype(convert_map_key(std::declval<Args &... >() ));
+             using TrgKey = decltype(convert_map_key(std::declval<Args &>()... ));
              static TrgKey map_key(const SrcKey &key) {
                  if constexpr (IsValueGroupTuple<SrcKey>::value) {
                      return std::apply(convert_map_key, key);
@@ -432,6 +432,20 @@ struct AggregateBy {
             update(true);
         }
 
+        void register_transaction_observer(TransactionObserverFunction observer) {
+            _observers.push_back(std::move(observer));
+        }
+        void rescan_for(TransactionObserverFunction observer) {
+            update();
+            Batch b;
+            for (const auto &row: this->select_all()) {
+                observer(b, row.key, false);
+            }
+            this->_db->commit_batch(b);
+        }
+
+
+
     protected:
 
 
@@ -469,6 +483,7 @@ struct AggregateBy {
         waitable_atomic<bool>_update_lock;
         unsigned char _bank = 0;
         bool dirty = false;
+        std::vector<TransactionObserverFunction> _observers;
 
         void after_commit() {
             dirty = true;
@@ -560,8 +575,10 @@ struct AggregateBy {
                     auto &buff = b.get_buffer();
                     _ValueDef::to_binary(v, std::back_inserter(buff));
                     b.Put(key, buff);
+                    notify_observers(b, key, true);
                 } else {
                     b.Delete(key);
+                    notify_observers(b, key, false);
                 }
                 b.Delete(to_slice(k));
                 this->_db->commit_batch(b);
@@ -594,6 +611,12 @@ struct AggregateBy {
             this->_db->clear_table(this->_kid, true);
             this->_source.rescan_for(make_observer());
             update_revision();
+        }
+
+        void notify_observers(Batch &b, const Key &key, bool erase) {
+            for (const auto &obs: _observers) {
+                obs(b, key, erase);
+            }
         }
 
     };
