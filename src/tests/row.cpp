@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <vector>
 
 static_assert(docdb::DocumentDef<docdb::RowDocument> );
@@ -74,7 +75,7 @@ void test_collation() {
     CHECK_EQUAL(results[2], "chamrad");
     CHECK_EQUAL(results[3], "mamlas");
 
-    std::vector<docdb::Row> numbers={1,32.5,-4.8,0,12e3,7e-4,-11e8, -0.5, -25.21584, 6, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::signaling_NaN()};
+    std::vector<docdb::Row> numbers={1.0,32.5,-4.8,0.0,12e3,7e-4,-11e8, -0.5, -25.21584, 6.0, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::signaling_NaN()};
     std::sort(numbers.begin(), numbers.end());
     std::vector<double> nres;
     for (auto &c: numbers) {
@@ -123,7 +124,7 @@ void test_keys(){
     CHECK_EQUAL(b,2);
     CHECK_EQUAL(c,"aaa");
     }
-    auto k3=k2.prefix_end();
+    auto k3=k2.set_kid(0).prefix_end();
     {
     auto [a,b,c] = k3.get<int,int,std::string_view>();
     CHECK_EQUAL(a,1);
@@ -181,6 +182,17 @@ void test_container () {
     }
 }
 
+void test_optional() {
+    static_assert(docdb::IsOptional<std::optional<int> >);
+
+    std::optional<int> v1 = 10, v2;
+    docdb::Row rw(v1,v2);
+    auto [u1,u2] = rw.get<std::optional<int>,std::optional<int> >();
+    CHECK(u1.has_value());
+    CHECK(!u2.has_value());
+    CHECK_EQUAL(*u1, 10);;
+}
+
 int main() {
     test_basics();
     test_wide_chars();
@@ -189,5 +201,6 @@ int main() {
     test_keys();
     test_document();
     test_container();
+    test_optional();
 
 }

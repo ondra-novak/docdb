@@ -126,7 +126,7 @@ class IndexViewBaseEmpty {
 public:
 
     struct IteratorValueType {
-        Key key;
+        RawKey key;
         typename DocDef::Type value;
     };
 
@@ -145,7 +145,7 @@ public:
 
         IteratorValueType get_item() const {
             auto rv = this->raw_value();
-            return {Key::from_string(this->raw_key()), DocDef::from_binary(rv.begin(), rv.end())};
+            return {this->raw_key(), DocDef::from_binary(rv.begin(), rv.end())};
         }
 
     };
@@ -183,8 +183,7 @@ public:
             auto rv = this->raw_value();
             auto id = _extract(rk, rv);
             return {
-                {Key::from_string(rk),
-                ValueDef::from_binary(rv.begin(), rv.end())},
+                {rk,ValueDef::from_binary(rv.begin(), rv.end())},
                 id,
             };
         }
@@ -287,15 +286,15 @@ public:
 
     Recordset select_from(Key &&key, Direction dir = Direction::normal) {return select_from(key,dir);}
     Recordset select_from(Key &key, Direction dir = Direction::normal) {
-        key.change_kid(this->_kid);
+        RawKey &k = key.set_kid(this->_kid);
         if (isForward(changeDirection(this->_dir, dir))) {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(false,this->_snap),{
-                    key,RawKey(this->_kid+1),
+                    k,RawKey(this->_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
-            RawKey pfx = key.prefix_end();
+            RawKey pfx = k.prefix_end();
             return IndexBase::create_recordset(
                     this->_db->make_iterator(false,this->_snap),{
                     pfx,RawKey(this->_kid),
@@ -305,17 +304,17 @@ public:
     }
     Recordset select(Key &&key, Direction dir = Direction::normal) const {return select(key,dir);}
     Recordset select(Key &key, Direction dir = Direction::normal) const {
-        key.change_kid(this->_kid);
+        RawKey &k  = key.set_kid(this->_kid);
         if (isForward(changeDirection(this->_dir,dir))) {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap,this->_no_cache),{
-                    key,key.prefix_end(),
+                    k,k.prefix_end(),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap,this->_no_cache),{
-                    key.prefix_end(),key,
+                    k.prefix_end(),k,
                     FirstRecord::excluded, LastRecord::included
             });
         }
@@ -326,34 +325,34 @@ public:
     Recordset select_between(Key &from, Key &&to, LastRecord last_record = LastRecord::excluded) const {return select_between(from, to, last_record);}
     Recordset select_between(Key &&from, Key &to, LastRecord last_record = LastRecord::excluded) const {return select_between(from, to, last_record);}
     Recordset select_between(Key &from, Key &to, LastRecord last_record = LastRecord::excluded)const  {
-        from.change_kid(this->_kid);
-        to.change_kid(this->_kid);
-        if (from <= to) {
+        auto &fk = from.set_kid(this->_kid);
+        auto &tk = to.set_kid(this->_kid);
+        if (fk <= tk) {
             if (last_record == LastRecord::included) {
-                RawKey pfx = to.prefix_end();
+                RawKey pfx = tk.prefix_end();
                 return IndexBase::create_recordset(
                         this->_db->make_iterator(this->_snap, this->_no_cache),{
-                        from,pfx,
+                        fk,pfx,
                         FirstRecord::included, LastRecord::excluded
                 });
             } else {
                 return IndexBase::create_recordset(
                         this->_db->make_iterator(this->_snap, this->_no_cache),{
-                        from,to,
+                        fk,tk,
                         FirstRecord::included, LastRecord::excluded
                 });
             }
 
         } else {
-            RawKey xfrom = from.prefix_end();
+            RawKey xfrom = fk.prefix_end();
             if (last_record == LastRecord::included) {
                 return IndexBase::create_recordset(
                         this->_db->make_iterator(this->_snap,this->_no_cache),{
-                        xfrom,to,
+                        xfrom,tk,
                         FirstRecord::excluded, LastRecord::included
                 });
             } else {
-                RawKey xto = to.prefix_end();
+                RawKey xto = tk.prefix_end();
                 return IndexBase::create_recordset(
                         this->_db->make_iterator(this->_snap,this->_no_cache),{
                         xfrom,xto,
@@ -367,17 +366,17 @@ public:
     Recordset operator > (Key &x) const {return select_greater_then(x);}
     Recordset select_greater_then (Key &&x) const {return select_less_then (x);}
     Recordset select_greater_then (Key &x) const {
-        x.change_kid(this->_kid);
+        auto &k = x.set_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap, this->_no_cache),{
-                 x.prefix_end(), RawKey(this->_kid+1),
+                 k.prefix_end(), RawKey(this->_kid+1),
                  FirstRecord::included, FirstRecord::excluded
             });
         } else {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap, this->_no_cache),{
-                 RawKey(this->_kid+1),x.prefix_end(),
+                 RawKey(this->_kid+1),k.prefix_end(),
                  FirstRecord::excluded, FirstRecord::included
             });
 
@@ -387,17 +386,17 @@ public:
     Recordset operator < (Key &x) const {return select_less_then(x);}
     Recordset select_less_then (Key &&x) const {return select_less_then (x);}
     Recordset select_less_then (Key &x) const {
-        x.change_kid(this->_kid);
+        auto &k = x.set_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap, this->_no_cache),{
-                 RawKey(this->_kid),x,
+                 RawKey(this->_kid),k,
                  FirstRecord::included, FirstRecord::excluded
             });
         } else {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap, this->_no_cache),{
-                 x,RawKey(this->_kid),
+                 k,RawKey(this->_kid),
                  FirstRecord::excluded, FirstRecord::included
             });
 
@@ -407,17 +406,17 @@ public:
     Recordset operator >= (Key &x) const {return select_greater_or_equal_then(x);}
     Recordset select_greater_or_equal_then (Key &&x) const {return select_greater_or_equal_then (x);}
     Recordset select_greater_or_equal_then (Key &x) const {
-        x.change_kid(this->_kid);
+        auto &k = x.set_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap, this->_no_cache),{
-                 x, RawKey(this->_kid+1),
+                 k, RawKey(this->_kid+1),
                  FirstRecord::included, FirstRecord::excluded
             });
         } else {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap, this->_no_cache),{
-                 RawKey(this->_kid+1),x,
+                 RawKey(this->_kid+1),k,
                  FirstRecord::excluded, FirstRecord::included
             });
 
@@ -427,17 +426,17 @@ public:
     Recordset operator <= (Key &x) const {return select_less_or_equal_then(x);}
     Recordset select_less_or_equal_then (Key &&x) const {return select_less_or_equal_then (x);}
     Recordset select_less_or_equal_then (Key &x) const {
-        x.change_kid(this->_kid);
+        auto &k = x.set_kid(this->_kid);
         if (isForward(this->_dir)) {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap, this->_no_cache),{
-                 RawKey(this->_kid),x.prefix_end(),
+                 RawKey(this->_kid),k.prefix_end(),
                  FirstRecord::included, FirstRecord::excluded
             });
         } else {
             return IndexBase::create_recordset(
                     this->_db->make_iterator(this->_snap, this->_no_cache),{
-                 x.prefix_end(),RawKey(this->_kid),
+                 k.prefix_end(),RawKey(this->_kid),
                  FirstRecord::excluded, FirstRecord::included
             });
 

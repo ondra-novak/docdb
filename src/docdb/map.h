@@ -74,15 +74,13 @@ protected:
     void store(Batch &b, Key &key, const ValueType &val) {
         auto &buff = b.get_buffer();
         _ValueDef::to_binary(val, std::back_inserter(buff));
-        key.change_kid(this->_kid);
-        b.Put(key, buff);
+        b.Put(key.set_kid(this->_kid), buff);
         for (const auto &c: _tx_observers) c(b,key, false);
     }
 
     void clear(Batch &b, Key &key) {
-        key.change_kid(this->_kid);
         for (const auto &c: _tx_observers) c(b,key,true);
-        b.Delete(key);
+        b.Delete(key.set_kid(this->_kid));
     }
 
 

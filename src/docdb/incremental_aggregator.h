@@ -236,17 +236,17 @@ public:
         const IndexedDoc &_docinfo;
 
         CurrentValue put(Key &key) {
-            key.change_kid(_owner._kid);
-            auto state = _owner._locker.lock_key(_b.get_revision(), key);
+            auto &k = key.set_kid(_owner._kid);
+            auto state = _owner._locker.lock_key(_b.get_revision(), k);
             switch (state) {
                 case KeyLock<>::deadlock:
                      throw make_deadlock_exception(key, _owner._db);
                 case KeyLock<>::already_locked:
-                    return CurrentValue(_owner, _b, key, true);
+                    return CurrentValue(_owner, _b, k, true);
                     break;
                 default:
                     _owner.notify_tx_observers(_b, key, erase);
-                    return CurrentValue(_owner, _b, key, false);
+                    return CurrentValue(_owner, _b, k, false);
             }
         }
     };

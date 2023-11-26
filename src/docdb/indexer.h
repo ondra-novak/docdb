@@ -120,14 +120,14 @@ public:
         const IndexedDoc &_docinfo;
 
         void put(Key &key, const ValueType &value) {
-            key.change_kid(_owner._kid);
+            auto &k = key.set_kid(_owner._kid);
             auto &buffer = _b.get_buffer();
             auto buff_iter = std::back_inserter(buffer);
             if constexpr(index_type == IndexType::unique) {
-                if (deleting) {
+                if (!deleting) {
                     DocID lkrev;
                     auto st = _owner._locker.lock_key(_b.get_revision(),
-                            key, _docinfo.cur_doc, [&](DocID lk){
+                            k, _docinfo.cur_doc, [&](DocID lk){
                         lkrev = lk;
                         return lk == _docinfo.prev_doc;
                     });
@@ -139,7 +139,7 @@ public:
                     }
 
                     std::string tmp;
-                    if (_owner._db->get(key, tmp)) {
+                    if (_owner._db->get(k, tmp)) {
                        auto [r] = Row::extract<DocID>(tmp);
                        if (r < _docinfo.cur_doc && r != _docinfo.prev_doc) {
                            throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
@@ -149,7 +149,7 @@ public:
             }
             //check for duplicate key
             if constexpr(index_type == IndexType::multi || index_type == IndexType::unique_hide_dup) {
-                key.append(_docinfo.cur_doc);
+                k.append(_docinfo.cur_doc);
                 if (!deleting) {
                     _ValueDef::to_binary(value, buff_iter);
                 }
@@ -160,9 +160,9 @@ public:
                 }
             }
             if (deleting) {
-                _b.Delete(key);
+                _b.Delete(k);
             } else {
-                _b.Put(key, buffer);
+                _b.Put(k, buffer);
             }
             _owner.notify_tx_observers(_b, key, deleting);
         }

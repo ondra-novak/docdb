@@ -53,7 +53,7 @@ OutputIterator encodeJsonChar(wchar_t character, OutputIterator output, int flag
                 default:
                 case 2: {
                     if (flags & Structured::flagUTF8) {
-                        return wcharToUtf8(character, output);
+                        return wideToUtf8(character, output);
                     } else {
                         char buff[8];
                         std::size_t n = std::snprintf(buff, sizeof(buff), "\\u%04X",
@@ -112,7 +112,7 @@ wchar_t decodeJsonChar2(Iter &at, Iter end) {
 template<typename Iter>
 wchar_t decodeJsonChar(Iter &at, Iter end) {
     if (*at & 0x80) {
-        return utf8Towchar(at, end);
+        return utf8ToWide(at, end);
     }
     wchar_t x = decodeJsonChar2(at, end);
     wchar_t y;
@@ -142,7 +142,7 @@ void string_to_iter(std::string_view text, Iter &iter, int flags) {
     auto b = text.begin();
     auto e = text.end();
     while (b != e) {
-        iter = encodeJsonChar(utf8Towchar(b, e), iter, flags);
+        iter = encodeJsonChar(utf8ToWide(b, e), iter, flags);
     }
     *iter = '"';
     ++iter;
@@ -340,7 +340,7 @@ inline Structured Structured::from_json(Iter &at, Iter end, int flags) {
                 while (at != end && *at != '"') {
                     wchar_t w = _details::decodeJsonChar(at,end);
                     if (w == -1) throw JsonParseException(JsonParseException::Type::character);
-                    iter = wcharToUtf8(w, iter);
+                    iter = wideToUtf8(w, iter);
                 }
                 if (at == end) throw JsonParseException(JsonParseException::Type::eof);
                 ++at;

@@ -69,6 +69,15 @@ DOCDB_CXX20_CONCEPT(IsTuple, requires {
   typename std::tuple_element<0, T>::type;
 });
 
+///Tests, whether Args ... contains 1 argument, which is std::tuple<...>
+template<typename ... Args>
+DOCDB_CXX20_CONCEPT(IsTuple1Arg, sizeof...(Args) == 1 && (IsTuple<Args> || ...));
+
+///Tests, whether Args ... contains more then 1 argument or if it is one argument, it is not std::tuple<...>
+template<typename ... Args>
+DOCDB_CXX20_CONCEPT(IsNotTuple1Arg, !IsTuple1Arg<Args...>);
+
+
 template<typename T>
 DOCDB_CXX20_CONCEPT(IsContainer, requires(T x) {
   typename T::value_type;

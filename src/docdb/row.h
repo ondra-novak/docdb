@@ -126,6 +126,11 @@ public:
                 int shift = 8*(sizeof(X)-i-1);
                 *iter++=static_cast<char>((v >> shift) & 0xFF);
             }
+        } else if constexpr(std::is_integral_v<X>) {
+            static_assert(!std::is_unsigned_v<X>);
+            using UVal = std::make_unsigned_t<X>;
+            UVal v = static_cast<UVal>(val) ^ (UVal(1) << (sizeof(UVal)*8-1));
+            iter =  serialize_items(iter, v);
         } else if constexpr(std::is_convertible_v<X, double>) {
             double d = val;
             ieee754_double hlp{d};
@@ -216,10 +221,31 @@ public:
          return extract<Items...>(std::string_view(*this));
      }
 
+     ///Helper class to deserialize_tuple/2
+     template<IsTuple Tup, typename Iter, std::size_t ... Is>
+     static Tup deserialize_tuple(Iter &at, Iter end, std::index_sequence<Is...>) {
+         return {deserialize_item<typename std::tuple_element_t<Is, Tup> >(at, end) ...};
+     }
+
+
+     ///Deserialize to tuple
+     /**
+      * @tparam Tup tuple (std::tuple<A,B,C>)
+      * @tparam Iter iterator
+      * @param at begin of serialized sequence
+      * @param end end of serialized sequence
+      * @return result (deserialized tuple);
+      */
+     template<IsTuple Tup, typename Iter>
+     static Tup deserialize_tuple(Iter &at, Iter end) {
+         return deserialize_tuple<Tup>(at, end, std::make_index_sequence<std::tuple_size_v<Tup> >{});
+     }
+
      ///Deserialize single item
      /**
       * @tparam T type of item
-      * @param at reference to iterator pointing at location where to
+      * @param at reference to iterator pointing at
+      *  location where to
       * start the serialization. The function updates the iterator
       * @param end end iterator (where the binary content ends)
       * @return deserialized value
@@ -228,12 +254,7 @@ public:
      static T deserialize_item(Iter & at, Iter end) {
          std::size_t sz = end - at;
          if constexpr(IsTuple<T>) {
-             T result;
-             auto assign_values = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                 ((std::get<Is>(result) = deserialize_item<typename std::tuple_element<Is, T>::type>(at, end)), ...);
-             };
-             assign_values(std::make_index_sequence<std::tuple_size_v<T> >{});
-             return result;
+             return deserialize_tuple<T>(at, end);
          } else if constexpr(IsVariant<T>) {
              if (sz == 0) return T();
              std::uint8_t index = *at++;
@@ -281,6 +302,11 @@ public:
                  ++at;
              }
              return var;
+         } else if constexpr(std::is_integral_v<T>) {
+             static_assert(!std::is_unsigned_v<T>);
+             using UVal = std::make_unsigned_t<T>;
+             UVal v = deserialize_item<UVal>(at, end);
+             return static_cast<T>(v ^ (UVal(1) << (sizeof(UVal)*8-1)));;
          } else if constexpr(IsOptional<T>) {
              bool has_value = *at != '\0';
              ++at;
@@ -345,30 +371,34 @@ public:
 
      ///Exctract items from the binary string
      /**
-      * @tparam Items type of items to extract
+      * @tparam Items type of items to extract, or std::tuple<Items...>
       * @param src  binary string
-      * @return extracted items
+      * @return extracted items returned ast std::tuple<Items...>
       */
-     template <typename... Items>
-     requires (sizeof...(Items) != 1 || !IsTuple<typename std::tuple_element<0, std::tuple<Items...> >::type>)
-     static std::tuple<Items...> extract(std::string_view src)  {
-         std::tuple<Items...> result;
+     template <typename ... Items>
+     static auto extract(std::string_view src)  {
          const char *iter = src.data();
          const char *end = src.data()+src.size();
-         auto assign_values = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-             ((std::get<Is>(result) = deserialize_item<Items>(iter, end)), ...);
-         };
-         assign_values(std::index_sequence_for<Items...>{});
-         return result;
+         return extract<Items...>(iter,end);
      }
 
-     template <typename Item>
-     requires IsTuple<Item>
-     static Item extract(std::string_view src)  {
-         const char *iter = src.data();
-         const char *end = src.data()+src.size();
-         return deserialize_item<Item>(iter, end);
+     ///Extracat items from binary sequence
+     /**
+      * @tparam Items list of items, or std::tuple<Items...>
+      * @tparam Iter Iterator type (can be deduced)
+      * @param iter starting iterator, this value is updated after extraction
+      * @param end end of binary sequence
+      * @return extracted items returned ast std::tuple<Items...>
+      */
+     template<typename ... Items, typename Iter>
+     static auto extract(Iter &iter, Iter end) {
+         if constexpr(IsTuple1Arg<Items...>) {
+             return deserialize_item<Items...>(iter, end);
+         } else {
+             return deserialize_tuple<std::tuple<Items...> >(iter,end);
+         }
      }
+
 
      int operator<(const Row &other) const {return std::string_view(*this) < std::string_view(other);}
      int operator>(const Row &other) const {return std::string_view(*this) > std::string_view(other);}
@@ -389,31 +419,30 @@ protected:
 
 
 
+///Fixed type which is base class for FixedRow or FixedKey
 
 template<typename T, typename ... Args>
-class FixedT: public T {
+class FixedType: public T {
 public:
 
-    FixedT() = default;
-    FixedT(const Args & ... args): T(args...) {}
+    FixedType() = default;
+    FixedType(const Args & ... args): T(args...) {}
 
     auto get() const {
         return T::template get<Args...>();
     }
 
-    template<std::size_t n>
-    auto getN() const {
-        using TType = decltype(
-           ([]<std::size_t ... Is>(std::index_sequence<Is...>) {
-                return std::make_tuple(std::declval<typename std::tuple_element<Is, T>::type>()...);
-            })(std::make_index_sequence<n>{})
-        );
-        return T::template get<TType>();
+    static auto extract(std::string_view src) {
+        return T::template extract<Args...>(src);
+    }
+    template<typename Iter>
+    static auto extract(Iter &at, Iter end) {
+        return T::template extract<Args..., Iter>(at, end);
     }
 };
 
 template<typename ... Args>
-using FixedRow = FixedT<Row, Args...>;
+using FixedRow = FixedType<Row, Args...>;
 
 
 template<typename T>

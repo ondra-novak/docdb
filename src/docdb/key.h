@@ -91,6 +91,12 @@ public:
         me = me.substr(sizeof(KeyspaceID));
         return Row::extract<Types...>(me);
     }
+    ///Get content of key (skip keyspaceid);
+    template<typename ... Types, typename Iter>
+    static auto extract(Iter &at, Iter end)  {
+        at+=sizeof(KeyspaceID);
+        return Row::extract<Types...>(at, end);
+    }
 
     auto size() const {
         return Row::size() - sizeof(KeyspaceID);
@@ -106,39 +112,87 @@ public:
  */
 using StringPrefix = Blob;
 
-template<typename X>
-class TempAppend {
-public:
-    TempAppend(X &str):_str(str),_len(_str.size()) {}
-    ~TempAppend() {_str.resize(_len);}
-protected:
-    X &_str;
-    std::size_t _len;
-};
-
-template<typename X>
-TempAppend(X &) -> TempAppend<X>;
-
-
 
 ///Key object used at public interface.
 /**
  * This object is created by user containing a key, where keyspace id is
- * just reserved, and must be changed by change_kid method.
+ * just reserved, and must be changed by set_kid method.
+ *
+ * Internal RawKey is inaccessible until you set the KID by set_kid() value. This
+ * protects agains unintentionaly modify the keyspace 0 when the key is directly
+ * converted to RawKey without setting the KID. So setting the KID is enforced
  */
-class Key: public RawKey {
+class Key {
 public:
+    ///Construct the key
+    /**
+     * @param args columns
+     */
     template<typename ... Args>
-    Key(const Args & ... args):RawKey(0, args...) {}
-    Key(const RawKey &raw_key):RawKey(raw_key) {}
+    Key(const Args & ... args):_v(0, args...) {}
+    ///Construct the key by converting from RawKey
+    /**
+     * @param raw_key raw key object
+     */
+    Key(const RawKey &raw_key):_v(raw_key) {}
 
+    ///Construct the key from a binary string
+    /**
+     * @param str_key binary string (it is not possible to use constructor )
+     * @return key
+     */
     static Key from_string(const std::string_view &str_key) {
         return RawKey(str_key);
     }
+
+    ///Set Keyspace ID and return RawKey representation
+    /**
+     * @param kid new keyspaceid
+     * @return refrence to updated RawKey instance
+     *
+     * @note function changes state of the object, doesn't create a copy
+     */
+    RawKey &set_kid(KeyspaceID kid) & {
+        _v.change_kid(kid);
+        return _v;
+    }
+    ///Set Keyspace ID and return RawKey representation
+    /**
+     * @param kid new keyspaceid
+     * @return refrence to updated RawKey instance
+     *
+     * @note function changes state of the object, doesn't create a copy
+     */
+    RawKey &&set_kid(KeyspaceID kid) && {
+        _v.change_kid(kid);
+        return std::move(_v);
+    }
+
+    ///Extract columns of the key, return std::tuple<>
+    template<typename ... Args>
+    auto get() const {return _v.get<Args...>();}
+    ///Extract columns of the key, return std::tuple<>
+    template<typename ... Args>
+    static auto extract(std::string_view binstr)  {return RawKey::extract<Args...>(binstr);}
+    ///Extract columns of the key, return std::tuple<>
+    template<typename ... Args, typename Iter>
+    static auto extract(Iter &at, Iter end) {return RawKey::extract<Args...>(at, end);}
+
+    ///Retrieve key's KID
+    KeyspaceID get_kid() const {
+        return _v.get_kid();
+    }
+    ///Convert key to binary string
+    operator std::string_view const() {
+        return _v;
+    }
+
+protected:
+    RawKey _v;
 };
 
 template<typename ... Args>
-using FixedKey = FixedT<Key, Args...>;
+using FixedKey = FixedType<Key, Args...>;
 
 
 

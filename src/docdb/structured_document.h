@@ -318,7 +318,7 @@ public:
             else if constexpr(std::is_same_v<T, std::string>) {return v;}
             else if constexpr(std::is_same_v<T, std::wstring>) {
                 std::string out;
-                for (auto c: v) wcharToUtf8(c, std::back_inserter(out));
+                for (auto c: v) wideToUtf8(c, std::back_inserter(out));
                 return out;
             }
             else if constexpr(std::is_same_v<T,std::intmax_t> || std::is_same_v<T,double>) {
@@ -340,7 +340,7 @@ public:
                 auto iter = v.begin();
                 auto end = v.end();
                 while (iter != end) {
-                    out.push_back(utf8Towchar(iter,end));
+                    out.push_back(utf8ToWide(iter,end));
                 }
                 return out;
             }
@@ -354,7 +354,7 @@ public:
                 auto iter = z.begin();
                 auto end = z.end();
                 while (iter != end) {
-                    out.push_back(utf8Towchar(iter,end));
+                    out.push_back(utf8ToWide(iter,end));
                 }
                 return out;
             }
@@ -666,7 +666,7 @@ struct StructuredDocument {
     static Iter wstring_to_binary(unsigned char index, const std::wstring_view &val, Iter iter) {
         *iter = index;
         ++iter;
-        for (wchar_t c: val) iter = wcharToUtf8(c, iter);
+        for (wchar_t c: val) iter = wideToUtf8(c, iter);
         *iter = 0;
         ++iter;
         return iter;
@@ -732,7 +732,7 @@ struct StructuredDocument {
     static std::wstring wstring_from_binary(int , Iter &at, Iter end) {
         std::wstring out;
         while (at != end && *at) {
-            out.push_back(utf8Towchar(at, end));
+            out.push_back(utf8ToWide(at, end));
         }
         if (at == end) {
             if constexpr(validate) throw ValidationFailed();
