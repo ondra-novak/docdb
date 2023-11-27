@@ -418,9 +418,9 @@ struct AggregateBy {
 
         Revision get_revision() const {
             auto k = this->_db->get_private_area_key(this->_kid);
-            auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
-            if (doc.has_value()) {
-                auto [cur_rev] = doc->template get<Revision>();
+            auto val = this->_db->get(k);
+            if (val.has_value()) {
+                auto [cur_rev] = Row::extract<Revision>(*val);
                 return cur_rev;
             }
             else return 0;

@@ -38,6 +38,8 @@ void test1() {
 
         auto d3_new = storage.put("baz", d3);
         d = view.find(d3_new);
+        CHECK(!d.has_value());
+        d = storage.find(d3_new);
         CHECK(d.has_value());
         CHECK_EQUAL(d->document,"baz");
         CHECK_EQUAL(d->previous_id,d3);

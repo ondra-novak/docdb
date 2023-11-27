@@ -55,18 +55,18 @@ public:
          ,_listener(this)
     {
         auto k = this->_db->get_private_area_key(this->_kid);
-        auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
-        do {
-            if (doc.has_value()) {
-                auto [rev, id] = doc->template get<IndexRevision, DocID>();
-                if (rev == revision) {
-                    _last_seen_id = id;
-                    storage.rescan_for(make_observer(), id+1);
-                }
-            }
+        auto doc = this->_db->get(k);
+        if (!doc.has_value()) {
             reindex();
+        } else {
+            auto [rev, id] = Row::extract<IndexRevision, DocID>(*doc);
+            if (rev != revision) {
+                reindex();
+            } else {
+                _last_seen_id = id;
+                storage.rescan_for(make_observer(), id+1);
+            }
         }
-        while (false);
         this->_storage.register_transaction_observer(make_observer());
     }
 
@@ -138,9 +138,9 @@ public:
                         throw make_exception(key, _owner._db, _docinfo.cur_doc, lkrev);
                     }
 
-                    std::string tmp;
-                    if (_owner._db->get(k, tmp)) {
-                       auto [r] = Row::extract<DocID>(tmp);
+                    auto val = _owner._db->get(k);
+                    if (val.has_value()) {
+                       auto [r] = Row::extract<DocID>(*val);
                        if (r < _docinfo.cur_doc && r != _docinfo.prev_doc) {
                            throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
                        }

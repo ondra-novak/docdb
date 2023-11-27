@@ -553,15 +553,16 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
         bool found = false;
         for (const auto &x: list) {
             if (x.second.second == docdb::Purpose::storage) {
-                auto r =db->get_as_document<docdb::FoundRecord<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(x.second.first, id),{});
-                if (r) {
+                auto v = db->get(docdb::RawKey(x.second.first, id));
+                if (v.has_value()) {
+                    auto r = docdb::DocRecordDef<docdb::StringDocument>::from_binary(docdb::unmove(v->begin()), v->end());
                     found = true;
                     std::cerr << "Document from collection '" << x.first << "':" << std::endl;
-                    if (r->previous_id) {
-                        std::cerr << "Replaced document: " << r->previous_id << std::endl;
+                    if (r.previous_id) {
+                        std::cerr << "Replaced document: " << r.previous_id << std::endl;
                     }
                     std::cout << "```" <<std::endl;
-                    std::cout << make_printable(r->document,false, true) << std::endl;
+                    std::cout << make_printable(r.document,false, true) << std::endl;
                     std::cout << "```" <<std::endl;
                     std::cerr << std::endl;
                 }
@@ -569,7 +570,7 @@ static void command_document(const docdb::PDatabase &db, std::string name, const
         }
         if (!found) std::cerr << "No document found" << std::endl;
     } else {
-        auto r =db->get_as_document<docdb::FoundRecord<docdb::DocRecordDef<docdb::StringDocument> > >(docdb::RawKey(iter->second.first, id),{});
+        auto r =db->get_document<docdb::DocRecordDef<docdb::StringDocument> >(docdb::RawKey(iter->second.first, id));
         if (r) {
             std::cout << make_printable(r->document,false, true) << std::endl;
         } else {

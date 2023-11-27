@@ -48,7 +48,7 @@ void test1() {
        CHECK_EQUAL(x.id, 2);
        auto [v] = x.value.get<std::size_t>();
        CHECK_EQUAL(v, 5);
-       CHECK_EQUAL(index1.get_document(x)->document, "world");
+       CHECK_EQUAL(*index1.get_document(x), "world");
        fnd++;
     }
 
@@ -62,7 +62,7 @@ void test1() {
                 auto &x = *iter;
                 CHECK_EQUAL(x.id,3);
                 auto docref = index2.get_document(x);
-                CHECK_EQUAL(docref->document, "bar");
+                CHECK_EQUAL(*docref, "bar");
             }
             ++iter;
             CHECK(iter != recordset.end());
@@ -70,7 +70,7 @@ void test1() {
                 auto &x = *iter;
                 CHECK_EQUAL(x.id,4);
                 auto docref = index2.get_document(x);
-                CHECK_EQUAL(docref->document, "foo");
+                CHECK_EQUAL(*docref, "foo");
             }
             ++iter;
             CHECK(iter == recordset.end());

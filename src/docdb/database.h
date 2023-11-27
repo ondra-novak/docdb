@@ -15,6 +15,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <variant>
+#include <optional>
 
 
 
@@ -238,22 +239,75 @@ public:
         return std::unique_ptr<leveldb::Iterator>(_dbinst->NewIterator(opts));
     }
 
-    bool get(std::string_view key, std::string &result, const PSnapshot &snap = {}) {
-        leveldb::ReadOptions opts;
-        opts.snapshot = snap.get();
-        leveldb::Status st = _dbinst->Get({}, to_slice(key), &result);
-        if (st.ok()) return true;
-        if (st.IsNotFound()) return false;
-        throw DatabaseError(std::move(st));
+    static thread_local std::string global_buffer_for_get;
 
+    ///Retrieve single item from the database
+    /**
+     * @param key binary key to retrieve
+     * @return return binary value. If the key not found, returned variable doesn't contain a value
+     * @note Returned data are temporalily allocated in context of current thread. They are
+     * discarded by calling this function again on the same thread.
+     */
+    std::optional<std::string_view> get(const std::string_view &key) {
+        leveldb::ReadOptions opts;
+        leveldb::Status st = _dbinst->Get(opts, to_slice(key), &global_buffer_for_get);
+        if (st.ok()) return global_buffer_for_get;
+        if (st.IsNotFound()) return {};
+        throw DatabaseError(std::move(st));
     }
 
+    ///Retrieve single item from the snapshot
+    /**
+     * @param key binary key to retrieve
+     * @return return binary value. If the key not found, returned variable doesn't contain a value
+     * @note Returned data are temporalily allocated in context of current thread. They are
+     * discarded by calling this function again on the same thread.
+     */
+    std::optional<std::string_view> get(const std::string_view &key, const PSnapshot &snap) {
+        leveldb::ReadOptions opts;
+        opts.snapshot = snap.get();
+        leveldb::Status st = _dbinst->Get(opts, to_slice(key), &global_buffer_for_get);
+        if (st.ok()) return global_buffer_for_get;
+        if (st.IsNotFound()) return {};
+        throw DatabaseError(std::move(st));
+    }
 
-    template<DocumentWrapper Document>
-    Document get_as_document(std::string_view key, const PSnapshot &snap = {}) {
-        return [&](std::string &buff) {
-           return get(key, buff, snap);
-        };
+    ///Retrieve single item from the database and parse it as a document
+    /**
+     * @tparam _DocDef document definition
+     * @param key binary key to retrieve
+     * @return returns std::optional<Document>, if the key doesn't exists, it returns
+     *    object without value
+     */
+    template<typename _DocDef>
+    std::optional<typename _DocDef::Type> get_document(const std::string_view &key) {
+        auto v = get(key);
+        if (v.has_value()) {
+            return std::optional<typename _DocDef::Type>(EmplaceByReturn(
+                    [&]{return _DocDef::from_binary(unmove(v->begin()), v->end());}
+            ));
+        } else {
+            return {};
+        }
+    }
+
+    ///Retrieve single item from the snapshot and parse it as a document
+    /**
+     * @tparam _DocDef document definition
+     * @param key binary key to retrieve
+     * @return returns std::optional<Document>, if the key doesn't exists, it returns
+     *    object without value
+     */
+    template<typename _DocDef>
+    std::optional<typename _DocDef::Type> get_document(const std::string_view &key, const PSnapshot &snap) {
+        auto v = get(key, snap);
+        if (v.has_value()) {
+            return std::optional<typename _DocDef::Type>(EmplaceByReturn(
+                    [&]{return _DocDef::from_binary(unmove(v->begin()), v->end());}
+            ));
+        } else {
+            return {};
+        }
     }
 
     std::uint64_t get_index_size(std::string_view key1, std::string_view key2) {
@@ -310,6 +364,8 @@ protected:
     mutable std::shared_mutex _mx;
 
 };
+
+inline thread_local std::string Database::global_buffer_for_get;
 
 }
 

@@ -60,10 +60,8 @@ enum class IndexType {
 template<typename T>
 DOCDB_CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
     {x.get_db() } -> std::convertible_to<PDatabase>;
-    {x.find(std::declval<DocID>())->document } -> std::convertible_to<const typename T::DocType &>;
-    {x.find(std::declval<DocID>()) } -> std::convertible_to<bool>;
-    {x.select_all()} -> std::derived_from<RecordsetBase>;
-    {x.select_from(std::declval<DocID>())} -> std::derived_from<RecordsetBase>;
+    {x.find(std::declval<DocID>())->document } -> std::convertible_to<std::optional<const typename T::DocType> >;
+
 });
 
 template<typename T>
@@ -214,8 +212,14 @@ public:
         return _storage;
     }
 
+    ///Retrieves associated document from the storage
+    /**
+     * @param x iterator's value
+     * @return document as std::optional<> see StorageView::get()
+     *
+     */
     auto get_document(const IteratorValueType &x) const {
-        return _storage.find(x.id);
+        return _storage.get(x.id);
     }
 
 protected:
