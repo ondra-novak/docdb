@@ -109,10 +109,10 @@ public:
          ,_listener(this)
     {
         auto k = this->_db->get_private_area_key(this->_kid);
-        auto doc = this->_db->template get_as_document<FoundRecord<RowDocument> >(k);
+        auto doc = this->_db->get(k);
         do {
             if (doc.has_value()) {
-                auto [rev] = doc->template get<IndexRevision>();
+                auto [rev] = Row::extract<IndexRevision>(*doc);
                 if (rev == revision) break;
             }
             reindex();
@@ -185,10 +185,11 @@ public:
                 if (v.has_value()) {
                     this->emplace(std::move(*v));
                 }
-            } else if (_owner._db->get(_key, _tmp)) {
-                auto at = _tmp.begin();
-                auto end = _tmp.end();
-                this->emplace(_ValueDef::from_binary(at, end));
+            } else {
+                auto val = _owner._db->get(_key);
+                if (val.has_value()) {
+                    this->emplace(_ValueDef::from_binary(unmove(val->begin()), val->end()));
+                }
             }
         }
 

@@ -122,6 +122,8 @@ template<DocumentDef _DocDef>
 class ViewBase {
 public:
 
+    using DocType = typename _DocDef::Type;
+
     ViewBase(const PDatabase &db, KeyspaceID kid, Direction dir, const PSnapshot &snap, bool no_cache)
     :_db(db),_snap(snap),_kid(kid),_dir(dir),_no_cache(no_cache) {}
 
@@ -141,14 +143,18 @@ public:
         return _snap;
     }
 
-    using DocType = typename _DocDef::Type;
 
 
-    FoundRecord<_DocDef> find(Key &&key) const {
+    std::optional<DocType> find(Key &&key) const {
         return find(key);
     }
-    FoundRecord<_DocDef> find(Key &key) const {
-        return _db->get_as_document<FoundRecord<_DocDef> >(key.set_kid(_kid), _snap);
+
+    std::optional<DocType> find(Key &key) const {
+        auto res = _db->get(key.set_kid(_kid), _snap);
+        if (res.has_value()) {
+            return _DocDef::from_binary(unmove(res->begin()), res->end());
+        }
+        return {};
 
     }
 

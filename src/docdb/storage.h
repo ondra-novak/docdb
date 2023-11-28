@@ -199,10 +199,10 @@ public:
         return purge(b, del_id);
     }
     bool purge(Batch &b, DocID del_id) {
-        std::string tmp;
         RawKey kk(this->_kid, del_id);
-        if (this->_db->get(kk, tmp)) {
-            auto [old_doc_id, bin] = Row::extract<DocID, Blob>(tmp);
+        auto v = this->_db->get(kk);
+        if (v.has_value()) {
+            auto [old_doc_id, bin] = Row::extract<DocID, Blob>(*v);
             auto beg = bin.begin();
             auto end = bin.end();
             if (beg != end) {
@@ -233,7 +233,7 @@ public:
         auto cur = _next_id.load(std::memory_order_relaxed);
         auto next = docrow.id+1;
         while (cur < next && !_next_id.compare_exchange_weak(cur, next, std::memory_order_relaxed));
-        DocRecordT<_DocDef> d = DocRecordDef<_DocDef>::from_binary(docrow.data.data(), docrow.data.data()+docrow.data.size());
+        DocRecord d = DocRecordDef<_DocDef>::from_binary(docrow.data.data(), docrow.data.data()+docrow.data.size());
         const DocType *doc = d.has_value?&d.document:nullptr;
         write(docrow.id, b, doc, d.previous_id);
     }
@@ -433,9 +433,9 @@ protected:
     template<typename Fn>
     auto update_for(Fn &&fn, Batch &b, DocID id, const DocType *doc, DocID prev_id, bool missing_previous_is_ok = false) {
         if (prev_id) {
-            std::string tmp;
-            if (this->_db->get(RawKey(this->_kid, prev_id), tmp)) {
-                auto [old_old_doc_id, bin] = Row::extract<DocID, Blob>(tmp);
+            auto val = this->_db->get(RawKey(this->_kid, prev_id));
+            if (val.has_value()) {
+                auto [old_old_doc_id, bin] = Row::extract<DocID, Blob>(*val);
                 auto beg = bin.begin();
                 auto end = bin.end();
                 if (beg != end) {

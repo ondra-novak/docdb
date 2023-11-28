@@ -191,6 +191,21 @@ DOCDB_CXX20_CONCEPT(AggregateFunction, requires (X fn, const typename X::InputTy
     {fn(input)} -> std::convertible_to<typename X::ResultType>;
 });
 
+template<class T> T& unmove(T&& t) { return static_cast<T&>(t); }
+
+template<typename Fn>
+class EmplaceByReturn {
+public:
+    using RetType = std::invoke_result_t<Fn>;
+    EmplaceByReturn(Fn &&fn):_fn(std::forward<Fn>(fn)) {}
+    operator RetType() const {return _fn();}
+protected:
+    Fn _fn;
+};
+
+template<typename Fn>
+EmplaceByReturn(Fn fn) -> EmplaceByReturn<Fn>;
+
 }
 
 
