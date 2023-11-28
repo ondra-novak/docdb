@@ -56,19 +56,21 @@ enum class IndexType {
     multi,
 };
 
+template<typename Update>
+using IndexTransactionObserver = std::function<void(Batch &, const Update &)> ;
 
 template<typename T>
 DOCDB_CXX20_CONCEPT(DocumentStorageViewType , requires(T x) {
     {x.get_db() } -> std::convertible_to<PDatabase>;
-    {x.find(std::declval<DocID>())->document } -> std::convertible_to<std::optional<const typename T::DocType> >;
+    {x.get(std::declval<DocID>()) } -> std::convertible_to<std::optional<const typename T::DocType> >;
 
 });
 
 template<typename T>
 DOCDB_CXX20_CONCEPT(DocumentStorageType , requires(T x) {
    requires DocumentStorageViewType<T>;
-    {x.register_transaction_observer(std::declval<std::function<void(Batch &, const typename T::Update &)> >())} -> std::same_as<void>;
-    {x.rescan_for(std::declval<std::function<void(Batch &, const typename T::Update &)> >(), std::declval<DocID>())};
+    {x.register_transaction_observer(std::declval<IndexTransactionObserver<typename T::Update> >())} -> std::same_as<void>;
+    {x.rescan_for(std::declval<IndexTransactionObserver<typename T::Update> >(), std::declval<DocID>())};
     {x.get_rev()} -> std::same_as<DocID>;
     {T::Update::old_doc}->std::convertible_to<const typename T::DocType *>;
     {T::Update::new_doc}->std::convertible_to<const typename T::DocType *>;

@@ -26,22 +26,8 @@ public:
     Storage &operator=(const Storage &) = delete;
 
 
+    using Update = IndexUpdate<DocType>;
 
-    ///Definition of an update
-    struct Update {
-        ///new document
-        /** This pointer can be nullptr, when the update just deleted the document */
-        const DocType *new_doc;
-        ///old document
-        /** This pointer can be nullptr, when there is no old document */
-        const DocType *old_doc;
-        ///id of new document
-        DocID new_doc_id;
-        ///id of old document (or zero)
-        DocID old_doc_id;
-        ///old id of old document (or zero)
-        DocID old_old_doc_id;
-    };
 
     ///Notifies about ongoing update transaction
     /**

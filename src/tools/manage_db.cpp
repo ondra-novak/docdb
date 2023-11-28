@@ -382,6 +382,26 @@ void makeShorter(const ColumnSizes &sz, const ColumnSizes &align, Iter f, Iter t
 }
 
 
+void print_columns(std::vector<Columns> &&cols, ColumnSizes align,unsigned int width) {
+    ColumnSizes szs = calculate_sizes(cols.begin(), cols.end());
+    if (szs.key + szs.val + szs.id > width) {
+        auto remain = width-szs.id;
+        auto half = remain / 2;
+        if (szs.key < half) {
+            szs.val = remain - szs.key;
+        } else if (szs.val < half) {
+            szs.key = remain - szs.val;
+        } else {
+            szs.key = half;
+            szs.val = remain - szs.key;
+        }
+    }
+    makeShorter(szs, align, cols.begin(), cols.end());
+    for (const auto &rw: cols) {
+        std::cout << rw.id << " " << rw.key << " " << rw.val << std::endl;
+    }
+}
+
 struct RecordsetList {
     RecordsetList(docdb::PDatabase db, docdb::KeyspaceID id, docdb::Purpose p, docdb::Direction dir)
         :rc(db->make_iterator(), {
@@ -482,28 +502,12 @@ struct RecordsetList {
 
             rc.next();
         }
-        ColumnSizes szs = calculate_sizes(_cols.begin(), _cols.end());
-        if (szs.key + szs.val + szs.id > width) {
-            auto remain = width-szs.id;
-            auto half = remain / 2;
-            if (szs.key < half) {
-                szs.val = remain - szs.key;
-            } else if (szs.val < half) {
-                szs.key = remain - szs.val;
-            } else {
-                szs.key = half;
-                szs.val = remain - szs.key;
-            }
-        }
         ColumnSizes align;
         switch (p) {
             case docdb::Purpose::storage: align.id = 1; align.key = 1;break;
             default: align.id = 1;
         }
-        makeShorter(szs, align, _cols.begin(), _cols.end());
-        for (const auto &rw: _cols) {
-            std::cout << rw.id << " " << rw.key << " " << rw.val << std::endl;
-        }
+        print_columns(std::move(_cols), align, width);
         if (!rc.empty()) {
             std::size_t n;
             auto ccount = rc.get_offset(); // @suppress("Symbol shadowing")
@@ -657,7 +661,7 @@ static void command_rewind(const docdb::PDatabase &, std::string , const std::ve
 }
 
 static void command_backup(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
-    if (args.size() < 2) throw std::invalid_argument("Usafe: backup <DocID-from> [<filename>]");
+    if (args.size() < 2) throw std::invalid_argument("Usage: backup <DocID-from> [<filename>]");
     auto info = get_kid(db, name);
     std::string fbasename = args.size()>2?args[2]:name;
     if (info.second != docdb::Purpose::storage) throw std::runtime_error("Only Storage can be backed up");
@@ -681,7 +685,7 @@ static void command_backup(const docdb::PDatabase &db, std::string name, const s
 
 
 static void command_restore(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
-    if (args.size() != 2) throw std::invalid_argument("Usafe: restore <filename>");
+    if (args.size() != 2) throw std::invalid_argument("Usage: restore <filename>");
     auto info = get_kid(db, name);
     if (info.second != docdb::Purpose::storage) throw std::runtime_error("You can only restore to a collection of the \"Storage\" type");
     docdb::Storage<docdb::StringDocument> storage(db, name);
@@ -715,8 +719,18 @@ static void command_private(const docdb::PDatabase &db, std::string name, const 
             docdb::RawKey(docdb::Database::system_table, nfo.first),
             docdb::RawKey(docdb::Database::system_table, static_cast<docdb::KeyspaceID>(nfo.first+1))),
     cur_recordset->print_page();
-
 }
+
+static void command_system_table(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &) {
+    std::cout << "System table:" << std::endl;
+    docdb::RawKey last_key_hack(docdb::Database::system_table);
+    for (unsigned int i = 0; i < 255; i++) last_key_hack.append(docdb::Database::system_table);
+    cur_recordset = std::make_unique<RecordsetList>(db, docdb::Purpose::map,
+            docdb::RawKey(docdb::Database::system_table),
+            last_key_hack),
+    cur_recordset->print_page();
+}
+
 
 static void completion_files(const docdb::PDatabase &, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
     auto lkp = ReadLine::fileLookup(".");
@@ -735,7 +749,7 @@ static void completion_files(const docdb::PDatabase &, const char *word, std::si
 }
 
 static void command_chkref(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
-    if (args.size() != 2) throw std::invalid_argument("Usafe: chkref <storage_name>");
+    if (args.size() != 2) throw std::invalid_argument("Usage: chkref <storage_name>");
     auto iinfo = get_kid(db, name);
     std::string storage_name = args[1];
     auto sinfo = get_kid(db, storage_name);
@@ -799,6 +813,43 @@ static void command_chkstorage(const docdb::PDatabase &db, std::string name, con
 
 }
 
+static void command_variables(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &) {
+    auto lst = db->list_variables();
+    std::vector<Columns> cols;
+    ColumnSizes align = {};
+    for (const auto &[k,v]: lst) {
+        cols.push_back({{},make_printable(k, false, false),make_printable(v,false, false)});
+    }
+    std::size_t width = std::max(40,_rl_screenwidth)-2;
+    print_columns(std::move(cols), align, width);
+}
+
+static void command_set_variable(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size()<3) {
+        throw std::runtime_error("Usage set_var <key> <value>");
+    }
+    db->set_variable(args[1], args[2]);
+}
+
+static void command_unset_variable(const docdb::PDatabase &db, std::string name, const std::vector<std::string> &args) {
+    if (args.size()<2) {
+        throw std::runtime_error("Usage unset_var <key>");
+    }
+    db->set_variable(args[1], {});
+}
+
+static void variable_completion(const docdb::PDatabase &db, const char *word, std::size_t word_size, const ReadLine::HintCallback &cb) {
+    auto l = db->list_variables();
+    std::string buff;
+    for (const auto &[k,v]: l) {
+        std::string buff = make_printable(k, true, false);
+        if (buff.compare(0,word_size,word) == 0) {
+            cb(buff);
+        }
+    }
+
+}
+
 
 static Command commands[] = {
         {"compact", command_compact, empty_completion},
@@ -819,7 +870,11 @@ static Command commands[] = {
         {"rewind", command_rewind,empty_completion},
         {"backup", command_backup,completion_current_ids},
         {"restore", command_restore,completion_files},
-        {"private", command_private,empty_completion}
+        {"private", command_private,empty_completion},
+        {"variables", command_variables,empty_completion},
+        {"set_var", command_set_variable,variable_completion},
+        {"unset_var", command_unset_variable,variable_completion},
+        {"system_table", command_system_table, empty_completion}
 
 };
 

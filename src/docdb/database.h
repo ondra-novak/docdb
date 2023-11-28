@@ -204,14 +204,16 @@ public:
             auto k = iter->key();
             if (k.size() >= sizeof(KeyspaceID)*2) {
                 auto [tmp, tmp2, id] = Row::extract<KeyspaceID,KeyspaceID,KeyspaceID>(to_string(k));
-                auto [purpose, name] = Row::extract<Purpose, Blob>(to_string(iter->value()));
+                if (id != system_table)  { //skip config section
+                    auto [purpose, name] = Row::extract<Purpose, Blob>(to_string(iter->value()));
 
-                while (_min_free_id < id) {
-                    _free_ids.push(_min_free_id);
-                    ++_min_free_id;
+                    while (_min_free_id < id) {
+                        _free_ids.push(_min_free_id);
+                        ++_min_free_id;
+                    }
+                    _table_map.emplace(name, std::pair(id, purpose));
+                    _min_free_id = id+1;
                 }
-                _table_map.emplace(name, std::pair(id, purpose));
-                _min_free_id = id+1;
             }
             iter->Next();
         }
@@ -352,6 +354,67 @@ public:
     leveldb::DB& get_level_db() const {return *_dbinst;}
 
     static constexpr KeyspaceID system_table = std::numeric_limits<KeyspaceID>::max();
+
+    ///Get persistent variable
+    /**
+     * The database supports section with variables. They are intended to store any
+     *  non-table information, such a configuration, user options, etc.
+     *
+     * @param var_name variable name
+     * @return value. If variable is not set, returns empty
+     */
+    std::string get_variable(std::string_view var_name) {
+        RawKey k(system_table, system_table, system_table, Blob(var_name));
+        auto r = get(k);
+        if (r.has_value()) return std::string(*r);
+        else return {};
+
+    }
+    ///Sets persistent variable
+    /**
+     * The database supports section with variables. They are intended to store any
+     *  non-table information, such a configuration, user options, etc.
+     *
+     * @param b batch
+     * @param var_name name of variable
+     * @param value value
+     * @note variable becomes visible after commiting batch
+     */
+    void set_variable(Batch &b, std::string_view var_name, std::string_view value) {
+        RawKey key(system_table, system_table, system_table, Blob(var_name));
+        if (value.empty()) b.Delete(key);
+        else b.Put(key, to_slice(value));
+    }
+    ///Sets persistent variable
+    /**
+     * The database supports section with variables. They are intended to store any
+     *  non-table information, such a configuration, user options, etc.
+     *
+     * @param var_name name of variable
+     * @param value value
+     */
+    void set_variable(std::string_view var_name, std::string_view value) {
+        Batch b;
+        set_variable(b,var_name, value);
+        commit_batch(b);
+    }
+
+    std::vector<std::pair<std::string, std::string> > list_variables() const {
+        std::unique_ptr<leveldb::Iterator> iter(_dbinst->NewIterator({}));
+        iter->Seek(RawKey(system_table, system_table, system_table));
+
+        std::vector<std::pair<std::string, std::string> > out;
+        while (iter->Valid()) {
+            auto k = iter->key();
+            if (k.size() >= sizeof(KeyspaceID)*3) {
+             auto [tmp, tmp2, tmp3, var_name] = Row::extract<KeyspaceID,KeyspaceID,KeyspaceID, Blob>(to_string(k));
+             if (tmp != system_table || tmp2 != system_table || tmp3 != system_table) break;
+             out.push_back({std::string(var_name), std::string(to_string(iter->value()))});
+            }
+            iter->Next();
+        }
+        return out;
+    }
 
 protected:
 

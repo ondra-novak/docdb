@@ -10,14 +10,14 @@
 
 namespace docdb {
 
-using TransactionObserverFunction = std::function<void(Batch &b, const Key& key, bool erase)>;
+using KeyAggregateObserverFunction = std::function<void(Batch &b, const Key& key, bool erase)>;
 
 template<typename T>
 DOCDB_CXX20_CONCEPT(AggregatorSource, requires(T x) {
     typename T::ValueType;
     {x.get_db()} -> std::convertible_to<PDatabase>;
-    {x.register_transaction_observer(std::declval<TransactionObserverFunction>())};
-    {x.rescan_for(std::declval<TransactionObserverFunction>())};
+    {x.register_transaction_observer(std::declval<KeyAggregateObserverFunction>())};
+    {x.rescan_for(std::declval<KeyAggregateObserverFunction>())};
     {x.select(std::declval<Key>()) } -> std::derived_from<RecordsetBase>;
     {x.update() };
 });
@@ -435,10 +435,10 @@ struct AggregateBy {
             update(true);
         }
 
-        void register_transaction_observer(TransactionObserverFunction observer) {
+        void register_transaction_observer(KeyAggregateObserverFunction observer) {
             _observers.push_back(std::move(observer));
         }
-        void rescan_for(TransactionObserverFunction observer) {
+        void rescan_for(KeyAggregateObserverFunction observer) {
             update();
             Batch b;
             for (const auto &row: this->select_all()) {
@@ -486,7 +486,7 @@ struct AggregateBy {
         waitable_atomic<bool>_update_lock;
         unsigned char _bank = 0;
         bool dirty = false;
-        std::vector<TransactionObserverFunction> _observers;
+        std::vector<KeyAggregateObserverFunction> _observers;
 
         void after_commit() {
             dirty = true;

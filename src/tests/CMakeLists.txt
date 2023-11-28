@@ -15,6 +15,7 @@ set(testFiles
     structured.cpp
     binop.cpp
     incremental_aggregation.cpp
+    nostorage.cpp
 )
 
 link_libraries(

@@ -10,6 +10,23 @@ namespace docdb {
 using DocID = std::uint64_t;
 
 
+template<typename DocType>
+struct IndexUpdate {
+    ///new document
+    /** This pointer can be nullptr, when the update just deleted the document */
+    const DocType *new_doc;
+    ///old document
+    /** This pointer can be nullptr, when there is no old document */
+    const DocType *old_doc;
+    ///id of new document
+    DocID new_doc_id;
+    ///id of old document (or zero)
+    DocID old_doc_id;
+    ///old id of old document (or zero)
+    DocID old_old_doc_id;
+};
+
+
 
 template<typename _DocDef>
 static bool document_is_deleted(const typename _DocDef::Type &t) {
