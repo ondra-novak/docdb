@@ -145,7 +145,7 @@ public:
 
         IteratorValueType get_item() const {
             auto rv = this->raw_value();
-            return {this->raw_key(), DocDef::from_binary(rv.begin(), rv.end())};
+            return {this->raw_key(), DocDef::from_binary(unmove(rv.begin()), rv.end())};
         }
 
     };
@@ -183,7 +183,7 @@ public:
             auto rv = this->raw_value();
             auto id = _extract(rk, rv);
             return {
-                {rk,ValueDef::from_binary(rv.begin(), rv.end())},
+                {rk,ValueDef::from_binary(unmove(rv.begin()), rv.end())},
                 id,
             };
         }

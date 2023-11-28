@@ -14,11 +14,12 @@ namespace docdb {
  * This object still can be used to update indexes.
  * @tparam _DocDef document definition
  */
-template<typename _DocDef>
+template<typename _DocType>
 class NoStorage {
 public:
 
 
+    using DocType = _DocType;
     ///Create no-storage
     /**
      * @param db database
@@ -30,7 +31,10 @@ public:
 
         auto r = _db->get_variable(_revision_var_name);
         if (r.empty()) _next_id = 1;
-        else _next_id = Row::extract<DocID>(r);
+        else{
+            auto [id] = Row::extract<DocID>(r);
+            _next_id.store(id);
+        }
 
     }
 
@@ -47,8 +51,6 @@ public:
 
     using DocIDGenerator = std::function<DocID(unsigned int)>;
 
-
-    using DocType = typename _DocDef::Type;
 
     ///Retrieve database pointer
     auto get_db(){

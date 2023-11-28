@@ -24,6 +24,8 @@ struct ConstructVariantHelper {
 };
 
 
+struct FixedTypeTag {};
+
 class Row {
 public:
 
@@ -267,7 +269,7 @@ public:
                      return T(deserialize_item<Type>(at, end));
                  }
              });
-        } else if constexpr(IsStdArray<T>) {
+         }else if constexpr(IsStdArray<T>) {
             T var;
             using ItemType = typename T::value_type;
             for (auto &x: var) x = deserialize_item<ItemType>(at, end);
@@ -392,8 +394,15 @@ public:
       */
      template<typename ... Items, typename Iter>
      static auto extract(Iter &iter, Iter end) {
-         if constexpr(IsTuple1Arg<Items...>) {
-             return deserialize_item<Items...>(iter, end);
+         if constexpr(sizeof...(Items) == 1) {
+             using T = std::tuple_element_t<0, std::tuple<Items...> >;
+             if constexpr(IsTuple<T>) {
+                 return deserialize_item<T>(iter, end);
+             } else if constexpr(std::derived_from<T, FixedTypeTag>) {
+                 return deserialize_item<typename T::AsTuple>(iter, end);
+             } else {
+                 return deserialize_tuple<std::tuple<T> >(iter,end);
+             }
          } else {
              return deserialize_tuple<std::tuple<Items...> >(iter,end);
          }
@@ -419,13 +428,15 @@ protected:
 
 
 
+
 ///Fixed type which is base class for FixedRow or FixedKey
 
 template<typename T, typename ... Args>
-class FixedType: public T {
+class FixedType: public T, public FixedTypeTag {
 public:
 
     using AsTuple = std::tuple<Args...>;
+
 
     FixedType() = default;
     FixedType(const Args & ... args): T(args...) {}
