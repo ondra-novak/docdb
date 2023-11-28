@@ -1,5 +1,6 @@
 #include "check.h"
 #include "memdb.h"
+#include "../docdb/readonly.h"
 
 void test_keyspaces() {
 

@@ -4,6 +4,7 @@
 #include <docdb/structured_document.h>
 #include <docdb/map.h>
 #include <docdb/json.h>
+#include <docdb/readonly.h>
 
 #include <cmath>
 #include <cstdio>
@@ -38,12 +39,18 @@ public:
 
 static Logger logger;
 static EmptyLogger empty_logger;
+static std::unique_ptr<docdb::CopyOnWriteEnv> cow_env;
 
-static docdb::PDatabase open_db(std::string path, bool create_flag, bool verbose_mode, std::size_t max_file_size) {
+static docdb::PDatabase open_db(std::string path, bool create_flag, bool verbose_mode, bool read_only_mode, std::size_t max_file_size) {
     leveldb::Options opts;
+    if (read_only_mode) {
+        cow_env = std::make_unique<docdb::CopyOnWriteEnv>(leveldb::Env::Default(), true);
+        opts.env = cow_env.get();
+    } else {
+        opts.reuse_logs  = true;
+    }
     opts.info_log = verbose_mode?static_cast<leveldb::Logger *>(&logger):static_cast<leveldb::Logger *>(&empty_logger);
     opts.create_if_missing = create_flag;
-    opts.reuse_logs  = true;
     if (max_file_size) opts.max_file_size = max_file_size * 1024*1024;
     return docdb::Database::create(path, opts);
 }
@@ -213,6 +220,9 @@ std::string make_printable(const std::string_view &s, bool space, bool doc) {
 static bool exit_flag = false;
 
 static void command_compact(const docdb::PDatabase &db, std::string , const std::vector<std::string> &) {
+    if (cow_env) {
+        throw std::runtime_error("The operation is not available in read-only mode");
+    }
     db->compact();
 }
 
@@ -833,6 +843,7 @@ void print_help(const char *arg0) {
             "-h           show help\n"
             "-c           create database if missing\n"
             "-d           show debug messages\n"
+            "-r           open in read-only mode\n"
             "-s <size>    max file size in MB (for compacting)\n";
 
 }
@@ -842,9 +853,10 @@ int main(int argc, char **argv) {
 
     bool create_flag = false;
     bool debug_mode = false;
+    bool read_only_mode = false;
     int opt;
     std::size_t max_file_size = 0;
-    while ((opt = getopt(argc, argv, "hcds:")) != -1) {
+    while ((opt = getopt(argc, argv, "hcrds:")) != -1) {
         switch (opt) {
             case 'h': print_help(argv[0]);
                       exit(0);
@@ -852,6 +864,8 @@ int main(int argc, char **argv) {
             case 'c': create_flag = true;
                       break;
             case 'd': debug_mode = true;
+                      break;
+            case 'r': read_only_mode = true;
                       break;
             case 's': max_file_size = strtoul(optarg, nullptr, 10);
                       break;
@@ -864,13 +878,22 @@ int main(int argc, char **argv) {
         std::cerr << "Missing name of database, use -h for help" << std::endl;
         return 1;
     }
-    docdb::PDatabase db = open_db(argv[optind], create_flag, debug_mode,max_file_size);
+    docdb::PDatabase db = open_db(argv[optind], create_flag, debug_mode,read_only_mode,max_file_size);
 
     print_db_info(db);
     print_list_tables(db);
     std::string cur_table;
 
-    ReadLine rl({"docdb:> ",0," "});
+    std::string prompt;
+    prompt.append("docdb");
+    if (read_only_mode) prompt.append("-ro");
+    prompt.push_back(':');
+
+    if (read_only_mode) {
+        std::cerr << "NOTE: The database is opened in read-only mode. Any changes to the database will not be stored.\n";
+    }
+
+    ReadLine rl({prompt+">",0," "});
     rl.setAppName("docdb_manager");
     rl.setCompletionList(genCompletionList(db));
     std::string line;
@@ -891,7 +914,7 @@ int main(int argc, char **argv) {
                         auto tbl = db->find_table(args[1]);
                         if (tbl.has_value()) {
                             cur_table = args[1];
-                            rl.setPrompt("docdb:/"+cur_table+"> ");
+                            rl.setPrompt(prompt+"/"+cur_table+"> ");
                             cur_recordset.reset();
                         } else {
                             throw std::runtime_error("Collection doesn't exists: " + args[1]);
