@@ -53,7 +53,7 @@ public:
 
 
     ///Retrieve database pointer
-    auto get_db(){
+    auto get_db() const {
         return _db;
     }
 

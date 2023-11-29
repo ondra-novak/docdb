@@ -380,7 +380,7 @@ public:
      * @param value value
      * @note variable becomes visible after commiting batch
      */
-    void set_variable(Batch &b, std::string_view var_name, std::string_view value) {
+    static void set_variable(Batch &b, std::string_view var_name, std::string_view value) {
         RawKey key(system_table, system_table, system_table, Blob(var_name));
         if (value.empty()) b.Delete(key);
         else b.Put(key, to_slice(value));
