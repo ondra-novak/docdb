@@ -485,7 +485,7 @@ struct AggregateBy {
         std::shared_mutex _index_lock;
         waitable_atomic<bool>_update_lock;
         unsigned char _bank = 0;
-        bool dirty = false;
+        bool dirty = true;
         std::vector<KeyAggregateObserverFunction> _observers;
 
         void after_commit() {
