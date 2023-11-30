@@ -5,6 +5,7 @@
 #include <leveldb/helpers/memenv.h>
 #include <sys/file.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 // #define LEVELDB_VERSION_BELOW_1_23 // if you have older version
 

@@ -591,7 +591,9 @@ struct AggregateBy {
 
         auto make_observer() {
              return [&](Batch &b, const Key &k, bool ) {
-                 _index_lock.lock_shared();
+                 if (b.add_listener(&_tcontrol)) {
+                     _index_lock.lock_shared();
+                 }
 
                  SourceKey sk = k.get<SourceKey>();
                  TargetKey tk = KeyMap::map_key(sk);
@@ -600,7 +602,7 @@ struct AggregateBy {
                  RowDocument::to_binary(bk, std::back_inserter(buff));
                  auto dk = Database::get_private_area_key(this->_kid, _bank,  tk);
                  b.Put(dk, buff);
-                 b.add_listener(&_tcontrol);
+
              };
          }
         void update_revision() {

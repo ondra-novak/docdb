@@ -102,11 +102,13 @@ public:
      * duplicate attempts are ignoredTransactionObserverFunction
      *
      */
-    void add_listener(AbstractBatchNotificationListener *listener) {
+    bool add_listener(AbstractBatchNotificationListener *listener) {
         auto iter = std::find(_ntf.begin(), _ntf.end(), listener);
         if (iter == _ntf.end()) {
             _ntf.push_back(listener);
+            return true;
         }
+        return false;
     }
 
 
