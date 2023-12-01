@@ -80,14 +80,12 @@ public:
     }
 
     void rescan_for(TransactionObserver obs) {
-        Batch b;
+        auto b = this->_db->begin_batch();
         for (const auto &x: this->select_all()) {
-            if (b.is_big()) {
-                this->_db->commit_batch(b);
-            }
+            b.reset();
             obs(b, x.key, false);
+            b.commit();
         }
-        this->_db->commit_batch(b);
     }
 
     struct IndexedDoc {
@@ -191,7 +189,7 @@ protected:
                 owner->_locker.unlock_keys(rev);
             }
         };
-        virtual void after_rollback(std::size_t rev) noexcept override  {
+        virtual void on_rollback(std::size_t rev) noexcept override  {
             if constexpr(index_type == IndexType::unique) {
                 owner->_locker.unlock_keys(rev);
             }

@@ -133,14 +133,12 @@ public:
     }
 
     void rescan_for(TransactionObserver obs) {
-        Batch b;
+        auto b = this->_db->begin_batch();
         for (const auto &x: this->select_all()) {
-            if (b.is_big()) {
-                this->_db->commit_batch(b);
-            }
+            b.reset();
             obs(b, x.key, x.value, x.id, false);
+            b.commit();
         }
-        this->_db->commit_batch(b);
     }
 
 
@@ -273,7 +271,7 @@ protected:
             owner->_locker.unlock_keys(rev);
             owner->_tmpstor.erase_rev(rev);
         };
-        virtual void after_rollback(std::size_t rev) noexcept override  {
+        virtual void on_rollback(std::size_t rev) noexcept override  {
             owner->_locker.unlock_keys(rev);
             owner->_tmpstor.erase_rev(rev);
         };
@@ -306,9 +304,9 @@ protected:
     void reindex() {
         this->_db->clear_table(this->_kid, false);
         this->_storage.rescan_for(make_observer(), 0);
-        Batch b;
+        auto b = this->_db->begin_batch();
         b.Put(Database::get_private_area_key(this->_kid), Row(revision));
-        this->_db->commit_batch(b);
+        b.commit();
     }
 
     void notify_tx_observers(Batch &b, const Key &key, bool erase) {

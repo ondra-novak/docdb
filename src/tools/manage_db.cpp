@@ -694,8 +694,9 @@ static void command_restore(const docdb::PDatabase &db, std::string name, const 
     char buffer[12];
     docdb::ExportedDocument edoc = {};
     std::size_t cnt = 0;
-    docdb::Batch b;
+    auto b = db->begin_batch();
     while (!!inf) {
+        b.reset();
         inf.read(buffer,12);
         if (inf.gcount() == 0) break;
         if (inf.gcount() != 12) throw std::runtime_error("Failed to read record header after a record: " + std::to_string(edoc.id));
@@ -706,7 +707,7 @@ static void command_restore(const docdb::PDatabase &db, std::string name, const 
         if (static_cast<std::size_t>(inf.gcount()) != edoc.data.size()) throw std::runtime_error("Failed to read record: " + std::to_string(docid));
         storage.import_document(b, edoc);
         cnt++;
-        db->commit_batch(b);
+        b.commit();
     }
     std::cout << "Imported " << cnt << " record(s). Last document had ID: " << edoc.id << std::endl;
 
@@ -764,7 +765,7 @@ static void command_chkref(const docdb::PDatabase &db, std::string name, const s
                     docdb::IndexView<SView, docdb::StringDocument, docdb::IndexType::multi>
             >;
             IndexType idx(db, iinfo.first, docdb::Direction::forward, {},true, storage);
-            docdb::Batch b;
+            auto b = db->begin_batch();
             bool f = false;
             for (auto row : idx.select_all()) {
                 docdb::DocID id = row.id;
@@ -781,7 +782,7 @@ static void command_chkref(const docdb::PDatabase &db, std::string name, const s
                 std::string line;
                 std::getline(std::cin, line);
                 if (line == "yes") {
-                    db->commit_batch(b);
+                    b.commit();
                     std::cout << "Successfully committed" << std::endl;
                 }
             } else {
@@ -797,7 +798,7 @@ static void command_chkstorage(const docdb::PDatabase &db, std::string name, con
     auto iinfo = get_kid(db, name);
     if (iinfo.second != docdb::Purpose::storage) throw std::invalid_argument("Current collection must be 'Storage'");
     docdb::MapView<docdb::StringDocument> stor(db, iinfo.first, docdb::Direction::forward, {}, false);
-    docdb::Batch b;
+    auto b = db->begin_batch();
     bool errors = false;
     for (const auto &row : stor.select_all()) {
         const docdb::RawKey &key = row.key;
@@ -808,7 +809,7 @@ static void command_chkstorage(const docdb::PDatabase &db, std::string name, con
         }
     }
     if (errors) {
-        db->commit_batch(b);
+        b.commit();
     }
 
 }

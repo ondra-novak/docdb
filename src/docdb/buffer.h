@@ -9,6 +9,12 @@
 
 namespace docdb {
 
+constexpr std::size_t small_buffer_size = 20;
+constexpr std::size_t default_buffer_size = 40;
+constexpr std::size_t large_buffer_size = 80;
+constexpr std::size_t huge_buffer_size = 136;
+
+
 ///BufferBase - used as temporary space to build keys or values
 /**
  * BufferBase is base class for Buffer<>
@@ -18,7 +24,7 @@ namespace docdb {
  *
  * @note type T should be trivially constructible. If not, note that object allocates whole capacity and call constructor for every item before it is even used
  */
-template<typename T, std::size_t small_buffer_size>
+template<typename T, std::size_t small_buffer_size = default_buffer_size>
 class BufferBase { // @suppress("Miss copy constructor or assignment operator")
 public:
 
@@ -293,7 +299,7 @@ protected:
  *
  * @note type T should be trivially constructible. If not, note that object allocates whole capacity and call constructor for every item before it is even used
  */
-template<typename T, std::size_t small_buffer_size>
+template<typename T, std::size_t small_buffer_size = default_buffer_size>
 class Buffer: public BufferBase<T, small_buffer_size> {
 public:
     using BufferBase<T, small_buffer_size>::BufferBase;
@@ -307,6 +313,7 @@ public:
     Buffer(const leveldb::Slice &slc): BufferBase<char, small_buffer_size>(slc.data(), slc.size()) {}
     operator leveldb::Slice() const {return {this->_begin, this->_len};}
 };
+
 
 
 }

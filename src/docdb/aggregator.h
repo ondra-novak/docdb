@@ -440,11 +440,12 @@ struct AggregateBy {
         }
         void rescan_for(KeyAggregateObserverFunction observer) {
             update();
-            Batch b;
+            auto b = this->_db->create_batch();
             for (const auto &row: this->select_all()) {
+                b.reset();
                 observer(b, row.key, false);
+                b.commit();
             }
-            this->_db->commit_batch(b);
         }
 
 
@@ -468,7 +469,7 @@ struct AggregateBy {
                     std::rethrow_exception(e);
                 }
             }
-            virtual void after_rollback(std::size_t ) noexcept override {
+            virtual void on_rollback(std::size_t ) noexcept override {
                 _owner.after_rollback();
             }
 
@@ -552,8 +553,9 @@ struct AggregateBy {
                     FirstRecord::included,
                     LastRecord::excluded
             });
-            Batch b;
+            auto b = this->_db->begin_batch();
             while (!rs.empty()) {
+                b.reset();
                 auto k = rs.raw_key();
                 auto [kid, bank, trgkey] = Key::extract<KeyspaceID, unsigned char, Row>(k);
                 RawKey key(this->_kid, trgkey);
@@ -584,7 +586,7 @@ struct AggregateBy {
                     notify_observers(b, key, false);
                 }
                 b.Delete(to_slice(k));
-                this->_db->commit_batch(b);
+                b.commit();
                 rs.next();
             }
         }
@@ -606,9 +608,9 @@ struct AggregateBy {
              };
          }
         void update_revision() {
-            Batch b;
+            auto b = this->_db->begin_batch();
             b.Put(this->_db->get_private_area_key(this->_kid), Row(revision));
-            this->_db->commit_batch(b);
+            b.commit();
         }
 
         void rebuild() {

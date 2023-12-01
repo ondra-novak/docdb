@@ -55,10 +55,10 @@ void test1() {
 
 
     {
-        docdb::Batch b;
+        auto b = db->begin_batch();
         storage.put(b, {"aaa", 13}, id);
         CHECK_EXCEPTION(docdb::DuplicateKeyException, storage.put(b, {"aaa", 70}, id);
-        db->commit_batch(b));
+                        b.commit());
     }
 
     check_result(index, {

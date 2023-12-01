@@ -323,14 +323,30 @@ public:
         return r[0];
     }
 
-    ///Commits the batch and clear the batch
+
+
+    ///Commits the batch
+    /**
+     * @param batch batch to commit. The bach stays in "done" state, to reuse
+     * it, you need to call reset()
+     *
+     * @note if exception happen during the commit, the batch is rollbacked, so it
+     * is still put into "done" state. The batch must be in consistent state after
+     * return, and "done" state only consistent state available here.
+     *
+     */
     void commit_batch(Batch &batch) {
-        batch.before_commit();
-        auto st =_dbinst->Write(_write_opts, &batch);
-        if (!st.ok()) {
-            throw DatabaseError(st);
+        try {
+            batch.before_commit();
+            auto st =_dbinst->Write(_write_opts, &batch);
+            if (!st.ok()) {
+                throw DatabaseError(st);
+            }
+            batch.after_commit();
+        } catch (...) {
+            batch.on_rollback();
+            throw;
         }
-        batch.after_commit();
     }
 
 
@@ -394,9 +410,9 @@ public:
      * @param value value
      */
     void set_variable(std::string_view var_name, std::string_view value) {
-        Batch b;
+        Batch b = begin_batch();
         set_variable(b,var_name, value);
-        commit_batch(b);
+        b.commit();
     }
 
     std::vector<std::pair<std::string, std::string> > list_variables() const {
@@ -415,6 +431,30 @@ public:
         }
         return out;
     }
+
+    ///Batch object associated with current database
+    class Batch: public docdb::Batch {
+    public:
+        Batch(PDatabase db):_db(std::move(db)) {}
+        ///Commit the batch into associated database
+        void commit() {
+            _db->commit_batch(*this);
+        }
+        ///Commit the batch and reset it to be reused
+        void commit_and_reuse() {
+            _db->commit_batch(*this);
+            reset();
+        }
+    protected:
+        PDatabase _db;
+    };
+
+    ///Creates batch object
+    Batch begin_batch() {
+        return Batch(shared_from_this());
+    }
+
+
 
 protected:
 

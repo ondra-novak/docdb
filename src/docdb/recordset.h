@@ -412,7 +412,7 @@ public:
 
 protected:
 
-    using MyBuffer = Buffer<char, 128>;
+    using MyBuffer = Buffer<char>;
 
     void check_end_fw(const MyBuffer &b, LastRecord lr) {
         if (_iter->Valid()) {

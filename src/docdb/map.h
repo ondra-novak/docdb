@@ -45,9 +45,9 @@ public:
 
     void put(Key &&key, const ValueType &val) {return put(key, val);}
     void put(Key &key, const ValueType &val) {
-        Batch b;
+        auto b = this->_db->begin_batch();
         store(b, key, val);
-        this->_db->commit_batch(b);
+        b.commit();
     }
 
     void put(Batch &b, Key &&key, const ValueType &val) {return put(b, key, val);}
@@ -57,9 +57,9 @@ public:
 
     void erase(Key &&key) {return erase(key);}
     void erase(Key &key) {
-        Batch b;
+        auto b = this->_db->begin_batch();
         clear(b, key);
-        this->_db->commit_batch(b);
+        b.commit();
     }
 
     void erase(Batch &b, Key &&key) {return erase(b, key);}

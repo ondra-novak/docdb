@@ -98,9 +98,9 @@ public:
      * @return id of stored document
      */
     DocID put(const DocType &doc, DocID id_of_updated_document = 0) {
-        Batch b;
+        auto b = this->_db->begin_batch();
         DocID id = write(b, &doc, id_of_updated_document);
-        this->_db->commit_batch(b);
+        b.commit();
         _cmt_obs.notify_doc(id);
         return id;
     }
@@ -138,9 +138,9 @@ public:
      * document
      */
     DocID erase(DocID del_id) {
-        Batch b;
+        auto b = this->_db->begin_batch();
         DocID id = write(b, nullptr, del_id);
-        this->_db->commit_batch(b);
+        b.commit();
         _cmt_obs.notify_doc(id);
         return id;
     }
@@ -181,10 +181,7 @@ public:
      * @retval false document was not found
      */
     bool purge(DocID del_id) {
-        Batch b;
-        return purge(b, del_id);
-    }
-    bool purge(Batch &b, DocID del_id) {
+        auto b = this->_db->begin_batch();
         RawKey kk(this->_kid, del_id);
         auto v = this->_db->get(kk);
         if (v.has_value()) {
@@ -198,7 +195,7 @@ public:
                 }
             }
             b.Delete(kk);
-            this->_db->commit_batch(b);
+            b.commit();
             return true;
         }
         return false;
@@ -226,8 +223,9 @@ public:
 
     ///Replay all documents to a observer
       void rescan_for(const TransactionObserver &observer, DocID start_doc = 0) {
-          Batch b;
+          auto b = this->_db->begin_batch();
           for (const auto &vdoc: this->select_from(start_doc, Direction::forward)) {
+              b.reset();
               const DocType *doc =  vdoc.deleted?nullptr:&vdoc.document;
               if constexpr(std::is_void_v<decltype(update_for(observer, b, vdoc.id, doc, vdoc.previous_id))>) {
                   update_for(observer, b, vdoc.id, doc, vdoc.previous_id, true);
@@ -235,7 +233,7 @@ public:
                   bool rep = update_for(observer, b, vdoc.id, doc, vdoc.previous_id);
                   if (!rep) break;
               }
-              this->_db->commit_batch(b);
+              b.commit();
           }
 
       }
@@ -258,7 +256,7 @@ public:
      * @note the function never removes the very recent document
      */
     void compact(std::size_t n=0, bool deleted = false) {
-        Batch b;
+        auto b = this->_db->begin_batch();
         std::unordered_map<DocID, std::size_t> refs;
         RecordsetBase rs(this->_db->make_iterator({},true), {
                 RawKey(this->_kid+1),
@@ -294,7 +292,7 @@ public:
             } while (rs.next());
         }
         if (changes) {
-            this->_db->commit_batch(b);
+            b.commit();
             this->_db->compact_range(RawKey(this->_kid), RawKey(this->_kid+1));
         }
     }
@@ -343,7 +341,7 @@ protected:
         CommitObservers &operator=(const CommitObservers &) = delete;
 
         virtual void before_commit(docdb::Batch &) override {}
-        virtual void after_rollback(std::size_t ) noexcept override {}
+        virtual void on_rollback(std::size_t ) noexcept override {}
 
         void reg_observer(CommitObserver &&obs) {
             std::lock_guard lk(_mx);
