@@ -449,6 +449,9 @@ struct AggregateBy {
         }
 
 
+        ~Materialized() {
+            _update_lock.lock();    //ensure that no update is running
+        }
 
     protected:
 
@@ -472,6 +475,9 @@ struct AggregateBy {
             virtual void on_rollback(std::size_t ) noexcept override {
                 _owner.after_rollback();
             }
+            void set_async_exception(std::exception_ptr e) {
+                _e = e;
+            }
 
 
 
@@ -481,10 +487,29 @@ struct AggregateBy {
             std::exception_ptr _e;
         };
 
+        class SimpleMutex {
+        public:
+            void lock() {
+                while (_flag.exchange(true, std::memory_order_acquire)) {
+                    _flag.wait(true);
+                }
+            }
+            void unlock() {
+                _flag.exchange(false, std::memory_order_release);
+                _flag.notify_all();
+            }
+            bool try_lock() {
+                return !_flag.exchange(true, std::memory_order_release);
+            }
+
+        protected:
+            waitable_atomic<bool> _flag = {false};
+        };
+
         MapSrc &_source;
         TaskControl _tcontrol;
         std::shared_mutex _index_lock;
-        waitable_atomic<bool>_update_lock;
+        SimpleMutex _update_lock;
         unsigned char _bank = 0;
         bool dirty = true;
         std::vector<KeyAggregateObserverFunction> _observers;
@@ -493,15 +518,14 @@ struct AggregateBy {
             dirty = true;
             _index_lock.unlock_shared();
             if constexpr (auto_update) {
-                if (!_update_lock.exchange(true)) {
-                    std::thread thr([this]{
+                std::unique_lock lk(_update_lock, std::try_to_lock);
+                if (lk.owns_lock()) {
+                    this->_db->run_async([this, lk = std::move(lk)]{
                         try {
                             while (update_lk());
                         } catch (...) {
-                            //todo handle exception
+                            _tcontrol.set_async_exception(std::current_exception());
                         }
-                        _update_lock.store(false);
-                        _update_lock.notify_all();
                     });
                 }
             }
@@ -512,23 +536,13 @@ struct AggregateBy {
         }
 
         bool update(bool non_block) {
-            if (_update_lock.exchange(true)) {
-                if (non_block) return false;
-                do {
-                    _update_lock.wait(true);
-                } while (_update_lock.exchange(true));
+            std::unique_lock lk(_update_lock, std::defer_lock);
+            if (non_block) {
+                if (!lk.try_lock()) return false;
+            } else {
+                lk.lock();
             }
-            try {
-                update_lk();    //we don't need to know, whether dirty is set
-                _update_lock.store(false);
-                _update_lock.notify_all();
-                return true;
-            } catch (...) {
-                _update_lock.store(false);
-                _update_lock.notify_all();
-                throw;
-            }
-
+            return update_lk();
         }
 
         bool update_lk() {

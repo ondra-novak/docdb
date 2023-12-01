@@ -4,6 +4,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests/)
 #file(GLOB testFiles "*.cpp")
 set(testFiles
     aggregation.cpp
+    auto_aggregator.cpp
     manage_db.cpp
     storage.cpp
     buffer.cpp

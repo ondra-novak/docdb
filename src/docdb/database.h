@@ -7,15 +7,12 @@
 #include "key.h"
 #include "purpose.h"
 #include "exceptions.h"
+#include "scheduler.h"
 
 #include <leveldb/db.h>
-#include <string>
-#include <stack>
-#include <map>
-#include <mutex>
 #include <shared_mutex>
-#include <variant>
-#include <optional>
+#include <map>
+#include <stack>
 
 
 
@@ -61,6 +58,9 @@ public:
         scan_tables();
     }
 
+    ~Database() {
+
+    }
 
     ///Find table by name
     /**
@@ -323,8 +323,6 @@ public:
         return r[0];
     }
 
-
-
     ///Commits the batch
     /**
      * @param batch batch to commit. The bach stays in "done" state, to reuse
@@ -454,10 +452,43 @@ public:
         return Batch(shared_from_this());
     }
 
+    ///Register operation, which will be called at database destroy
+    /**
+     * This can be useful to release cache for example, or perform other cleanup related
+     * with the database
+     * @param fn function called during destruction of the database.
+     * It is called right after the main instance is release. You should not access the
+     * database, however you can destroy any resource which would otherwise in use
+     *
+     * @note function is not MT Safe. Use synchronization (this function only)
+     */
+    template<std::invocable<>  Task>
+    void at_destroy(Task &&task) {
+        _deleters._inst.emplace(OneShotTask(std::forward<Task>(task)));
+    }
+
+
+    ///Run task asynchronously
+    /**
+     * There is one thread which can execute such tasks.
+     * @param task to run.
+     * @note function is MT safe
+     */
+    template<std::invocable<>  Task>
+    void run_async(Task &&task) {
+        _sch.run(std::forward<Task>(task));
+    }
+
 
 
 protected:
-
+    struct Deleters{
+        std::stack<OneShotTask> _inst;
+        ~Deleters() {
+            while (!_inst.empty()) _inst.pop();
+        }
+    };
+    Deleters _deleters;
     std::unique_ptr<leveldb::DB> _dbinst;
     leveldb::WriteOptions _write_opts;
 
@@ -465,6 +496,8 @@ protected:
     std::stack<KeyspaceID> _free_ids;
     KeyspaceID _min_free_id = 0;
     mutable std::shared_mutex _mx;
+    Scheduler _sch;
+
 
 };
 
