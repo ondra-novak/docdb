@@ -299,9 +299,9 @@ public:
             auto end = v->end();
             Row::deserialize_item<DocID>(iter, end);
             if (iter != end) {
-                return EmplaceByReturn([&]{
+                return std::optional<DocType>(EmplaceByReturn([&]{
                     return _DocDef::from_binary(iter,end);
-                });
+                }));
             }
         }
         return {};

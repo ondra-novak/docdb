@@ -10,6 +10,18 @@
 
 namespace docdb {
 
+enum class KeyLockState {
+    //key is locked ok
+    ok,
+    //key is locked and value has been replaced
+    replaced,
+    //key is locked and condition test failed
+    cond_failed,
+    //key is locked for different batch and deadlock happened
+    deadlock,
+
+};
+
 ///Prevents the thread to continue, if there is pending operation with given key
 /**
  * It used to control multi-threading operations, while operations above keys must
@@ -21,72 +33,69 @@ namespace docdb {
  * check status of locking
  *
  */
-template<typename KeyInfo = std::monostate>
+template<typename Value = std::monostate>
 class KeyLock {
 public:
 
     using Key = RawKey;
     using Rev = std::size_t;
 
-    struct KeyHashRev {
-        Key kh;
+
+    struct KeyRec {
+        Key key;
         Rev rev;
-        KeyInfo info;
-    };
-
-    enum LockState {
-        //key is locked ok
-        ok,
-        //key is already locked for this batch
-        already_locked,
-        //key is locked for different batch and deadlock happened
-        deadlock,
-        //key is locked - valid for trylock
-        locked
-    };
-
-    struct KeyHashRevWait: KeyHashRev {
+        Value info;
         bool waiting = false;
     };
 
-    ///Lock the key, check duplicates
+    struct Waiting {
+        const Key *key = nullptr;
+        const Rev *rev = nullptr;
+    };
+
+
+    ///Lock the key and perform compare and swap
     /**
-     * @param rev batch revision
-     * @param key key
-     * @param info associated data
-     * @param fn function is called, when key is already locked for this revision,
-     * it conatins stored associated data. Function must decide, if this
-     * is valid situation. It returns true, when this is valid situation,
-     * @return state
+     * @param rev batch revision (or anothe batch identification id)
+     * @param key key to lock
+     * @param cond condition, used when key is already locked. If the key-info contains the same
+     * value, lock is successed, and the value is replaced by the new value. If there is
+     * different value, error status is returned and value is replaced with stored value
+     * @param new_value new value which is replaced if the lock already held
+     * @retval ok key is locked ok
+     * @retval replaced key has been already locked, condition successed and value replaced
+     * @retval cond_failed key has been already locked, condition failed
+     * @retval deadlock key is locked by different batch and deadlock would happen
      */
-    template<typename Fn>
-    LockState lock_key(std::size_t rev, const RawKey &key, const KeyInfo &info, Fn &&fn) {
-        KeyHashRevWait kk{{key, rev, info}};
+
+    KeyLockState lock_key_cas(std::size_t rev, const RawKey &key, Value &cond, const Value &new_val) {
         std::unique_lock lk(_mx);
         bool waiting = false;
         while(true) {
-            auto iter = std::find_if(_lst.begin(), _lst.end(), [&](const KeyHashRev &item){
-                return item.kh== kk.kh;
+            auto iter = std::find_if(_lst.begin(), _lst.end(), [&](const KeyRec &item){
+                return item.key== key;
             });
             if (iter == _lst.end()) {
-                _lst.push_back(std::move(kk));
+                _lst.push_back(KeyRec{key, rev, new_val});
                 if (waiting) {
-                    _waitings.erase(std::remove_if(_waitings.begin(),_waitings.end(), [&](const KeyHashRev &item){
-                        return item.rev == rev;
+                    _waitings.erase(std::remove_if(_waitings.begin(),_waitings.end(), [&](const Waiting &item){
+                        return *item.rev == rev;
                     }));
                 }
-                return ok;
+                return KeyLockState::ok;
             }
             if (iter->rev == rev) {
-                if (fn(iter->info)) {
-                    iter->info = info;
-                    return ok;
+                if (iter->info == cond) {
+                    iter->info = new_val;
+                    return KeyLockState::replaced;
+                } else {
+                    cond = iter->info;
+                    return KeyLockState::cond_failed;
                 }
-                return already_locked;
             }
             if (!waiting) {
-                if (check_deadlock(iter->rev, rev)) return deadlock;
-                _waitings.push_back(kk);
+                if (check_deadlock(iter->rev, rev)) return KeyLockState::deadlock;
+                _waitings.push_back({&key, &rev});
                 waiting = true;
             }
             iter->waiting = true;
@@ -94,40 +103,18 @@ public:
         }
     }
 
-    ///Lock the key
+    ///Lock the key - no condition test. It is expected, that condition is {}
     /**
      * @param rev batch revision
      * @param key key to lock
      * @retval true success
      * @retval false failure, deadlock
      */
-    LockState lock_key(std::size_t rev, const RawKey &key) {
-        KeyInfo empty = {};
-        return lock_key(rev,key,empty,[](auto &&){return false;});
-    }
+    bool lock_key(std::size_t rev, const RawKey &key) {
+        Value empty = {};
+        auto res = lock_key_cas(rev, key, empty, empty);
+        return (res == KeyLockState::ok) | (res == KeyLockState::replaced);
 
-    ///Try lock the key, do not block
-    /**
-     * @param rev batch revision
-     * @param key key to lock
-     * @retval true success
-     * @retval false failure, somebody already locked the key previously
-     */
-    LockState try_lock_key(std::size_t rev, const RawKey &key) {
-        std::hash<std::string_view> hasher;
-        Key kh = hasher(key);
-        std::unique_lock lk(_mx);
-        auto iter = std::find_if(_lst.begin(), _lst.end(), [&](const KeyHashRev &item){
-            return item.kh== kh;
-        });
-        if (iter == _lst.end()) {
-            _lst.push_back(KeyHashRevWait{{kh, rev}});
-            return ok;
-        }
-        if (iter->rev == rev) {
-            return already_locked;
-        }
-        return locked;
     }
 
     ///Unlock all keys owned by given batch's revision
@@ -137,7 +124,7 @@ public:
     void unlock_keys(std::size_t rev) {
         bool signal = false;
         std::unique_lock lk(_mx);
-        auto iter = std::remove_if(_lst.begin(), _lst.end(), [&](const KeyHashRevWait &item){
+        auto iter = std::remove_if(_lst.begin(), _lst.end(), [&](const KeyRec &item){
             bool hit = item.rev == rev;
             signal = signal | (item.waiting & hit);
             return hit;
@@ -149,23 +136,23 @@ public:
 
 
 protected:
-    using LockedList = std::vector<KeyHashRevWait>;
-    using WaitList = std::vector<KeyHashRev>;
+    using LockedList = std::vector<KeyRec>;
+    using WaitList = std::vector<Waiting>;
 
 
     bool check_deadlock(Rev req, Rev owner) const {
         //I am waiting for myself - this is deadlock
         if (req == owner) return true;
         //find what I am owning
-        for (const KeyHashRevWait &own: _lst) {
+        for (const KeyRec &own: _lst) {
             if (own.rev == req) {
                 //found ownership, now we need find who is waiting for it
-                for (const KeyHashRev &wt: _waitings) {
+                for (const Waiting &wt: _waitings) {
                     //found that this key is waited by someone
-                    if (wt.kh == own.kh) {
+                    if (*wt.key == own.key) {
                         //recursively check, whether the waiting owner
                         //does own which is also waited
-                        if (check_deadlock(wt.rev, owner)) return true;
+                        if (check_deadlock(*wt.rev, owner)) return true;
                     }
                 }
             }

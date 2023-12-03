@@ -30,7 +30,10 @@ class Row {
 public:
 
     Row() = default;
+
+    //Construct from anything unless the type has cast operator - we don't accept such argument
     template<typename ... Args>
+    DOCDB_CXX20_REQUIRES(((sizeof...(Args) != 1) || (!HasCastOperatorTo<Args, Row> && ...)))
     Row(const Args & ... args) {
         serialize_items(back_inserter(), args...);
     }
@@ -41,6 +44,11 @@ public:
 
     operator std::string_view() const {
         return {_data.data(),_data.size()};
+    }
+
+    template<IsTuple T>
+    operator T() const {
+        return get<T>();
     }
 
     ///Retrieve internal mutable buffer

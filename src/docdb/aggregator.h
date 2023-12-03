@@ -5,6 +5,7 @@
 #include "concepts.h"
 #include "waitable_atomic.h"
 
+#include "indexer.h"
 #include <thread>
 #include <cmath>
 
@@ -648,6 +649,224 @@ struct AggregateBy {
         using Materialized<MapSrc,AggrFn, _ValueDef, true>::Materialized;
     };
 
+
+    ///Materialized incremental aggregator, it combines indexer and aggregator
+    /**
+     * Incremental aggregator is updated for every update, and aggregates incrementally. You
+     * can use this aggregator to calculate count or sums, anything which can be incrementally
+     * aggregated - which means that new value is calculated from previous value and increment.
+     *
+     * The aggregator also supports deleting of the documents and updating the documents. You
+     * only need to handle reverse aggregation operation. This can be impossible for
+     * some types of aggregations, such a min or max. These aggregations don't handle
+     * updating and deleting properly
+     *
+     * @tparam _Storage Type of storage
+     * @tparam _IndexFn Index function, which generates a key and intermediate value. This value
+     * is not stored. Type of generated value must be convertible to type of input value of the
+     * aggregation function
+     * @tparam _AggrFn aggregation function.
+     * @tparam _ValueDef type of document representing result of aggregation
+     */
+    template<typename _Storage, typename _IndexFn, AggregateFunction _AggrFn, DocumentDef _ValueDef = RowDocument>
+    DOCDB_CXX20_REQUIRES(IndexFn<_IndexFn, _Storage, TypeToDocument<typename _AggrFn::InputType> >)
+    class MaterializedIncrementally: public AggregatorView<_ValueDef> {
+    public:
+
+        static constexpr _IndexFn indexFn = {};
+        using IndexerRevisionType = std::remove_const_t<decltype(_IndexFn::revision)>;
+        using AggregatorRevisionType = std::remove_const_t<decltype(_AggrFn::revision)>;
+        using IntermediateDoc = typename _AggrFn::InputType;
+        using ResultType = typename _AggrFn::ResultType;
+        using DocType = typename _Storage::DocType;
+        using ValueType = typename _ValueDef::Type;
+        using State = std::tuple<IndexerRevisionType, AggregatorRevisionType, DocID>;
+        using Update = typename _Storage::Update;
+
+
+        MaterializedIncrementally(_Storage &source, std::string_view name)
+               :MaterializedIncrementally(source, source.get_db()->open_table(name, Purpose::aggregation)) {}
+        MaterializedIncrementally(_Storage &source, KeyspaceID kid)
+               :AggregatorView<_ValueDef>(source.get_db(), kid, Direction::forward, {}, false)
+               ,_source(source)
+               ,_listener(this) {
+            std::optional<State> st = get_last_state();
+            if (!st.has_value() || std::get<0>(*st) != _IndexFn::revision || std::get<1>(*st) != _AggrFn::revision) {
+                rebuild();
+            } else {
+                _last_seen_id = std::get<2>(*st);
+                _source.rescan_for(make_observer(), std::get<2>(*st));
+            }
+            this->_source.register_transaction_observer(make_observer());
+        }
+        MaterializedIncrementally(const MaterializedIncrementally &) = delete;
+        MaterializedIncrementally &operator=(const MaterializedIncrementally &) = delete;
+
+        struct IndexedDoc {
+            DocID cur_doc;
+            DocID prev_doc;
+        };
+
+        template<bool deleting>
+        class Emit {
+        public:
+            static constexpr bool erase = deleting;
+
+            Emit(MaterializedIncrementally &owner, Batch &b, const IndexedDoc &docinfo)
+                :_owner(owner), _b(b), _docinfo(docinfo) {}
+
+            void operator()(Key &&key, const IntermediateDoc &value) {
+                (*this)(key, value);
+            }
+            void operator()(Key &key, const IntermediateDoc &value) {
+                if constexpr(deleting) {
+                    _owner.put(_b,key,value, AggrOperation::exclude);
+                } else {
+                    _owner.put(_b,key,value, AggrOperation::include);
+                }
+            }
+
+            DocID id() const {return _docinfo.cur_doc;}
+            DocID prev_id() const {return _docinfo.prev_doc;}
+
+        protected:
+            MaterializedIncrementally &_owner;
+            Batch &_b;
+            const IndexedDoc &_docinfo;
+
+        };
+
+
+        void update() {
+            //empty, as the index don't need update, but some object may try to call it
+        }
+        bool try_update() {
+           //empty, as the index don't need update, but some object may try to call it
+            return true;
+        }
+
+    protected:
+
+        class Listener:public AbstractBatchNotificationListener { // @suppress("Miss copy constructor or assignment operator")
+        public:
+            MaterializedIncrementally *owner = nullptr;
+            Listener(MaterializedIncrementally *owner):owner(owner) {}
+            virtual void before_commit(Batch &b) override {
+                owner->update_rev(b);
+            }
+            virtual void after_commit(std::size_t rev) noexcept override {
+                owner->close_keys(rev);
+            };
+            virtual void on_rollback(std::size_t rev) noexcept override  {
+                owner->close_keys(rev);
+            };
+        };
+
+        using PAggr = std::shared_ptr<_AggrFn>;
+
+
+        _Storage &_source;
+        Listener _listener;
+        KeyLock<PAggr> _keylock;
+        std::atomic<DocID> _last_seen_id;
+
+
+
+
+
+        std::optional<State> get_last_state() {
+            auto k = this->_db->get_private_area_key(this->_kid);
+            auto d = this->_db->template get_document<RowDocument>(k);
+            if (d.has_value()) {
+                return d->template get<State>();
+            } else {
+                return {};
+            }
+        }
+
+        void rebuild() {
+            this->_db->clear_table(this->_kid, false);
+            this->_source.rescan_for(make_observer(), 0);
+        }
+
+        void close_keys(std::size_t rev) {
+            _keylock.unlock_keys(rev);
+        }
+
+        auto make_observer() {
+             return [&](Batch &b, const Update &update) {
+                 b.add_listener(&_listener);
+                 {
+                     if (update.old_doc) {
+                         indexFn(Emit<true>(*this, b, IndexedDoc{update.old_doc_id, update.old_old_doc_id}), *update.old_doc);
+                     }
+                     if (update.new_doc) {
+                         indexFn(Emit<false>(*this, b, IndexedDoc{update.new_doc_id, update.old_doc_id}), *update.new_doc);
+                         update_id(update.new_doc_id);
+                     }
+                 }
+             };
+         }
+
+        PAggr make_aggregator(Batch &b, RawKey &k) {
+            PAggr need;
+            PAggr va;
+            auto st = _keylock.lock_key_cas(b.get_revision(), k, need, nullptr);
+            switch(st) {
+                default: {
+                    auto curval = this->_db->template get_document<_ValueDef>(k);
+                    if (curval.has_value()) {
+                        va = std::make_shared<_AggrFn>(*curval);
+                    } else {
+                        va = std::make_shared<_AggrFn>();
+                    }
+                    _keylock.lock_key_cas(b.get_revision(), k, need, va);
+                }break;
+                case KeyLockState::cond_failed: va = std::move(need);break;
+                case KeyLockState::deadlock: {
+                    throw DeadlockKeyException(std::string(k), "Deadlock on incremental aggregator");
+                }
+            }
+            return va;
+
+        }
+
+        void put(Batch &b, Key &key, const IntermediateDoc &value, AggrOperation op) {
+            if constexpr(IncrementalAggregateFunction<_AggrFn>) {
+                RawKey &k = key.set_kid(this->_kid);
+                PAggr aggr = make_aggregator(b, k);
+                auto buff = b.get_buffer();
+                decltype(auto) v = (*aggr)(value, op);
+                _ValueDef::to_binary(v, std::back_inserter(buff));
+                b.Put(k, buff);
+            } else {
+                if (op == AggrOperation::include) {
+                    RawKey &k = key.set_kid(this->_kid);
+                    PAggr aggr = make_aggregator(b, k);
+                    auto buff = b.get_buffer();
+                    decltype(auto) v = (*aggr)(value);
+                    _ValueDef::to_binary(v, std::back_inserter(buff));
+                    b.Put(k, buff);
+                }
+            }
+        }
+
+        void update_id(DocID id) {
+            DocID cur = _last_seen_id.load(std::memory_order_relaxed);
+            DocID m;
+            do {
+                 m = std::max(id, cur);
+            } while (!_last_seen_id.compare_exchange_strong(cur, m, std::memory_order_relaxed));
+        }
+
+
+        void update_rev(Batch &b) {
+            auto k = this->_db->get_private_area_key(this->_kid);
+            b.Put(k, Row(State(_IndexFn::revision, _AggrFn::revision, _last_seen_id)));
+        }
+
+
+    };
 };
 
 

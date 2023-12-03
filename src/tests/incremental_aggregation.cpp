@@ -1,9 +1,11 @@
+
 #include "check.h"
 #include "../docdb/storage.h"
 
 #include "memdb.h"
 
-#include <docdb/incremental_aggregator.h>
+#include <docdb/aggregator.h>
+#include <docdb/aggregate_rows.h>
 
 static std::pair<std::string_view,int> words[] = {
         {"feed",56},
@@ -42,6 +44,16 @@ using DocumentDef = docdb::FixedRowDocument<std::string_view, int>;
 using IndexDef = docdb::FixedRowDocument<int>;
 
 
+struct IndexFn {
+    static constexpr int revision = 1;
+    template<typename Emit, typename Doc>
+    void operator()(Emit emit, const Doc &doc)const{
+        auto [text,number] = doc.get();
+        emit({text.length()},{number});
+    }
+};
+
+
 struct AggrFunction {
     static constexpr std::size_t revision = 1;
     template<typename Emit>
@@ -76,7 +88,10 @@ void test1() {
     auto db = docdb::Database::create(createTestDB(ramdisk.get()));
 
     using Storage = docdb::Storage<DocumentDef>;
-    using Aggreg = docdb::IncrementalAggregator<Storage, AggrFunction>;
+    using Aggreg = docdb::AggregateBy<std::tuple<int> >
+        ::MaterializedIncrementally<Storage,IndexFn,docdb::AggregateRows<docdb::Composite<int,
+        docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int>
+                > > >;
 
 
     Storage storage(db, "test_storage");
@@ -91,8 +106,8 @@ void test1() {
 
     for (const auto &x: aggr.select_all()) {
         auto [k] = x.key.get<std::size_t>();
-        auto [count, sum] = x.value.get<std::size_t, int>();
-        std::cout << k << ": count=" << count << ", sum=" << sum  << std::endl;
+        auto [count, sum, min, max] = x.value.get<std::size_t, int, int, int>();
+        std::cout << k << ": count=" << count << ", sum=" << sum  << ", min=" << min  << ", max=" << max << std::endl;
     }
 
     storage.put({"aaa",2});
@@ -100,12 +115,47 @@ void test1() {
     std::cout << "---------------" << std::endl;
     for (const auto &x: aggr.select_all()) {
         auto [k] = x.key.get<std::size_t>();
-        auto [count, sum] = x.value.get<std::size_t, int>();
-        std::cout << k << ": count=" << count << ", sum=" << sum  << std::endl;
+        auto [count, sum, min, max] = x.value.get<std::size_t, int, int, int>();
+        std::cout << k << ": count=" << count << ", sum=" << sum  << ", min=" << min  << ", max=" << max << std::endl;
+    }
+    std::cout << "---------------" << std::endl;
+}
+void test2() {
+
+
+    auto ramdisk = newRamdisk();
+    auto db = docdb::Database::create(createTestDB(ramdisk.get()));
+
+    using Storage = docdb::Storage<DocumentDef>;
+    using Aggreg = docdb::AggregateBy<std::tuple<int> >
+        ::MaterializedIncrementally<Storage,IndexFn,docdb::AggregateRows<docdb::Composite<int,
+        docdb::Count<int>, docdb::Sum<int>, docdb::Min<int>, docdb::Max<int>
+                > > >;
+
+
+    Storage storage(db, "test_storage");
+    Aggreg aggr(storage, "test_aggr");
+
+
+    auto b = db->begin_batch();
+
+    for (auto c: words) {
+        storage.put(b, {c.first,c.second});
+    }
+
+    b.commit();
+
+    for (const auto &x: aggr.select_all()) {
+        auto [k] = x.key.get<std::size_t>();
+        auto [count, sum, min, max] = x.value.get<std::size_t, int, int, int>();
+        std::cout << k << ": count=" << count << ", sum=" << sum  << ", min=" << min  << ", max=" << max << std::endl;
     }
 }
+
 int main() {
 
 
+
     test1();
+    test2();
 }

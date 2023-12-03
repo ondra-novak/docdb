@@ -283,14 +283,14 @@ public:
      */
     template<typename _DocDef>
     std::optional<typename _DocDef::Type> get_document(const std::string_view &key) {
+
         auto v = get(key);
         if (v.has_value()) {
             return std::optional<typename _DocDef::Type>(EmplaceByReturn(
                     [&]{return _DocDef::from_binary(unmove(v->begin()), v->end());}
             ));
-        } else {
-            return {};
         }
+        return {};
     }
 
     ///Retrieve single item from the snapshot and parse it as a document

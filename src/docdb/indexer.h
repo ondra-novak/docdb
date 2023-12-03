@@ -21,11 +21,13 @@ struct IndexerEmitTemplate {
     DocID prev_id() const;
 };
 
+
 template<typename T, typename Storage, typename _ValueDef>
 DOCDB_CXX20_CONCEPT(IndexFn, requires{
    requires std::invocable<T, IndexerEmitTemplate<_ValueDef>, typename Storage::DocType>;
    {T::revision} -> std::convertible_to<IndexRevision>;
 });
+
 
 
 template<std::size_t rev, auto function>
@@ -122,27 +124,25 @@ public:
             auto &buffer = _b.get_buffer();
             auto buff_iter = std::back_inserter(buffer);
             if constexpr(index_type == IndexType::unique) {
-                if (!deleting) {
-                    DocID lkrev;
-                    auto st = _owner._locker.lock_key(_b.get_revision(),
-                            k, _docinfo.cur_doc, [&](DocID lk){
-                        lkrev = lk;
-                        return lk == _docinfo.prev_doc;
-                    });
-                    if (st == KeyLocker::deadlock) {
+                DocID need_doc = deleting?_docinfo.cur_doc:0;
+                DocID new_doc = deleting?0:_docinfo.cur_doc;
+                auto st = _owner._locker.lock_key_cas(_b.get_revision(),k, need_doc, new_doc);
+                switch (st) {
+                    default: break;
+                    case KeyLockState::ok: {
+                            auto val = _owner._db->get(k);
+                            if (val) {
+                                auto [r] = Row::extract<DocID>(*val);
+                                if (r != _docinfo.cur_doc) {
+                                    throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
+                                }
+                            }
+                        }
+                        break;
+                    case KeyLockState::cond_failed:
+                        throw make_exception(key, _owner._db, _docinfo.cur_doc, need_doc);
+                    case KeyLockState::deadlock:
                         throw make_deadlock_exception(key, _owner._db);
-                    }
-                    if (st == KeyLocker::already_locked ){
-                        throw make_exception(key, _owner._db, _docinfo.cur_doc, lkrev);
-                    }
-
-                    auto val = _owner._db->get(k);
-                    if (val.has_value()) {
-                       auto [r] = Row::extract<DocID>(*val);
-                       if (r < _docinfo.cur_doc && r != _docinfo.prev_doc) {
-                           throw make_exception(key, _owner._db, _docinfo.cur_doc, r);
-                       }
-                    }
                 }
             }
             //check for duplicate key

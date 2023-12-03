@@ -27,8 +27,6 @@ namespace docdb {
 
 
 
-
-
 namespace _details {
 
 template<typename X, typename ... Args>
@@ -59,13 +57,25 @@ struct AggregateRows {
     static constexpr std::size_t revision = _details::AggregatedRevision<AgrTypes...>::revision;
     std::tuple<AgrTypes ...> _state = {};
 
+    AggregateRows() = default;
+    explicit AggregateRows(const ResultType &r):_state(r) {}
+
     template<std::size_t ... Is>
     auto do_accumulate(const ParsedRow &in, std::index_sequence<Is...>) {
         return ResultType(std::get<Is>(_state)(std::get<Is>(in)) ...);
     }
 
+    template<std::size_t ... Is>
+    auto do_accumulate_inc(const ParsedRow &in, AggrOperation op, std::index_sequence<Is...>) {
+        return ResultType(std::get<Is>(_state)(std::get<Is>(in),op) ...);
+    }
+
     ResultType operator()(const Row &row) {
         return do_accumulate(row.get<ParsedRow>(), std::index_sequence_for<AgrTypes...>{});
+    }
+
+    ResultType operator()(const Row &row, AggrOperation op) {
+        return do_accumulate_inc(row.get<ParsedRow>(), op, std::index_sequence_for<AgrTypes...>{});
     }
 
 
@@ -88,8 +98,18 @@ struct Count {
     using InputType = Type;
     std::size_t _state = 0;
 
+    Count() = default;
+    explicit Count(const ResultType &r) : _state(r) {}
+
     std::size_t operator()(const Type &) {
         return ++_state;
+    }
+    std::size_t operator()(const Type &, AggrOperation op) {
+        switch(op) {
+            default: return _state;
+            case AggrOperation::include: return ++_state;
+            case AggrOperation::exclude: return --_state;
+        }
     }
 };
 
@@ -104,8 +124,18 @@ struct Sum {
     using InputType = Type;
     Type _state = {};
 
+    Sum() = default;
+    explicit Sum(const ResultType &r):_state(r) {}
+
     const Type &operator()(const Type &x) {
         return _state += x;
+    }
+    const Type &operator()(const Type &x, AggrOperation op) {
+        switch(op) {
+            default: return _state;
+            case AggrOperation::include: return _state+=x;
+            case AggrOperation::exclude: return _state-=x;
+        }
     }
 };
 
@@ -124,9 +154,14 @@ struct Avg {
     Count<> _count = {};
 
     Type operator()(Type &avg, const Type &x) {
-        _sum(static_cast<SumType>(x));
-        _count(std::nullptr_t());
-        return static_cast<Type>(_sum/_count);
+        decltype(auto) s = _sum(static_cast<SumType>(x));
+        decltype(auto) c = _count(std::nullptr_t());
+        return static_cast<Type>(s/c);
+    }
+    const Type &operator()(const Type &x, AggrOperation op) {
+        decltype(auto) s = _sum(static_cast<SumType>(x),op);
+        decltype(auto) c = _count(std::nullptr_t(),op);
+        return static_cast<Type>(s/c);
     }
 
 };
@@ -142,8 +177,19 @@ struct Sum2 {
     using InputType = Type;
     Type _state = {};
 
+    Sum2() = default;
+    explicit Sum2(const ResulType &r) : _state(r) {}
+
+
     const Type &operator()(const Type &x) {
         return _state += x*x;
+    }
+    const Type &operator()(const Type &x, AggrOperation op) {
+        switch(op) {
+            default: return _state;
+            case AggrOperation::include: return _state+=x*x;
+            case AggrOperation::exclude: return _state-=x*x;
+        }
     }
 };
 
@@ -159,11 +205,20 @@ struct Max {
     Type _state = {};
     bool _has_value = false;
 
+    Max() = default;
+    explicit Max(const ResultType &r) : _state(r),_has_value(true) {}
+
 
     const Type &operator()( const Type &x) {
         _state = (_has_value & (_state > x)) ? _state : x;
         _has_value = true;
         return _state;
+    }
+    const Type &operator()(const Type &x, AggrOperation op) {
+        switch(op) {
+            default: return _state;
+            case AggrOperation::include: return this->operator()(x);
+        }
     }
 
 };
@@ -180,11 +235,19 @@ struct Min {
     Type _state = {};
     bool _has_value = false;
 
+    Min() = default;
+    explicit Min(const ResultType &r) : _state(r),_has_value(true) {}
 
     const Type &operator()( const Type &x) {
         _state = (_has_value & (_state < x)) ? _state : x;
         _has_value = true;
         return _state;
+    }
+    const Type &operator()(const Type &x, AggrOperation op) {
+        switch(op) {
+            default: return _state;
+            case AggrOperation::include: return this->operator()(x);
+        }
     }
 };
 
@@ -200,12 +263,20 @@ struct First {
     Type _state = {};
     bool _has_value = false;
 
+    First() = default;
+    explicit First(const ResultType &r) : _state(r),_has_value(true) {}
+
 
     const Type& operator()(Type &a, const Type &x) {
         _state = _has_value  ? _state : x;
         _has_value = true;
         return _state;
-
+    }
+    const Type &operator()(const Type &x, AggrOperation op) {
+        switch(op) {
+            default: return _state;
+            case AggrOperation::include: return this->operator()(x);
+        }
     }
 };
 
@@ -220,9 +291,18 @@ struct Last {
     using InputType = Type;
     Type _state = {};
 
+    Last() = default;
+    explicit Last(const ResultType &r) : _state(r) {}
+
     const Type &operator()(Type &a, const Type &x) {
         _state = x;
         return _state;
+    }
+    const Type &operator()(const Type &x, AggrOperation op) {
+        switch(op) {
+            default: return _state;
+            case AggrOperation::include: return this->operator()(x);
+        }
     }
 };
 
@@ -237,7 +317,14 @@ struct Skip {
     using ResultType = std::nullptr_t;
     using InputType = Type;
 
+    Skip() = default;
+    explicit Skip(std::nullptr_t) {}
+
     ResultType operator()(const Type &) {
+        //empty
+        return nullptr;
+    }
+    ResultType operator()(const Type &, AggrOperation ) {
         //empty
         return nullptr;
     }
@@ -296,6 +383,14 @@ struct Scale {
             return _state(val * x);
         }
     }
+
+    decltype(auto) operator()(const InputType &x, AggrOperation op) {
+        if constexpr(std::is_pointer_v<decltype(val)>) {
+            return _state(*val * x, op);
+        } else {
+            return _state(val * x, op);
+        }
+    }
 };
 
 ///Offset the input value by a constant
@@ -319,6 +414,13 @@ struct Offset {
             return _state(x + val);
         }
     }
+    decltype(auto) operator()(const InputType &x, AggrOperation op) {
+        if constexpr(std::is_pointer_v<decltype(val)>) {
+            return _state(x + *val, op);
+        } else {
+            return _state(x + val, op);
+        }
+    }
 };
 
 ///Calculate invert value before aggregation
@@ -339,7 +441,14 @@ struct Invert {
         if constexpr(std::is_pointer_v<decltype(val)>) {
             return _state(*val - x);
         } else {
-            return _state(*val - x);
+            return _state(val - x);
+        }
+    }
+    decltype(auto) operator()(const InputType &x, AggrOperation op) {
+        if constexpr(std::is_pointer_v<decltype(val)>) {
+            return _state(*val - x, op);
+        } else {
+            return _state(val - x, op);
         }
     }
 };
@@ -356,6 +465,9 @@ struct Transform {
     decltype(auto) operator()( const InputType &x) {
         return _state(fn(x));
     }
+    decltype(auto) operator()( const InputType &x, AggrOperation op) {
+        return _state(fn(x), op);
+    }
 };
 
 template<typename From, AggregateFunction Agr>
@@ -368,6 +480,9 @@ struct Convert {
 
     decltype(auto) operator()(const InputType &x) {
         return _state(static_cast<TargetType>(x));
+    }
+    decltype(auto) operator()(const InputType &x, AggrOperation op) {
+        return _state(static_cast<TargetType>(x), op);
     }
 };
 
@@ -396,13 +511,23 @@ struct Composite {
     States _states = {};
     using InputType = T;
 
+    Composite() = default;
+    explicit Composite(const ResultType &s):_states(s) {}
+
     template<std::size_t ... Is>
-    ResultType do_accum(const InputType &val, std::index_sequence<Is...>) {
+    ResultType do_accum(const InputType &val,  std::index_sequence<Is...>) {
         return ResultType(std::get<Is>(_states).operator()(static_cast<std::tuple_element_t<Is,InputTypes> >(val))...);
+    }
+    template<std::size_t ... Is>
+    ResultType do_accum_inc(const InputType &val, AggrOperation op,  std::index_sequence<Is...>) {
+        return ResultType(std::get<Is>(_states).operator()(static_cast<std::tuple_element_t<Is,InputTypes> >(val), op)...);
     }
 
     ResultType operator()(const InputType &x) {
         return do_accum(x, std::index_sequence_for<AgrFns...>{});
+    }
+    ResultType operator()(const InputType &x, AggrOperation op) {
+        return do_accum_inc(x, op, std::index_sequence_for<AgrFns...>{});
     }
 
 

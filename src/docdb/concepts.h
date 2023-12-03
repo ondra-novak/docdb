@@ -61,6 +61,14 @@ DOCDB_CXX20_CONCEPT(DocumentCustomDeleted, requires(const typename T::Type &x){
     {T::is_deleted(x)} -> std::convertible_to<bool>;
 });
 
+template<typename _Type>
+struct TypeToDocument {
+    using Type = _Type;
+    template<typename Iter>
+    static _Type from_binary(Iter &at, Iter end);
+    template<typename Iter>
+    static Iter to_binary(const _Type &doc, Iter pb);
+};
 
 
 template<typename T>
@@ -185,11 +193,26 @@ template<typename ... T>
 constexpr bool defer_false = DeferFalse<T...>::val;
 
 
+enum class AggrOperation {
+    //include to aggregation
+    include,
+    //exclude from aggregation
+    exclude
+};
+
 
 template<typename X>
-DOCDB_CXX20_CONCEPT(AggregateFunction, requires (X fn, const typename X::InputType &input) {
+DOCDB_CXX20_CONCEPT(NonincrementalAggregateFunction, requires (X fn, const typename X::InputType &input) {
     {fn(input)} -> std::convertible_to<typename X::ResultType>;
 });
+template<typename X>
+DOCDB_CXX20_CONCEPT(IncrementalAggregateFunction, requires (X fn, const typename X::InputType &input, AggrOperation op) {
+    {fn(input, op)} -> std::convertible_to<typename X::ResultType>;
+});
+
+template<typename X>
+DOCDB_CXX20_CONCEPT(AggregateFunction, (IncrementalAggregateFunction<X> || NonincrementalAggregateFunction<X>));
+
 
 template<class T> T& unmove(T&& t) { return static_cast<T&>(t); }
 
@@ -198,7 +221,7 @@ class EmplaceByReturn {
 public:
     using RetType = std::invoke_result_t<Fn>;
     EmplaceByReturn(Fn &&fn):_fn(std::forward<Fn>(fn)) {}
-    operator RetType() const {return _fn();}
+    explicit operator RetType() const {return _fn();}
 protected:
     Fn _fn;
 };
@@ -207,6 +230,12 @@ template<typename Fn>
 EmplaceByReturn(Fn fn) -> EmplaceByReturn<Fn>;
 
 }
+template<typename T, typename To>
+DOCDB_CXX20_CONCEPT(HasCastOperatorTo, requires(T x){
+    x.operator To();
+});
+
+
 
 
 
