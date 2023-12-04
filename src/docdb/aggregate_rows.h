@@ -158,7 +158,7 @@ struct Avg {
         decltype(auto) c = _count(std::nullptr_t());
         return static_cast<Type>(s/c);
     }
-    const Type &operator()(const Type &x, AggrOperation op) {
+     Type operator()(const Type &x, AggrOperation op) {
         decltype(auto) s = _sum(static_cast<SumType>(x),op);
         decltype(auto) c = _count(std::nullptr_t(),op);
         return static_cast<Type>(s/c);
@@ -267,7 +267,7 @@ struct First {
     explicit First(const ResultType &r) : _state(r),_has_value(true) {}
 
 
-    const Type& operator()(Type &a, const Type &x) {
+    const Type& operator()(const Type &x) {
         _state = _has_value  ? _state : x;
         _has_value = true;
         return _state;
@@ -294,7 +294,7 @@ struct Last {
     Last() = default;
     explicit Last(const ResultType &r) : _state(r) {}
 
-    const Type &operator()(Type &a, const Type &x) {
+    const Type &operator()(const Type &x) {
         _state = x;
         return _state;
     }
