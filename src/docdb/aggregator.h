@@ -441,7 +441,7 @@ struct AggregateBy {
         }
         void rescan_for(KeyAggregateObserverFunction observer) {
             update();
-            auto b = this->_db->create_batch();
+            auto b = this->_db->begin_batch();
             for (const auto &row: this->select_all()) {
                 b.reset();
                 observer(b, row.key, false);
