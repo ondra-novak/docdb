@@ -89,9 +89,10 @@ DOCDB_CXX20_CONCEPT(IsNotTuple1Arg, !IsTuple1Arg<Args...>);
 template<typename T>
 DOCDB_CXX20_CONCEPT(IsContainer, requires(T x) {
   typename T::value_type;
-  {x.begin() } -> std::input_iterator;
-  {x.end() } -> std::input_iterator;
+  {x.begin() } -> std::forward_iterator;
+  {x.end() } -> std::forward_iterator;
   {x.push_back(std::declval<typename T::value_type>())};
+  {x.reserve(std::distance(x.begin(),x.end()))};
 });
 
 template<typename T>

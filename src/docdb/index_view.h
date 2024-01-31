@@ -290,19 +290,19 @@ public:
         }
     }
 
-    Recordset select_from(Key &&key, Direction dir = Direction::normal) {return select_from(key,dir);}
-    Recordset select_from(Key &key, Direction dir = Direction::normal) {
+    Recordset select_from(Key &&key, Direction dir = Direction::normal) const {return select_from(key,dir);}
+    Recordset select_from(Key &key, Direction dir = Direction::normal) const {
         RawKey &k = key.set_kid(this->_kid);
         if (isForward(changeDirection(this->_dir, dir))) {
             return IndexBase::create_recordset(
-                    this->_db->make_iterator(false,this->_snap),{
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
                     k,RawKey(this->_kid+1),
                     FirstRecord::included, LastRecord::excluded
             });
         } else {
             RawKey pfx = k.prefix_end();
             return IndexBase::create_recordset(
-                    this->_db->make_iterator(false,this->_snap),{
+                    this->_db->make_iterator(this->_snap, this->_no_cache),{
                     pfx,RawKey(this->_kid),
                     FirstRecord::excluded, LastRecord::included
             });
