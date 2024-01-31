@@ -7,7 +7,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-// #define LEVELDB_VERSION_BELOW_1_23 // if you have older version
 
 namespace docdb {
 
@@ -60,17 +59,6 @@ public:
             return Status::OK();
         }
     }
-#ifndef LEVELDB_VERSION_BELOW_1_23
-    virtual Status RemoveFile(const std::string &fname) override {
-        if (_mem_env->FileExists(fname)) {
-            return _mem_env->RemoveFile(fname);
-        } else {
-            std::lock_guard _(_mx);
-            _deleted.push_back(fname);
-            return Status::OK();
-        }
-    }
-#endif
     virtual Status LockFile(const std::string &fname, FileLock **lock) override {
         if (_no_lock) {
             return _mem_env->LockFile(fname, lock);
@@ -117,11 +105,6 @@ public:
     virtual Status DeleteDir(const std::string &dirname) override {
         return _mem_env->DeleteDir(dirname);
     }
-#ifndef LEVELDB_VERSION_BELOW_1_23
-    virtual Status RemoveDir(const std::string &dirname) override {
-        return _mem_env->RemoveDir(dirname);
-    }
-#endif
     virtual Status GetFileSize(const std::string &fname, uint64_t *file_size) override {
         if (_mem_env->FileExists(fname)) {
             return _mem_env->GetFileSize(fname, file_size);
